@@ -1,0 +1,19 @@
+{
+  "name": "mcp-llm-bridge",
+  "version": "0.1.0",
+  "description": "MCP server that routes LLM calls through CLI subscriptions (Claude, Gemini, Codex, Copilot)",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "mcp-llm-bridge": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/*.test.js"
+  },
+  "keywords": ["mcp", "llm", "claude", "gemini", "codex", "copilot", "bridge"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
