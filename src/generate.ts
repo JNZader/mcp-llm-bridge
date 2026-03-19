@@ -1,8 +1,23 @@
 import { execSync } from 'node:child_process';
+import type { CliProvider } from './detect.js';
+
+export interface GenerateOptions {
+  prompt: string;
+  system?: string;
+  preferredProvider?: string;
+}
+
+export interface GenerateResult {
+  text: string;
+  provider: string;
+  tokensUsed: number;
+}
+
+type CliAdapter = (prompt: string, system: string | undefined) => GenerateResult;
 
 // Adapter for each CLI
-const adapters = {
-  claude: (prompt, system) => {
+const adapters: Record<string, CliAdapter> = {
+  claude: (prompt: string, system: string | undefined): GenerateResult => {
     const args = ['-p', JSON.stringify(prompt), '--output-format', 'json', '--max-turns', '1'];
     if (system) args.push('--system-prompt', JSON.stringify(system));
 
@@ -14,16 +29,20 @@ const adapters = {
     });
 
     try {
-      const parsed = JSON.parse(output);
-      // Claude JSON output has result field with text
-      const text = parsed.result || parsed.content?.[0]?.text || output;
-      return { text, provider: 'claude', tokensUsed: parsed.usage?.total_tokens ?? 0 };
+      const parsed: Record<string, unknown> = JSON.parse(output);
+      const content = parsed['content'];
+      const firstContent = Array.isArray(content) ? (content[0] as Record<string, unknown> | undefined) : undefined;
+      const text = (parsed['result'] as string | undefined)
+        ?? (firstContent?.['text'] as string | undefined)
+        ?? output;
+      const usage = parsed['usage'] as Record<string, unknown> | undefined;
+      return { text, provider: 'claude', tokensUsed: (usage?.['total_tokens'] as number) ?? 0 };
     } catch {
       return { text: output.trim(), provider: 'claude', tokensUsed: 0 };
     }
   },
 
-  gemini: (prompt, system) => {
+  gemini: (prompt: string, system: string | undefined): GenerateResult => {
     // Gemini doesn't support --system-prompt, prepend to prompt
     const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
     const args = ['-p', JSON.stringify(fullPrompt), '--output-format', 'json'];
@@ -36,14 +55,14 @@ const adapters = {
     });
 
     try {
-      const parsed = JSON.parse(output);
-      return { text: parsed.response || output, provider: 'gemini', tokensUsed: 0 };
+      const parsed: Record<string, unknown> = JSON.parse(output);
+      return { text: (parsed['response'] as string | undefined) ?? output, provider: 'gemini', tokensUsed: 0 };
     } catch {
       return { text: output.trim(), provider: 'gemini', tokensUsed: 0 };
     }
   },
 
-  codex: (prompt, system) => {
+  codex: (prompt: string, system: string | undefined): GenerateResult => {
     // Codex doesn't support system prompt via flag
     const fullPrompt = system ? `${system}\n\n${prompt}` : prompt;
 
@@ -57,7 +76,7 @@ const adapters = {
     return { text: output.trim(), provider: 'codex', tokensUsed: 0 };
   },
 
-  copilot: (prompt, _system) => {
+  copilot: (prompt: string, _system: string | undefined): GenerateResult => {
     // Copilot doesn't support system prompt or JSON output
     const output = execSync(`copilot -p ${JSON.stringify(prompt)} --allow-all-tools`, {
       timeout: 120_000,
@@ -70,7 +89,10 @@ const adapters = {
   },
 };
 
-export async function generate(providers, { prompt, system, preferredProvider }) {
+export async function generate(
+  providers: CliProvider[],
+  { prompt, system, preferredProvider }: GenerateOptions,
+): Promise<GenerateResult> {
   // Pick provider: preferred if specified and available, otherwise first available
   const orderedProviders = preferredProvider
     ? [
@@ -87,10 +109,11 @@ export async function generate(providers, { prompt, system, preferredProvider })
     try {
       console.error(`[mcp-llm-bridge] Generating with ${provider.name}...`);
       const result = adapter(prompt, system);
-      console.error(`[mcp-llm-bridge] ✓ ${provider.name} responded (${result.text.length} chars)`);
+      console.error(`[mcp-llm-bridge] \u2713 ${provider.name} responded (${result.text.length} chars)`);
       return result;
-    } catch (error) {
-      console.error(`[mcp-llm-bridge] ✗ ${provider.name} failed: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[mcp-llm-bridge] \u2717 ${provider.name} failed: ${message}`);
       continue;
     }
   }
