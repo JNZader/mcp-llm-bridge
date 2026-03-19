@@ -44,6 +44,10 @@ const TOOLS = [
           type: 'number',
           description: 'Maximum output tokens (default: 4096)',
         },
+        project: {
+          type: 'string',
+          description: 'Project scope for credential resolution (e.g. "ghagga", "md-evals"). Falls back to global credentials if not found.',
+        },
       },
       required: ['prompt'],
     },
@@ -51,7 +55,7 @@ const TOOLS = [
   {
     name: 'vault_store',
     description:
-      'Store an API key in the encrypted credential vault. Upserts by (provider, keyName).',
+      'Store an API key in the encrypted credential vault. Upserts by (provider, keyName, project).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -67,16 +71,25 @@ const TOOLS = [
           type: 'string',
           description: 'The API key to store',
         },
+        project: {
+          type: 'string',
+          description: 'Project scope (default: "_global" — shared by all projects)',
+        },
       },
       required: ['provider', 'apiKey'],
     },
   },
   {
     name: 'vault_list',
-    description: 'List all stored credentials with masked values.',
+    description: 'List all stored credentials with masked values. Optionally filter by project.',
     inputSchema: {
       type: 'object' as const,
-      properties: {},
+      properties: {
+        project: {
+          type: 'string',
+          description: 'Filter by project (shows project-specific + global). Omit to show all.',
+        },
+      },
     },
   },
   {
@@ -121,6 +134,7 @@ async function handleToolCall(
           provider: args['provider'] as string | undefined,
           model: args['model'] as string | undefined,
           maxTokens: args['maxTokens'] as number | undefined,
+          project: args['project'] as string | undefined,
         });
         return {
           content: [{ type: 'text', text: JSON.stringify(result) }],
@@ -132,6 +146,7 @@ async function handleToolCall(
           args['provider'] as string,
           (args['keyName'] as string | undefined) ?? 'default',
           args['apiKey'] as string,
+          args['project'] as string | undefined,
         );
         return {
           content: [
@@ -141,6 +156,7 @@ async function handleToolCall(
                 id,
                 provider: args['provider'],
                 keyName: (args['keyName'] as string | undefined) ?? 'default',
+                project: (args['project'] as string | undefined) ?? '_global',
               }),
             },
           ],
@@ -148,7 +164,9 @@ async function handleToolCall(
       }
 
       case 'vault_list': {
-        const credentials = vault.listMasked();
+        const credentials = vault.listMasked(
+          args['project'] as string | undefined,
+        );
         return {
           content: [{ type: 'text', text: JSON.stringify(credentials) }],
         };

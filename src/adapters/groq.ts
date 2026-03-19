@@ -24,7 +24,7 @@ export class GroqAdapter implements LLMProvider {
   constructor(private readonly vault: Vault) {}
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const apiKey = this.vault.getDecrypted('groq');
+    const apiKey = this.vault.getDecrypted('groq', 'default', request.project);
     const client = new OpenAI({
       apiKey,
       baseURL: 'https://api.groq.com/openai/v1',

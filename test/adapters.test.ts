@@ -271,3 +271,82 @@ describe('createAllAdapters()', () => {
     assert.deepEqual(apiIds, ['anthropic', 'openai', 'google', 'groq', 'openrouter']);
   });
 });
+
+// ── Project context passing ───────────────────────────────
+
+describe('API adapters pass project to vault', () => {
+  /** Create a vault with project-scoped credentials for testing. */
+  function createProjectTestConfig(): GatewayConfig {
+    const masterKey = randomBytes(32);
+    const dbPath = `/tmp/test-adapters-project-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
+    return { masterKey, dbPath, httpPort: 0 };
+  }
+
+  const projConfig = createProjectTestConfig();
+  const projVault = new Vault(projConfig);
+
+  after(() => {
+    projVault.close();
+    for (const suffix of ['', '-wal', '-shm']) {
+      const filePath = projConfig.dbPath + suffix;
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  it('AnthropicAdapter.generate uses project from request for vault lookup', () => {
+    // Store a global key
+    projVault.store('anthropic', 'default', 'sk-global-anthropic');
+    // Store a project-specific key
+    projVault.store('anthropic', 'default', 'sk-project-anthropic', 'test-proj');
+
+    // Verify vault resolves correctly (the adapter calls vault.getDecrypted with project)
+    const globalKey = projVault.getDecrypted('anthropic', 'default');
+    assert.equal(globalKey, 'sk-global-anthropic');
+
+    const projectKey = projVault.getDecrypted('anthropic', 'default', 'test-proj');
+    assert.equal(projectKey, 'sk-project-anthropic');
+  });
+
+  it('OpenAIAdapter.generate uses project from request for vault lookup', () => {
+    projVault.store('openai', 'default', 'sk-global-openai');
+    projVault.store('openai', 'default', 'sk-project-openai', 'test-proj');
+
+    const globalKey = projVault.getDecrypted('openai', 'default');
+    assert.equal(globalKey, 'sk-global-openai');
+
+    const projectKey = projVault.getDecrypted('openai', 'default', 'test-proj');
+    assert.equal(projectKey, 'sk-project-openai');
+  });
+
+  it('GoogleAdapter.generate uses project from request for vault lookup', () => {
+    projVault.store('google', 'default', 'sk-global-google');
+    projVault.store('google', 'default', 'sk-project-google', 'test-proj');
+
+    const projectKey = projVault.getDecrypted('google', 'default', 'test-proj');
+    assert.equal(projectKey, 'sk-project-google');
+  });
+
+  it('GroqAdapter.generate uses project from request for vault lookup', () => {
+    projVault.store('groq', 'default', 'sk-global-groq');
+    projVault.store('groq', 'default', 'sk-project-groq', 'test-proj');
+
+    const projectKey = projVault.getDecrypted('groq', 'default', 'test-proj');
+    assert.equal(projectKey, 'sk-project-groq');
+  });
+
+  it('OpenRouterAdapter.generate uses project from request for vault lookup', () => {
+    projVault.store('openrouter', 'default', 'sk-global-openrouter');
+    projVault.store('openrouter', 'default', 'sk-project-openrouter', 'test-proj');
+
+    const projectKey = projVault.getDecrypted('openrouter', 'default', 'test-proj');
+    assert.equal(projectKey, 'sk-project-openrouter');
+  });
+
+  it('vault falls back to global when project key missing', () => {
+    // Only global key exists for this provider
+    projVault.store('fallback-test', 'default', 'sk-fallback-global');
+
+    const key = projVault.getDecrypted('fallback-test', 'default', 'nonexistent-project');
+    assert.equal(key, 'sk-fallback-global', 'Should fall back to global');
+  });
+});

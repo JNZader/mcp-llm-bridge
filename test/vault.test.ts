@@ -113,6 +113,14 @@ describe('Vault', () => {
     assert.ok(entry.updatedAt, 'Should have updatedAt');
   });
 
+  it('listMasked includes project field', () => {
+    const list = vault.listMasked();
+    const entry = list.find(c => c.provider === 'test-provider');
+
+    assert.ok(entry, 'Should find test-provider in list');
+    assert.equal(entry.project, '_global', 'Default project should be _global');
+  });
+
   it('delete removes credential', () => {
     const id = vault.store('to-delete', 'default', 'delete-me');
     assert.equal(vault.has('to-delete'), true);
@@ -142,5 +150,134 @@ describe('Vault', () => {
   it('mask: empty string returns ***', () => {
     const masked = vault.mask('');
     assert.equal(masked, '***');
+  });
+});
+
+// ── Project scoping ───────────────────────────────────────
+
+describe('Vault project scoping', () => {
+  const config = createTestConfig();
+  const vault = new Vault(config);
+
+  after(() => {
+    vault.close();
+    for (const suffix of ['', '-wal', '-shm']) {
+      const filePath = config.dbPath + suffix;
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  it('store with project creates project-scoped credential', () => {
+    vault.store('anthropic', 'default', 'sk-global-key');
+    vault.store('anthropic', 'default', 'sk-ghagga-key', 'ghagga');
+
+    const globalKey = vault.getDecrypted('anthropic', 'default');
+    assert.equal(globalKey, 'sk-global-key', 'Without project should return global');
+
+    const projectKey = vault.getDecrypted('anthropic', 'default', 'ghagga');
+    assert.equal(projectKey, 'sk-ghagga-key', 'With project should return project-specific');
+  });
+
+  it('getDecrypted falls back to global when project-specific not found', () => {
+    vault.store('openai', 'default', 'sk-openai-global');
+
+    const key = vault.getDecrypted('openai', 'default', 'nonexistent-project');
+    assert.equal(key, 'sk-openai-global', 'Should fall back to global credential');
+  });
+
+  it('getDecrypted throws when neither project nor global found', () => {
+    assert.throws(
+      () => vault.getDecrypted('missing-provider', 'default', 'some-project'),
+      /No credential found/,
+    );
+  });
+
+  it('getDecrypted error message mentions project when scoped', () => {
+    try {
+      vault.getDecrypted('missing-provider', 'default', 'my-project');
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof Error);
+      assert.ok(err.message.includes('my-project'), 'Error should mention the project');
+      assert.ok(err.message.includes('global'), 'Error should mention global fallback');
+    }
+  });
+
+  it('has() checks project-specific first, then global', () => {
+    vault.store('groq', 'default', 'sk-groq-global');
+
+    // Has global
+    assert.equal(vault.has('groq'), true);
+
+    // Has via fallback when checking nonexistent project
+    assert.equal(vault.has('groq', 'default', 'some-project'), true);
+
+    // Store project-specific
+    vault.store('groq', 'default', 'sk-groq-project', 'my-project');
+    assert.equal(vault.has('groq', 'default', 'my-project'), true);
+  });
+
+  it('has() returns false when neither project nor global exists', () => {
+    assert.equal(vault.has('no-provider', 'default', 'some-project'), false);
+  });
+
+  it('store without project defaults to _global', () => {
+    vault.store('test-default', 'default', 'sk-test-default');
+    const list = vault.listMasked();
+    const entry = list.find(c => c.provider === 'test-default');
+    assert.ok(entry);
+    assert.equal(entry.project, '_global');
+  });
+
+  it('upserts on same (provider, keyName, project)', () => {
+    vault.store('upsert-test', 'default', 'old-value', 'proj');
+    vault.store('upsert-test', 'default', 'new-value', 'proj');
+
+    const retrieved = vault.getDecrypted('upsert-test', 'default', 'proj');
+    assert.equal(retrieved, 'new-value');
+  });
+
+  it('same provider/keyName can have different values per project', () => {
+    vault.store('multi-proj', 'default', 'val-global');
+    vault.store('multi-proj', 'default', 'val-alpha', 'alpha');
+    vault.store('multi-proj', 'default', 'val-beta', 'beta');
+
+    assert.equal(vault.getDecrypted('multi-proj', 'default'), 'val-global');
+    assert.equal(vault.getDecrypted('multi-proj', 'default', 'alpha'), 'val-alpha');
+    assert.equal(vault.getDecrypted('multi-proj', 'default', 'beta'), 'val-beta');
+  });
+
+  it('listMasked() without project returns all credentials', () => {
+    const list = vault.listMasked();
+    const providers = list.map(c => c.provider);
+
+    assert.ok(providers.includes('anthropic'), 'Should include anthropic');
+    assert.ok(providers.includes('openai'), 'Should include openai');
+
+    // Should include both global and project-scoped entries for anthropic
+    const anthropicEntries = list.filter(c => c.provider === 'anthropic');
+    assert.ok(anthropicEntries.length >= 2, 'Should have both global and project-scoped anthropic');
+  });
+
+  it('listMasked(project) returns project + global credentials', () => {
+    const list = vault.listMasked('ghagga');
+
+    // Should include ghagga-scoped entries
+    const ghagga = list.filter(c => c.project === 'ghagga');
+    assert.ok(ghagga.length > 0, 'Should include ghagga-scoped credentials');
+
+    // Should include global entries
+    const global = list.filter(c => c.project === '_global');
+    assert.ok(global.length > 0, 'Should include global credentials');
+
+    // Should NOT include other projects
+    const other = list.filter(c => c.project !== '_global' && c.project !== 'ghagga');
+    assert.equal(other.length, 0, 'Should not include credentials from other projects');
+  });
+
+  it('listMasked(_global) returns only global credentials', () => {
+    const list = vault.listMasked('_global');
+    const nonGlobal = list.filter(c => c.project !== '_global');
+    assert.equal(nonGlobal.length, 0, 'Should only include global credentials');
   });
 });

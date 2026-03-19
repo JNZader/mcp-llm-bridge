@@ -21,7 +21,7 @@ export class OpenAIAdapter implements LLMProvider {
   constructor(private readonly vault: Vault) {}
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const apiKey = this.vault.getDecrypted('openai');
+    const apiKey = this.vault.getDecrypted('openai', 'default', request.project);
     const client = new OpenAI({ apiKey });
 
     const model = request.model ?? 'gpt-4o';

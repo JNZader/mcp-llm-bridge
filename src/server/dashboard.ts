@@ -154,6 +154,21 @@ export function dashboardHtml(): string {
       font-style: italic;
     }
 
+    /* ── Filter bar ──────────────────────────────── */
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 0.85rem;
+    }
+
+    .filter-bar label {
+      color: var(--text-dim);
+      font-weight: 500;
+      font-size: 0.78rem;
+    }
+
     /* ── Buttons ──────────────────────────────────── */
     button, .btn {
       font-family: var(--font-sans);
@@ -239,6 +254,27 @@ export function dashboardHtml(): string {
       font-family: var(--font-mono);
       font-size: 0.85rem;
       line-height: 1.5;
+    }
+
+    /* ── Project badge ───────────────────────────── */
+    .project-badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+
+    .project-badge.global {
+      color: var(--text-dim);
+      background: transparent;
+    }
+
+    .project-badge.scoped {
+      color: var(--accent);
+      background: rgba(168, 85, 247, 0.08);
+      border-color: rgba(168, 85, 247, 0.3);
     }
 
     /* ── Provider cards ───────────────────────────── */
@@ -420,19 +456,30 @@ export function dashboardHtml(): string {
     <section id="sec-credentials">
       <h2>\uD83D\uDD10 Credentials</h2>
       <div class="card">
+        <div class="filter-bar">
+          <label for="cred-filter-project">Filter by project:</label>
+          <select id="cred-filter-project" onchange="loadCredentials()">
+            <option value="">All</option>
+            <option value="_global">_global</option>
+            <option value="ghagga">ghagga</option>
+            <option value="md-evals">md-evals</option>
+            <option value="repoforge">repoforge</option>
+          </select>
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Provider</th>
                 <th>Key Name</th>
+                <th>Project</th>
                 <th>Value</th>
                 <th>Created</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="cred-rows">
-              <tr><td colspan="5" class="empty-msg">Loading\u2026</td></tr>
+              <tr><td colspan="6" class="empty-msg">Loading\u2026</td></tr>
             </tbody>
           </table>
         </div>
@@ -452,6 +499,20 @@ export function dashboardHtml(): string {
           <div class="form-group">
             <label for="cred-name">Key Name</label>
             <input type="text" id="cred-name" placeholder="default" value="default" style="width:120px">
+          </div>
+          <div class="form-group">
+            <label for="cred-project">Project</label>
+            <select id="cred-project">
+              <option value="_global">_global (shared)</option>
+              <option value="ghagga">ghagga</option>
+              <option value="md-evals">md-evals</option>
+              <option value="repoforge">repoforge</option>
+              <option value="__custom__">custom\u2026</option>
+            </select>
+          </div>
+          <div class="form-group" id="cred-custom-project-group" style="display:none">
+            <label for="cred-custom-project">Custom Project</label>
+            <input type="text" id="cred-custom-project" placeholder="my-project" style="width:140px">
           </div>
           <div class="form-group">
             <label for="cred-key">API Key</label>
@@ -498,6 +559,16 @@ export function dashboardHtml(): string {
               <label for="test-model">Model (optional)</label>
               <select id="test-model">
                 <option value="">auto</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="test-project">Project (optional)</label>
+              <select id="test-project">
+                <option value="">none</option>
+                <option value="_global">_global</option>
+                <option value="ghagga">ghagga</option>
+                <option value="md-evals">md-evals</option>
+                <option value="repoforge">repoforge</option>
               </select>
             </div>
             <div class="form-group">
@@ -553,20 +624,36 @@ export function dashboardHtml(): string {
       return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
+    function projectBadge(project) {
+      const isGlobal = project === '_global';
+      const cls = isGlobal ? 'global' : 'scoped';
+      return '<span class="project-badge ' + cls + '">' + escHtml(project) + '</span>';
+    }
+
+    // ── Custom project toggle ───────────────────
+
+    document.getElementById('cred-project').addEventListener('change', function() {
+      const customGroup = document.getElementById('cred-custom-project-group');
+      customGroup.style.display = this.value === '__custom__' ? 'flex' : 'none';
+    });
+
     // ── Credentials ─────────────────────────────
 
     async function loadCredentials() {
       try {
-        const { credentials } = await api('/v1/credentials');
+        const filterProject = document.getElementById('cred-filter-project').value;
+        const url = filterProject ? '/v1/credentials?project=' + encodeURIComponent(filterProject) : '/v1/credentials';
+        const { credentials } = await api(url);
         const tbody = document.getElementById('cred-rows');
         if (!credentials || credentials.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No credentials stored. Add one below.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" class="empty-msg">No credentials stored. Add one below.</td></tr>';
           return;
         }
         tbody.innerHTML = credentials.map(c => \`
           <tr>
             <td><code>\${escHtml(c.provider)}</code></td>
             <td><code>\${escHtml(c.keyName)}</code></td>
+            <td>\${projectBadge(c.project || '_global')}</td>
             <td><code>\${escHtml(c.maskedValue)}</code></td>
             <td>\${fmtDate(c.createdAt)}</td>
             <td><button class="btn-danger btn-sm" onclick="deleteCredential(\${c.id}, '\${escHtml(c.provider)}')">\u2715 Delete</button></td>
@@ -574,7 +661,7 @@ export function dashboardHtml(): string {
         \`).join('');
       } catch (e) {
         document.getElementById('cred-rows').innerHTML =
-          '<tr><td colspan="5" class="empty-msg" style="color:var(--red)">Failed to load: ' + escHtml(e.message) + '</td></tr>';
+          '<tr><td colspan="6" class="empty-msg" style="color:var(--red)">Failed to load: ' + escHtml(e.message) + '</td></tr>';
       }
     }
 
@@ -582,6 +669,11 @@ export function dashboardHtml(): string {
       const provider = document.getElementById('cred-provider').value;
       const keyName  = document.getElementById('cred-name').value.trim() || 'default';
       const apiKey   = document.getElementById('cred-key').value.trim();
+
+      const projectSelect = document.getElementById('cred-project').value;
+      const project = projectSelect === '__custom__'
+        ? (document.getElementById('cred-custom-project').value.trim() || '_global')
+        : projectSelect;
 
       if (!apiKey) {
         toast('API key is required', 'error');
@@ -591,10 +683,10 @@ export function dashboardHtml(): string {
       try {
         await api('/v1/credentials', {
           method: 'POST',
-          body: JSON.stringify({ provider, keyName, apiKey }),
+          body: JSON.stringify({ provider, keyName, apiKey, project }),
         });
         document.getElementById('cred-key').value = '';
-        toast('Credential added for ' + provider);
+        toast('Credential added for ' + provider + ' (' + project + ')');
         await refreshAll();
       } catch (e) {
         toast('Failed: ' + e.message, 'error');
@@ -704,6 +796,7 @@ export function dashboardHtml(): string {
 
       const provider  = document.getElementById('test-provider').value || undefined;
       const model     = document.getElementById('test-model').value || undefined;
+      const project   = document.getElementById('test-project').value || undefined;
       const maxTokens = parseInt(document.getElementById('test-tokens').value, 10) || undefined;
 
       const btn = document.getElementById('test-btn');
@@ -720,6 +813,7 @@ export function dashboardHtml(): string {
         const body = { prompt };
         if (provider)  body.provider  = provider;
         if (model)     body.model     = model;
+        if (project)   body.project   = project;
         if (maxTokens) body.maxTokens = maxTokens;
 
         const result = await api('/v1/generate', {

@@ -29,6 +29,7 @@ export interface GenerateRequest {
   provider?: string;
   model?: string;
   maxTokens?: number;
+  project?: string;
 }
 
 export interface GenerateResponse {
@@ -42,6 +43,7 @@ export interface StoredCredential {
   id: number;
   provider: string;
   keyName: string;
+  project: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,4 +56,5 @@ export interface GatewayConfig {
   masterKey: Buffer;
   dbPath: string;
   httpPort: number;
+  project?: string;
 }

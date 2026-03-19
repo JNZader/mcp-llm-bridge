@@ -3,6 +3,8 @@
  *
  * Provides HTTP endpoints for LLM generation, model listing,
  * provider status, and credential management.
+ *
+ * Supports per-project scoping via `project` body field or `X-Project` header.
  */
 
 import { Hono } from 'hono';
@@ -12,6 +14,13 @@ import type { GenerateRequest, GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
+
+/**
+ * Extract project from request: body field takes priority, then X-Project header.
+ */
+function resolveProject(bodyProject: string | undefined, headerProject: string | undefined): string | undefined {
+  return bodyProject ?? headerProject ?? undefined;
+}
 
 /**
  * Start the HTTP server on the configured port.
@@ -46,7 +55,10 @@ export function startHttpServer(
         return c.json({ error: 'prompt is required' }, 400);
       }
 
-      const result = await router.generate(body);
+      const headerProject = c.req.header('X-Project') ?? undefined;
+      const project = resolveProject(body.project, headerProject);
+
+      const result = await router.generate({ ...body, project });
       return c.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -86,6 +98,7 @@ export function startHttpServer(
         provider: string;
         keyName?: string;
         apiKey: string;
+        project?: string;
       }>();
 
       if (!body.provider || !body.apiKey) {
@@ -93,8 +106,10 @@ export function startHttpServer(
       }
 
       const keyName = body.keyName ?? 'default';
-      const id = vault.store(body.provider, keyName, body.apiKey);
-      return c.json({ id, provider: body.provider, keyName }, 201);
+      const headerProject = c.req.header('X-Project') ?? undefined;
+      const project = resolveProject(body.project, headerProject);
+      const id = vault.store(body.provider, keyName, body.apiKey, project);
+      return c.json({ id, provider: body.provider, keyName, project: project ?? '_global' }, 201);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);
@@ -103,7 +118,8 @@ export function startHttpServer(
 
   app.get('/v1/credentials', (c) => {
     try {
-      const credentials = vault.listMasked();
+      const project = c.req.query('project') ?? c.req.header('X-Project') ?? undefined;
+      const credentials = vault.listMasked(project);
       return c.json({ credentials });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

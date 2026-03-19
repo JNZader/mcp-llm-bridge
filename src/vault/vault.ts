@@ -4,6 +4,9 @@
  * Uses SQLite (better-sqlite3) for persistence and AES-256-GCM
  * for encryption. The master key is held in memory for the lifetime
  * of the Vault instance.
+ *
+ * Supports per-project credential scoping: credentials can be global
+ * (shared by all projects) or scoped to a specific project.
  */
 
 import Database from 'better-sqlite3';
@@ -12,7 +15,7 @@ import { dirname } from 'node:path';
 
 import type { GatewayConfig, MaskedCredential } from '../core/types.js';
 import { encrypt, decrypt } from './crypto.js';
-import { initializeDb } from './schema.js';
+import { GLOBAL_PROJECT, initializeDb } from './schema.js';
 
 /** Minimum characters to show unmasked in masked output. */
 const MASK_VISIBLE_CHARS = 7;
@@ -23,6 +26,7 @@ interface CredentialRow {
   id: number;
   provider: string;
   key_name: string;
+  project: string;
   encrypted_value: Buffer;
   iv: Buffer;
   auth_tag: Buffer;
@@ -54,18 +58,20 @@ export class Vault {
   /**
    * Store (upsert) an encrypted credential.
    *
-   * If a credential with the same (provider, keyName) already exists,
+   * If a credential with the same (provider, keyName, project) already exists,
    * it is updated with the new encrypted value.
    *
+   * @param project - Project scope (defaults to '_global')
    * @returns The row id of the stored credential
    */
-  store(provider: string, keyName: string, apiKey: string): number {
+  store(provider: string, keyName: string, apiKey: string, project?: string): number {
+    const proj = project ?? GLOBAL_PROJECT;
     const { encrypted, iv, authTag } = encrypt(apiKey, this.masterKey);
 
     const stmt = this.db.prepare(`
-      INSERT INTO credentials (provider, key_name, encrypted_value, iv, auth_tag, updated_at)
-      VALUES (@provider, @keyName, @encrypted, @iv, @authTag, datetime('now'))
-      ON CONFLICT(provider, key_name) DO UPDATE SET
+      INSERT INTO credentials (provider, key_name, project, encrypted_value, iv, auth_tag, updated_at)
+      VALUES (@provider, @keyName, @project, @encrypted, @iv, @authTag, datetime('now'))
+      ON CONFLICT(provider, key_name, project) DO UPDATE SET
         encrypted_value = @encrypted,
         iv              = @iv,
         auth_tag        = @authTag,
@@ -75,6 +81,7 @@ export class Vault {
     const result = stmt.run({
       provider,
       keyName,
+      project: proj,
       encrypted,
       iv,
       authTag,
@@ -86,20 +93,48 @@ export class Vault {
   /**
    * Retrieve and decrypt an API key.
    *
+   * When a project is specified, tries project-specific first,
+   * then falls back to '_global'.
+   *
    * @param provider - Provider identifier (e.g. "anthropic", "openai")
    * @param keyName - Key slot name (defaults to "default")
+   * @param project - Project scope (tries project-specific first, then '_global')
    * @throws Error if no credential is found for the given provider/keyName
    */
-  getDecrypted(provider: string, keyName = 'default'): string {
+  getDecrypted(provider: string, keyName = 'default', project?: string): string {
+    // If a project is specified and it's not _global, try project-specific first
+    if (project && project !== GLOBAL_PROJECT) {
+      const projectRow = this.db
+        .prepare(
+          'SELECT encrypted_value, iv, auth_tag FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
+        )
+        .get(provider, keyName, project) as Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+
+      if (projectRow) {
+        return decrypt(
+          {
+            encrypted: projectRow.encrypted_value,
+            iv: projectRow.iv,
+            authTag: projectRow.auth_tag,
+          },
+          this.masterKey,
+        );
+      }
+    }
+
+    // Fall back to global
     const row = this.db
       .prepare(
-        'SELECT encrypted_value, iv, auth_tag FROM credentials WHERE provider = ? AND key_name = ?',
+        'SELECT encrypted_value, iv, auth_tag FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
       )
-      .get(provider, keyName) as Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+      .get(provider, keyName, GLOBAL_PROJECT) as Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
 
     if (!row) {
+      const scopeInfo = project && project !== GLOBAL_PROJECT
+        ? ` (checked project "${project}" and global)`
+        : '';
       throw new Error(
-        `No credential found for provider "${provider}" with key name "${keyName}".`,
+        `No credential found for provider "${provider}" with key name "${keyName}"${scopeInfo}.`,
       );
     }
 
@@ -115,26 +150,55 @@ export class Vault {
 
   /**
    * Check whether a credential exists for the given provider/keyName.
+   *
+   * When a project is specified, checks project-specific first, then '_global'.
    */
-  has(provider: string, keyName = 'default'): boolean {
+  has(provider: string, keyName = 'default', project?: string): boolean {
+    // If a project is specified and it's not _global, check project-specific first
+    if (project && project !== GLOBAL_PROJECT) {
+      const projectRow = this.db
+        .prepare(
+          'SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
+        )
+        .get(provider, keyName, project);
+
+      if (projectRow !== undefined) {
+        return true;
+      }
+    }
+
+    // Fall back to global
     const row = this.db
       .prepare(
-        'SELECT 1 FROM credentials WHERE provider = ? AND key_name = ?',
+        'SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
       )
-      .get(provider, keyName);
+      .get(provider, keyName, GLOBAL_PROJECT);
 
     return row !== undefined;
   }
 
   /**
    * List all credentials with masked values (safe for display).
+   *
+   * If project is specified, returns project-specific + global credentials.
+   * If not specified, returns all credentials.
    */
-  listMasked(): MaskedCredential[] {
-    const rows = this.db
-      .prepare(
-        'SELECT id, provider, key_name, encrypted_value, iv, auth_tag, created_at, updated_at FROM credentials ORDER BY provider, key_name',
-      )
-      .all() as CredentialRow[];
+  listMasked(project?: string): MaskedCredential[] {
+    let rows: CredentialRow[];
+
+    if (project) {
+      rows = this.db
+        .prepare(
+          'SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at FROM credentials WHERE project = ? OR project = ? ORDER BY provider, key_name, project',
+        )
+        .all(project, GLOBAL_PROJECT) as CredentialRow[];
+    } else {
+      rows = this.db
+        .prepare(
+          'SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at FROM credentials ORDER BY provider, key_name, project',
+        )
+        .all() as CredentialRow[];
+    }
 
     return rows.map((row) => {
       const decrypted = decrypt(
@@ -150,6 +214,7 @@ export class Vault {
         id: row.id,
         provider: row.provider,
         keyName: row.key_name,
+        project: row.project,
         maskedValue: this.mask(decrypted),
         createdAt: row.created_at,
         updatedAt: row.updated_at,

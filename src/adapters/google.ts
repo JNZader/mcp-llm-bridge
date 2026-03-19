@@ -25,7 +25,7 @@ export class GoogleAdapter implements LLMProvider {
   constructor(private readonly vault: Vault) {}
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const apiKey = this.vault.getDecrypted('google');
+    const apiKey = this.vault.getDecrypted('google', 'default', request.project);
     const client = new OpenAI({
       apiKey,
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',

@@ -19,7 +19,7 @@ export class AnthropicAdapter implements LLMProvider {
   constructor(private readonly vault: Vault) {}
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const apiKey = this.vault.getDecrypted('anthropic');
+    const apiKey = this.vault.getDecrypted('anthropic', 'default', request.project);
     const client = new Anthropic({ apiKey });
 
     const model = request.model ?? 'claude-sonnet-4-20250514';
