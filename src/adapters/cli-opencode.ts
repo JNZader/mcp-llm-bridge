@@ -147,8 +147,13 @@ export class CliOpenCodeAdapter implements LLMProvider {
 
       const args = ['run', '--model', model, '--format', 'json'];
 
+      // Combine system + user prompt (OpenCode CLI has no --system flag)
+      const fullPrompt = request.system
+        ? `${request.system}\n\n---\n\n${request.prompt}`
+        : request.prompt;
+
       const output = execSync(`opencode ${args.join(' ')}`, {
-        input: request.prompt,
+        input: fullPrompt,
         timeout: 120_000,
         maxBuffer: 10 * 1024 * 1024,
         encoding: 'utf8',
