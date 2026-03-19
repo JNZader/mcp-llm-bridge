@@ -11,6 +11,7 @@ import { serve } from '@hono/node-server';
 import type { GenerateRequest, GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
+import { dashboardHtml } from './dashboard.js';
 
 /**
  * Start the HTTP server on the configured port.
@@ -24,6 +25,10 @@ export function startHttpServer(
   config: GatewayConfig,
 ): void {
   const app = new Hono();
+
+  // ── Dashboard ───────────────────────────────────────────
+
+  app.get('/', (c) => c.html(dashboardHtml()));
 
   // ── Health ──────────────────────────────────────────────
 
