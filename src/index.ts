@@ -3,54 +3,39 @@
 /**
  * MCP LLM Bridge — entrypoint.
  *
- * Currently a minimal stub that starts the MCP server.
- * Full wiring with Router, Vault, and adapters will be done in Task 8.
+ * Modes:
+ * - Default (no args):  MCP stdio server only (backward compatible)
+ * - `--http`:           MCP stdio + HTTP server
+ * - `serve`:            HTTP server only (no MCP stdio)
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { loadConfig } from './core/config.js';
+import { Router } from './core/router.js';
+import { Vault } from './vault/index.js';
+import { createAllAdapters } from './adapters/index.js';
+import { startMcpServer } from './server/mcp.js';
+import { startHttpServer } from './server/http.js';
 
-// Adapters are available but wiring through Router + Vault happens in Task 8
-// import { createAllAdapters } from './adapters/index.js';
+// Parse mode from argv
+const mode = process.argv[2]; // "serve" | "--http" | undefined
 
-const server = new Server({
-  name: 'mcp-llm-bridge',
-  version: '0.3.0',
-}, {
-  capabilities: { tools: {} },
-});
+// Initialize shared components
+const config = loadConfig();
+const vault = new Vault(config);
+const router = new Router();
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [{
-    name: 'llm_generate',
-    description: 'Generate text using an LLM. Full provider routing coming in Task 8.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        prompt: { type: 'string', description: 'The user prompt to send to the LLM' },
-        system: { type: 'string', description: 'Optional system prompt' },
-        provider: { type: 'string', description: 'Preferred provider ID' },
-        model: { type: 'string', description: 'Specific model ID' },
-        maxTokens: { type: 'number', description: 'Maximum output tokens' },
-      },
-      required: ['prompt'],
-    },
-  }],
-}));
+// Register all adapters
+for (const adapter of createAllAdapters(vault)) {
+  router.register(adapter);
+}
 
-server.setRequestHandler(CallToolRequestSchema, async (_request) => {
-  // Placeholder — will be wired through Router in Task 8
-  return {
-    content: [{
-      type: 'text' as const,
-      text: JSON.stringify({ error: 'Provider routing not yet wired. Complete Task 8.' }),
-    }],
-  };
-});
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
+if (mode === 'serve') {
+  // HTTP only
+  startHttpServer(router, vault, config);
+} else {
+  // MCP stdio (default — backward compatible)
+  await startMcpServer(router, vault);
+  if (mode === '--http') {
+    startHttpServer(router, vault, config);
+  }
+}
