@@ -429,6 +429,73 @@ export function dashboardHtml(): string {
     .toast.success { background: var(--green); }
     .toast.error   { background: var(--red); }
 
+    /* ── Login screen ─────────────────────────────── */
+    .login-screen {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+
+    .login-screen.hidden { display: none; }
+
+    .login-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+      width: 380px;
+      max-width: calc(100vw - 32px);
+      text-align: center;
+    }
+
+    .login-box h2 {
+      font-size: 1.3rem;
+      margin-bottom: 8px;
+      border: none;
+      padding: 0;
+    }
+
+    .login-box p {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-bottom: 20px;
+    }
+
+    .login-box .form-group {
+      margin-bottom: 16px;
+      text-align: left;
+    }
+
+    .login-box input {
+      width: 100%;
+    }
+
+    .login-box .login-error {
+      font-size: 0.82rem;
+      color: var(--red);
+      margin-bottom: 12px;
+      display: none;
+    }
+
+    .login-box .login-error.visible { display: block; }
+
+    .btn-logout {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      transition: all 0.15s ease;
+    }
+
+    .btn-logout:hover { border-color: var(--red); color: var(--red); background: rgba(248, 81, 73, 0.08); }
+
     /* ── Responsive ───────────────────────────────── */
     @media (max-width: 640px) {
       .container { padding: 16px 12px; }
@@ -441,6 +508,20 @@ export function dashboardHtml(): string {
   </style>
 </head>
 <body>
+  <!-- ── Login screen ───────────────────────── -->
+  <div id="login-screen" class="login-screen hidden">
+    <div class="login-box">
+      <h2>\uD83D\uDD12 LLM Gateway</h2>
+      <p>Enter the auth token to access the dashboard.</p>
+      <div id="login-error" class="login-error"></div>
+      <div class="form-group">
+        <label for="login-token">Auth Token</label>
+        <input type="password" id="login-token" placeholder="Enter token\u2026" autocomplete="off">
+      </div>
+      <button class="btn-primary" style="width:100%" onclick="submitLogin()">Enter</button>
+    </div>
+  </div>
+
   <div class="container">
 
     <!-- ── External dashboard banner ──────────── -->
@@ -467,7 +548,10 @@ export function dashboardHtml(): string {
         <span class="icon">\u26A1</span> LLM Gateway
         <span class="version">v0.2.0</span>
       </h1>
-      <span id="health" class="health-badge">checking\u2026</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span id="health" class="health-badge">checking\u2026</span>
+        <button id="logout-btn" class="btn-logout" style="display:none" onclick="doLogout()">\uD83D\uDD12 Logout</button>
+      </div>
     </header>
 
     <!-- ── Credentials ────────────────────────── -->
@@ -662,13 +746,86 @@ export function dashboardHtml(): string {
   <div id="toast" class="toast"></div>
 
   <script>
+    // ── Auth state ──────────────────────────────
+
+    const AUTH_STORAGE_KEY = 'llm-gateway-token';
+
+    function getToken() {
+      return localStorage.getItem(AUTH_STORAGE_KEY) || '';
+    }
+
+    function setToken(token) {
+      localStorage.setItem(AUTH_STORAGE_KEY, token);
+    }
+
+    function clearToken() {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+
+    function showLogin(errorMsg) {
+      const screen = document.getElementById('login-screen');
+      const errEl = document.getElementById('login-error');
+      screen.classList.remove('hidden');
+      if (errorMsg) {
+        errEl.textContent = errorMsg;
+        errEl.classList.add('visible');
+      } else {
+        errEl.classList.remove('visible');
+      }
+      document.getElementById('login-token').focus();
+    }
+
+    function hideLogin() {
+      document.getElementById('login-screen').classList.add('hidden');
+    }
+
+    function submitLogin() {
+      const token = document.getElementById('login-token').value.trim();
+      if (!token) return;
+      setToken(token);
+      hideLogin();
+      document.getElementById('login-token').value = '';
+      document.getElementById('logout-btn').style.display = '';
+      refreshAll().catch(function() {});
+      checkHealth();
+    }
+
+    function doLogout() {
+      clearToken();
+      document.getElementById('logout-btn').style.display = 'none';
+      showLogin();
+    }
+
+    // Submit on Enter key in login input
+    document.addEventListener('DOMContentLoaded', function() {
+      var loginInput = document.getElementById('login-token');
+      if (loginInput) {
+        loginInput.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') submitLogin();
+        });
+      }
+    });
+
     // ── API helpers ─────────────────────────────
+
+    function authHeaders() {
+      const token = getToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
 
     async function api(path, opts = {}) {
       const res = await fetch(path, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         ...opts,
       });
+      if (res.status === 401) {
+        clearToken();
+        document.getElementById('logout-btn').style.display = 'none';
+        showLogin('Session expired or invalid token. Please log in again.');
+        throw new Error('Unauthorized');
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       return data;
@@ -1004,8 +1161,26 @@ export function dashboardHtml(): string {
 
     // ── Init ────────────────────────────────────
 
-    checkHealth();
-    refreshAll();
+    async function init() {
+      // Try a health check first — if it works, auth might be disabled
+      try {
+        await checkHealth();
+      } catch {}
+
+      // Try loading data — if 401, the api() helper will show login
+      try {
+        await refreshAll();
+        // If we got here with a stored token, show logout button
+        if (getToken()) {
+          document.getElementById('logout-btn').style.display = '';
+        }
+      } catch (e) {
+        // If auth failed, login screen is already shown by api()
+        // If other error, just ignore — sections show their own errors
+      }
+    }
+
+    init();
   </script>
 </body>
 </html>`;

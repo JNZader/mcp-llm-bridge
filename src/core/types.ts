@@ -65,4 +65,5 @@ export interface GatewayConfig {
   dbPath: string;
   httpPort: number;
   project?: string;
+  authToken?: string;
 }

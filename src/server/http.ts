@@ -7,14 +7,77 @@
  * Supports per-project scoping via `project` body field or `X-Project` header.
  */
 
+import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
+import type { Context, Next } from 'hono';
 
 import type { GenerateRequest, GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
+
+/**
+ * Timing-safe comparison for bearer tokens.
+ * Returns true if both tokens are equal, using constant-time comparison
+ * to prevent timing attacks.
+ */
+function tokenEquals(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Bearer token auth middleware.
+ *
+ * - If `config.authToken` is not set → all requests pass (auth disabled).
+ * - Skips `GET /health` (Coolify health checks) and `OPTIONS *` (CORS preflight).
+ * - The dashboard HTML at `GET /` is always served (auth is handled in-browser).
+ * - All other routes require `Authorization: Bearer <token>`.
+ */
+function bearerAuth(config: GatewayConfig) {
+  return async (c: Context, next: Next) => {
+    // No token configured → auth disabled (local dev)
+    if (!config.authToken) {
+      return next();
+    }
+
+    // Always allow health checks (Coolify, uptime monitors)
+    if (c.req.method === 'GET' && c.req.path === '/health') {
+      return next();
+    }
+
+    // CORS preflight must pass through (handled by cors middleware)
+    if (c.req.method === 'OPTIONS') {
+      return next();
+    }
+
+    // Dashboard HTML is served without auth — the JS handles auth client-side
+    if (c.req.method === 'GET' && c.req.path === '/') {
+      return next();
+    }
+
+    // Check Authorization header
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const parts = authHeader.split(' ');
+    if (parts.length !== 2 || parts[0] !== 'Bearer' || !parts[1]) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    if (!tokenEquals(parts[1], config.authToken)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    return next();
+  };
+}
 
 /**
  * Extract project from request: body field takes priority, then X-Project header.
@@ -44,6 +107,9 @@ export function startHttpServer(
     exposeHeaders: ['Content-Length'],
     maxAge: 86400,
   }));
+
+  // ── Auth — bearer token middleware ─────────────────────
+  app.use('*', bearerAuth(config));
 
   // ── Dashboard ───────────────────────────────────────────
 

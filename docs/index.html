@@ -589,6 +589,10 @@
         <label for="settings-url">API Base URL</label>
         <input type="url" id="settings-url" placeholder="https://llm-gateway.example.com">
       </div>
+      <div class="form-group">
+        <label for="settings-token">Auth Token <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+        <input type="password" id="settings-token" placeholder="Bearer token for authentication" autocomplete="off">
+      </div>
       <div id="settings-status" class="connection-status"></div>
       <div class="modal-actions">
         <button id="settings-test-btn" onclick="testConnection()">Test Connection</button>
@@ -612,8 +616,10 @@
         <span class="version" id="version-badge">v—</span>
       </h1>
       <div class="header-right">
+        <span id="auth-badge" style="font-size:0.85rem;display:none" title="Authenticated">🔒</span>
         <span id="api-url-tag" class="api-url-display" title="Click settings to change"></span>
         <span id="health" class="health-badge pending">not connected</span>
+        <button id="logout-btn" class="btn-settings" onclick="doLogout()" title="Logout" style="display:none;color:var(--red)">Logout</button>
         <button class="btn-settings" onclick="openSettings()" title="Settings">⚙️</button>
       </div>
     </header>
@@ -801,6 +807,7 @@
     // ══════════════════════════════════════════════
 
     const STORAGE_KEY = 'llm-gateway-api-url';
+    const TOKEN_STORAGE_KEY = 'llm-gateway-token';
 
     // ── API base URL management ─────────────────
 
@@ -812,19 +819,38 @@
       localStorage.setItem(STORAGE_KEY, url.replace(/\/+$/, ''));
     }
 
+    function getToken() {
+      return localStorage.getItem(TOKEN_STORAGE_KEY) || '';
+    }
+
+    function setToken(token) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    }
+
+    function clearToken() {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+    }
+
     function isConfigured() {
       return !!getApiUrl();
     }
 
     // ── Settings modal ──────────────────────────
 
-    function openSettings() {
+    function openSettings(errorMsg) {
       var modal = document.getElementById('settings-modal');
       var input = document.getElementById('settings-url');
+      var tokenInput = document.getElementById('settings-token');
       var status = document.getElementById('settings-status');
       input.value = getApiUrl();
-      status.className = 'connection-status';
-      status.textContent = '';
+      tokenInput.value = getToken();
+      if (errorMsg) {
+        status.textContent = errorMsg;
+        status.className = 'connection-status visible err';
+      } else {
+        status.className = 'connection-status';
+        status.textContent = '';
+      }
       modal.classList.add('visible');
       setTimeout(function() { input.focus(); }, 100);
     }
@@ -835,6 +861,7 @@
 
     async function testConnection() {
       var url = document.getElementById('settings-url').value.trim().replace(/\/+$/, '');
+      var token = document.getElementById('settings-token').value.trim();
       var status = document.getElementById('settings-status');
       var btn = document.getElementById('settings-test-btn');
 
@@ -850,18 +877,29 @@
       status.className = 'connection-status visible pending';
 
       try {
-        var res = await fetch(url + '/health', {
-          headers: { 'Content-Type': 'application/json' },
-        });
+        // Health is always public, but test an authenticated endpoint too
+        var headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+
+        var res = await fetch(url + '/health', { headers: headers });
         var data = await res.json();
-        if (res.ok) {
-          var version = data.version || 'unknown';
-          status.textContent = '✓ Connected! Version: ' + version;
-          status.className = 'connection-status visible ok';
-        } else {
+        if (!res.ok) {
           status.textContent = '✗ Server returned ' + res.status;
           status.className = 'connection-status visible err';
+          return;
         }
+
+        // Now test an auth-protected endpoint
+        var authRes = await fetch(url + '/v1/providers', { headers: headers });
+        if (authRes.status === 401) {
+          status.textContent = '✗ Connected, but token is invalid or missing';
+          status.className = 'connection-status visible err';
+          return;
+        }
+
+        var version = data.version || 'unknown';
+        status.textContent = '✓ Connected & authenticated! Version: ' + version;
+        status.className = 'connection-status visible ok';
       } catch (e) {
         status.textContent = '✗ Connection failed: ' + e.message;
         status.className = 'connection-status visible err';
@@ -873,16 +911,44 @@
 
     async function saveSettings() {
       var url = document.getElementById('settings-url').value.trim().replace(/\/+$/, '');
+      var token = document.getElementById('settings-token').value.trim();
       if (!url) {
         toast('Please enter a URL', 'error');
         return;
       }
 
       setApiUrl(url);
+      if (token) {
+        setToken(token);
+      } else {
+        clearToken();
+      }
       closeSettings();
       updateApiUrlDisplay();
+      updateAuthUI();
       toast('Settings saved');
       await init();
+    }
+
+    function updateAuthUI() {
+      var hasToken = !!getToken();
+      document.getElementById('auth-badge').style.display = hasToken ? '' : 'none';
+      document.getElementById('logout-btn').style.display = (hasToken && isConfigured()) ? '' : 'none';
+    }
+
+    function doLogout() {
+      clearToken();
+      clearApiUrl();
+      updateAuthUI();
+      updateApiUrlDisplay();
+      var el = document.getElementById('health');
+      el.textContent = 'not connected';
+      el.className = 'health-badge pending';
+      openSettings();
+    }
+
+    function clearApiUrl() {
+      localStorage.removeItem(STORAGE_KEY);
     }
 
     function updateApiUrlDisplay() {
@@ -912,14 +978,27 @@
 
     // ── API helpers ─────────────────────────────
 
+    function authHeaders() {
+      var token = getToken();
+      var headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      return headers;
+    }
+
     async function api(path, opts) {
       opts = opts || {};
       var base = getApiUrl();
       if (!base) throw new Error('API URL not configured');
       var res = await fetch(base + path, {
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         ...opts,
       });
+      if (res.status === 401) {
+        clearToken();
+        updateAuthUI();
+        openSettings('Invalid token. Please re-enter your auth token.');
+        throw new Error('Unauthorized');
+      }
       var data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       return data;
@@ -1325,6 +1404,7 @@
 
     async function init() {
       updateApiUrlDisplay();
+      updateAuthUI();
 
       if (!isConfigured()) {
         openSettings();

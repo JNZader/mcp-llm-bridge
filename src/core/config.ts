@@ -64,12 +64,18 @@ function loadMasterKey(): Buffer {
 }
 
 /**
+ * Minimum length for the auth token to prevent weak secrets.
+ */
+const MIN_AUTH_TOKEN_LENGTH = 32;
+
+/**
  * Load gateway configuration from environment variables with sensible defaults.
  *
  * Environment variables:
  * - `LLM_GATEWAY_MASTER_KEY` — hex-encoded 32-byte encryption key
  * - `LLM_GATEWAY_DB_PATH` — path to SQLite vault database
  * - `LLM_GATEWAY_PORT` — HTTP server port
+ * - `LLM_GATEWAY_AUTH_TOKEN` — bearer token for HTTP auth (optional, min 32 chars)
  */
 export function loadConfig(): GatewayConfig {
   const masterKey = loadMasterKey();
@@ -84,5 +90,19 @@ export function loadConfig(): GatewayConfig {
     throw new Error(`LLM_GATEWAY_PORT must be a valid port number (1-65535). Got: "${portStr}"`);
   }
 
-  return { masterKey, dbPath, httpPort };
+  const rawAuthToken = process.env['LLM_GATEWAY_AUTH_TOKEN']?.trim();
+  let authToken: string | undefined;
+
+  if (rawAuthToken) {
+    if (rawAuthToken.length < MIN_AUTH_TOKEN_LENGTH) {
+      throw new Error(
+        `LLM_GATEWAY_AUTH_TOKEN must be at least ${MIN_AUTH_TOKEN_LENGTH} characters. Got ${rawAuthToken.length}.`,
+      );
+    }
+    authToken = rawAuthToken;
+  } else {
+    console.error('[llm-gateway] WARNING: LLM_GATEWAY_AUTH_TOKEN is not set — HTTP auth is disabled. Set it in production!');
+  }
+
+  return { masterKey, dbPath, httpPort, authToken };
 }
