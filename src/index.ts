@@ -1,66 +1,56 @@
 #!/usr/bin/env node
 
+/**
+ * MCP LLM Bridge — entrypoint.
+ *
+ * Currently a minimal stub that starts the MCP server.
+ * Full wiring with Router, Vault, and adapters will be done in Task 8.
+ */
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { detectProviders } from './detect.js';
-import { generate } from './generate.js';
+
+// Adapters are available but wiring through Router + Vault happens in Task 8
+// import { createAllAdapters } from './adapters/index.js';
 
 const server = new Server({
   name: 'mcp-llm-bridge',
-  version: '0.2.0',
+  version: '0.3.0',
 }, {
   capabilities: { tools: {} },
 });
 
-// Detect available CLI providers at startup
-const providers = await detectProviders();
-console.error(`[mcp-llm-bridge] Available providers: ${providers.map(p => p.name).join(', ') || 'none'}`);
-
-// Register the tool
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [{
     name: 'llm_generate',
-    description: `Generate text using an LLM via CLI subscription. Available providers: ${providers.map(p => p.name).join(', ')}. Uses your existing subscription \u2014 no API tokens needed.`,
+    description: 'Generate text using an LLM. Full provider routing coming in Task 8.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         prompt: { type: 'string', description: 'The user prompt to send to the LLM' },
-        system: { type: 'string', description: 'Optional system prompt (not all providers support this)' },
-        provider: {
-          type: 'string',
-          description: `Preferred provider. Options: ${providers.map(p => p.name).join(', ')}. If omitted, uses the first available.`,
-          enum: providers.map(p => p.name),
-        },
+        system: { type: 'string', description: 'Optional system prompt' },
+        provider: { type: 'string', description: 'Preferred provider ID' },
+        model: { type: 'string', description: 'Specific model ID' },
+        maxTokens: { type: 'number', description: 'Maximum output tokens' },
       },
       required: ['prompt'],
     },
   }],
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== 'llm_generate') {
-    throw new Error(`Unknown tool: ${request.params.name}`);
-  }
-
-  const args = (request.params.arguments ?? {}) as Record<string, unknown>;
-  const prompt = args['prompt'] as string;
-  const system = args['system'] as string | undefined;
-  const preferredProvider = args['provider'] as string | undefined;
-
-  const result = await generate(providers, { prompt, system, preferredProvider });
-
+server.setRequestHandler(CallToolRequestSchema, async (_request) => {
+  // Placeholder — will be wired through Router in Task 8
   return {
     content: [{
       type: 'text' as const,
-      text: JSON.stringify(result, null, 2),
+      text: JSON.stringify({ error: 'Provider routing not yet wired. Complete Task 8.' }),
     }],
   };
 });
 
-// Start
 const transport = new StdioServerTransport();
 await server.connect(transport);
