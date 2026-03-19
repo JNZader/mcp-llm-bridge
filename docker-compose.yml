@@ -1,0 +1,11 @@
+services:
+  llm-gateway:
+    build: .
+    ports:
+      - "3456:3456"
+    volumes:
+      - llm-data:/root/.llm-gateway
+    environment:
+      - LLM_GATEWAY_PORT=3456
+volumes:
+  llm-data:

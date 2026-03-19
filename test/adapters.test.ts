@@ -14,6 +14,9 @@ import type { GatewayConfig, LLMProvider } from '../src/core/types.js';
 import {
   AnthropicAdapter,
   OpenAIAdapter,
+  GoogleAdapter,
+  GroqAdapter,
+  OpenRouterAdapter,
   ClaudeCliAdapter,
   GeminiCliAdapter,
   CodexCliAdapter,
@@ -100,6 +103,69 @@ describe('OpenAIAdapter', () => {
   });
 });
 
+describe('GoogleAdapter', () => {
+  const adapter = new GoogleAdapter(vault);
+
+  it('has required properties', () => {
+    assertProviderInterface(adapter, 'google');
+    assert.equal(adapter.type, 'api');
+  });
+
+  it('models have required fields', () => {
+    for (const model of adapter.models) {
+      assertModelInfo(model, 'google');
+      assert.equal(model.provider, 'google');
+    }
+  });
+
+  it('isAvailable returns false when vault has no credentials', async () => {
+    const available = await adapter.isAvailable();
+    assert.equal(available, false, 'Should not be available without stored credentials');
+  });
+});
+
+describe('GroqAdapter', () => {
+  const adapter = new GroqAdapter(vault);
+
+  it('has required properties', () => {
+    assertProviderInterface(adapter, 'groq');
+    assert.equal(adapter.type, 'api');
+  });
+
+  it('models have required fields', () => {
+    for (const model of adapter.models) {
+      assertModelInfo(model, 'groq');
+      assert.equal(model.provider, 'groq');
+    }
+  });
+
+  it('isAvailable returns false when vault has no credentials', async () => {
+    const available = await adapter.isAvailable();
+    assert.equal(available, false, 'Should not be available without stored credentials');
+  });
+});
+
+describe('OpenRouterAdapter', () => {
+  const adapter = new OpenRouterAdapter(vault);
+
+  it('has required properties', () => {
+    assertProviderInterface(adapter, 'openrouter');
+    assert.equal(adapter.type, 'api');
+  });
+
+  it('models have required fields', () => {
+    for (const model of adapter.models) {
+      assertModelInfo(model, 'openrouter');
+      assert.equal(model.provider, 'openrouter');
+    }
+  });
+
+  it('isAvailable returns false when vault has no credentials', async () => {
+    const available = await adapter.isAvailable();
+    assert.equal(available, false, 'Should not be available without stored credentials');
+  });
+});
+
 describe('ClaudeCliAdapter', () => {
   const adapter = new ClaudeCliAdapter();
 
@@ -163,14 +229,17 @@ describe('CopilotCliAdapter', () => {
 // ── Factory function ──────────────────────────────────────
 
 describe('createAllAdapters()', () => {
-  it('returns 6 adapters', () => {
+  it('returns 9 adapters', () => {
     const adapters = createAllAdapters(vault);
-    assert.equal(adapters.length, 6, 'Should return exactly 6 adapters');
+    assert.equal(adapters.length, 9, 'Should return exactly 9 adapters');
   });
 
   it('all adapters implement LLMProvider interface', () => {
     const adapters = createAllAdapters(vault);
-    const expectedIds = ['anthropic', 'openai', 'claude-cli', 'gemini-cli', 'codex-cli', 'copilot-cli'];
+    const expectedIds = [
+      'anthropic', 'openai', 'google', 'groq', 'openrouter',
+      'claude-cli', 'gemini-cli', 'codex-cli', 'copilot-cli',
+    ];
 
     for (const adapter of adapters) {
       assertProviderInterface(adapter, adapter.id);
@@ -187,12 +256,18 @@ describe('createAllAdapters()', () => {
     const apiAdapters = adapters.filter(a => a.type === 'api');
     const cliAdapters = adapters.filter(a => a.type === 'cli');
 
-    assert.equal(apiAdapters.length, 2, 'Should have 2 API adapters');
+    assert.equal(apiAdapters.length, 5, 'Should have 5 API adapters');
     assert.equal(cliAdapters.length, 4, 'Should have 4 CLI adapters');
 
     // Verify API adapters come first in the array
     const firstCliIndex = adapters.findIndex(a => a.type === 'cli');
     const lastApiIndex = adapters.reduce((last, a, i) => a.type === 'api' ? i : last, -1);
     assert.ok(lastApiIndex < firstCliIndex, 'All API adapters should come before CLI adapters');
+  });
+
+  it('API adapters are in expected order', () => {
+    const adapters = createAllAdapters(vault);
+    const apiIds = adapters.filter(a => a.type === 'api').map(a => a.id);
+    assert.deepEqual(apiIds, ['anthropic', 'openai', 'google', 'groq', 'openrouter']);
   });
 });

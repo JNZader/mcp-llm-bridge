@@ -34,11 +34,11 @@ const TOOLS = [
         },
         provider: {
           type: 'string',
-          description: 'Preferred provider ID (e.g. "anthropic", "openai", "claude-cli")',
+          description: 'Preferred provider ID (e.g. "anthropic", "openai", "google", "groq", "openrouter", "claude-cli")',
         },
         model: {
           type: 'string',
-          description: 'Specific model ID (e.g. "claude-sonnet-4-20250514", "gpt-4o")',
+          description: 'Specific model ID (e.g. "claude-sonnet-4-20250514", "gpt-4o", "gemini-2.5-flash", "llama-3.3-70b-versatile")',
         },
         maxTokens: {
           type: 'number',
@@ -57,7 +57,7 @@ const TOOLS = [
       properties: {
         provider: {
           type: 'string',
-          description: 'Provider identifier (e.g. "anthropic", "openai")',
+          description: 'Provider identifier (e.g. "anthropic", "openai", "google", "groq", "openrouter")',
         },
         keyName: {
           type: 'string',
