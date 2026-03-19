@@ -229,16 +229,16 @@ describe('CopilotCliAdapter', () => {
 // ── Factory function ──────────────────────────────────────
 
 describe('createAllAdapters()', () => {
-  it('returns 9 adapters', () => {
+  it('returns 10 adapters', () => {
     const adapters = createAllAdapters(vault);
-    assert.equal(adapters.length, 9, 'Should return exactly 9 adapters');
+    assert.equal(adapters.length, 10, 'Should return exactly 10 adapters');
   });
 
   it('all adapters implement LLMProvider interface', () => {
     const adapters = createAllAdapters(vault);
     const expectedIds = [
       'anthropic', 'openai', 'google', 'groq', 'openrouter',
-      'claude-cli', 'gemini-cli', 'codex-cli', 'copilot-cli',
+      'opencode-cli', 'claude-cli', 'gemini-cli', 'codex-cli', 'copilot-cli',
     ];
 
     for (const adapter of adapters) {
@@ -257,7 +257,7 @@ describe('createAllAdapters()', () => {
     const cliAdapters = adapters.filter(a => a.type === 'cli');
 
     assert.equal(apiAdapters.length, 5, 'Should have 5 API adapters');
-    assert.equal(cliAdapters.length, 4, 'Should have 4 CLI adapters');
+    assert.equal(cliAdapters.length, 5, 'Should have 5 CLI adapters');
 
     // Verify API adapters come first in the array
     const firstCliIndex = adapters.findIndex(a => a.type === 'cli');

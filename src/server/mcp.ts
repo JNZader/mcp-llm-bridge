@@ -114,6 +114,60 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: 'vault_store_file',
+    description:
+      'Store an auth file (e.g. auth.json) in the encrypted vault. Upserts by (provider, fileName, project).',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        provider: {
+          type: 'string',
+          description: 'Provider identifier (e.g. "opencode")',
+        },
+        fileName: {
+          type: 'string',
+          description: 'File name (e.g. "auth.json")',
+        },
+        content: {
+          type: 'string',
+          description: 'File content as a string',
+        },
+        project: {
+          type: 'string',
+          description: 'Project scope (default: "_global" — shared by all projects)',
+        },
+      },
+      required: ['provider', 'fileName', 'content'],
+    },
+  },
+  {
+    name: 'vault_list_files',
+    description: 'List all stored auth files (metadata only). Optionally filter by project.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        project: {
+          type: 'string',
+          description: 'Filter by project (shows project-specific + global). Omit to show all.',
+        },
+      },
+    },
+  },
+  {
+    name: 'vault_delete_file',
+    description: 'Delete a stored auth file by its ID.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'number',
+          description: 'File row ID to delete',
+        },
+      },
+      required: ['id'],
+    },
+  },
 ] as const;
 
 /**
@@ -183,6 +237,44 @@ async function handleToolCall(
         const models = await router.getAvailableModels();
         return {
           content: [{ type: 'text', text: JSON.stringify(models) }],
+        };
+      }
+
+      case 'vault_store_file': {
+        const id = vault.storeFile(
+          args['provider'] as string,
+          args['fileName'] as string,
+          args['content'] as string,
+          args['project'] as string | undefined,
+        );
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                id,
+                provider: args['provider'],
+                fileName: args['fileName'],
+                project: (args['project'] as string | undefined) ?? '_global',
+              }),
+            },
+          ],
+        };
+      }
+
+      case 'vault_list_files': {
+        const files = vault.listFiles(
+          args['project'] as string | undefined,
+        );
+        return {
+          content: [{ type: 'text', text: JSON.stringify(files) }],
+        };
+      }
+
+      case 'vault_delete_file': {
+        vault.deleteFile(args['id'] as number);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
         };
       }
 

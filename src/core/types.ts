@@ -52,6 +52,14 @@ export interface MaskedCredential extends StoredCredential {
   maskedValue: string;
 }
 
+export interface StoredFile {
+  id: number;
+  provider: string;
+  fileName: string;
+  project: string;
+  createdAt: string;
+}
+
 export interface GatewayConfig {
   masterKey: Buffer;
   dbPath: string;

@@ -682,6 +682,54 @@
       </div>
     </section>
 
+    <!-- ── Auth Files ─────────────────────────── -->
+    <section id="sec-files">
+      <h2>📁 Auth Files</h2>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>File Name</th>
+                <th>Project</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="file-rows">
+              <tr><td colspan="5" class="empty-msg">Connect to a gateway to view files.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="file-provider">Provider</label>
+            <select id="file-provider">
+              <option value="opencode">opencode</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="file-input">File</label>
+            <input type="file" id="file-input" accept=".json" style="font-size:0.85rem">
+          </div>
+          <div class="form-group">
+            <label for="file-project">Project</label>
+            <select id="file-project">
+              <option value="_global">_global (shared)</option>
+              <option value="__custom__">custom…</option>
+            </select>
+          </div>
+          <div class="form-group" id="file-custom-project-group" style="display:none">
+            <label for="file-custom-project">Custom Project</label>
+            <input type="text" id="file-custom-project" placeholder="my-project" style="width:140px">
+          </div>
+          <button class="btn-primary" onclick="uploadFile()">Upload</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ── Providers ──────────────────────────── -->
     <section id="sec-providers">
       <h2>📡 Providers</h2>
@@ -940,6 +988,16 @@
         testSel.innerHTML += '<option value="' + escHtml(p) + '">' + escHtml(p) + '</option>';
       });
       testSel.value = testVal;
+
+      // File upload — project selector
+      var fileSel = document.getElementById('file-project');
+      var fileVal = fileSel.value;
+      fileSel.innerHTML = '<option value="_global">_global (shared)</option>';
+      projects.filter(function(p) { return p !== '_global'; }).forEach(function(p) {
+        fileSel.innerHTML += '<option value="' + escHtml(p) + '">' + escHtml(p) + '</option>';
+      });
+      fileSel.innerHTML += '<option value="__custom__">custom…</option>';
+      fileSel.value = fileVal;
     }
 
     // ── Credentials ─────────────────────────────
@@ -1014,6 +1072,77 @@
       try {
         await api('/v1/credentials/' + id, { method: 'DELETE' });
         toast('Credential deleted');
+        await refreshAll();
+      } catch (e) {
+        toast('Failed: ' + e.message, 'error');
+      }
+    }
+
+    // ── Auth Files ───────────────────────────────
+
+    document.getElementById('file-project').addEventListener('change', function() {
+      var customGroup = document.getElementById('file-custom-project-group');
+      customGroup.style.display = this.value === '__custom__' ? 'flex' : 'none';
+    });
+
+    async function loadFiles() {
+      try {
+        var result = await api('/v1/files');
+        var files = result.files;
+        var tbody = document.getElementById('file-rows');
+        if (!files || files.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No auth files stored. Upload one below.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = files.map(function(f) {
+          return '<tr>' +
+            '<td><code>' + escHtml(f.provider) + '</code></td>' +
+            '<td><code>' + escHtml(f.fileName) + '</code></td>' +
+            '<td>' + projectBadge(f.project || '_global') + '</td>' +
+            '<td>' + fmtDate(f.createdAt) + '</td>' +
+            '<td><button class="btn-danger btn-sm" onclick="deleteFile(' + f.id + ', \'' + escHtml(f.fileName) + '\')">✕ Delete</button></td>' +
+            '</tr>';
+        }).join('');
+      } catch (e) {
+        document.getElementById('file-rows').innerHTML =
+          '<tr><td colspan="5" class="empty-msg" style="color:var(--red)">Failed to load: ' + escHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    async function uploadFile() {
+      var provider = document.getElementById('file-provider').value;
+      var fileInput = document.getElementById('file-input');
+      var file = fileInput.files[0];
+
+      var projectSelect = document.getElementById('file-project').value;
+      var project = projectSelect === '__custom__'
+        ? (document.getElementById('file-custom-project').value.trim() || '_global')
+        : projectSelect;
+
+      if (!file) {
+        toast('Select a file first', 'error');
+        return;
+      }
+
+      file.text().then(function(content) {
+        return api('/v1/files', {
+          method: 'POST',
+          body: JSON.stringify({ provider: provider, fileName: file.name, content: content, project: project }),
+        });
+      }).then(function() {
+        fileInput.value = '';
+        toast('File uploaded for ' + provider + ' (' + project + ')');
+        return refreshAll();
+      }).catch(function(e) {
+        toast('Failed: ' + e.message, 'error');
+      });
+    }
+
+    async function deleteFile(id, fileName) {
+      if (!confirm('Delete file "' + fileName + '"?')) return;
+      try {
+        await api('/v1/files/' + id, { method: 'DELETE' });
+        toast('File deleted');
         await refreshAll();
       } catch (e) {
         toast('Failed: ' + e.message, 'error');
@@ -1186,6 +1315,7 @@
     async function refreshAll() {
       await Promise.all([
         loadCredentials(),
+        loadFiles(),
         loadProviders(),
         loadModels(),
       ]);

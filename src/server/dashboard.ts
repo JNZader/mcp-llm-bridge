@@ -541,6 +541,57 @@ export function dashboardHtml(): string {
       </div>
     </section>
 
+    <!-- ── Auth Files ─────────────────────────── -->
+    <section id="sec-files">
+      <h2>\uD83D\uDCC1 Auth Files</h2>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>File Name</th>
+                <th>Project</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="file-rows">
+              <tr><td colspan="5" class="empty-msg">Loading\u2026</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="file-provider">Provider</label>
+            <select id="file-provider">
+              <option value="opencode">opencode</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="file-input">File</label>
+            <input type="file" id="file-input" accept=".json" style="font-size:0.85rem">
+          </div>
+          <div class="form-group">
+            <label for="file-project">Project</label>
+            <select id="file-project">
+              <option value="_global">_global (shared)</option>
+              <option value="ghagga">ghagga</option>
+              <option value="md-evals">md-evals</option>
+              <option value="repoforge">repoforge</option>
+              <option value="__custom__">custom\u2026</option>
+            </select>
+          </div>
+          <div class="form-group" id="file-custom-project-group" style="display:none">
+            <label for="file-custom-project">Custom Project</label>
+            <input type="text" id="file-custom-project" placeholder="my-project" style="width:140px">
+          </div>
+          <button class="btn-primary" onclick="uploadFile()">Upload</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ── Providers ──────────────────────────── -->
     <section id="sec-providers">
       <h2>\uD83D\uDCE1 Providers</h2>
@@ -722,6 +773,76 @@ export function dashboardHtml(): string {
       }
     }
 
+    // ── Auth Files ───────────────────────────────
+
+    document.getElementById('file-project').addEventListener('change', function() {
+      const customGroup = document.getElementById('file-custom-project-group');
+      customGroup.style.display = this.value === '__custom__' ? 'flex' : 'none';
+    });
+
+    async function loadFiles() {
+      try {
+        const { files } = await api('/v1/files');
+        const tbody = document.getElementById('file-rows');
+        if (!files || files.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No auth files stored. Upload one below.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = files.map(f => \`
+          <tr>
+            <td><code>\${escHtml(f.provider)}</code></td>
+            <td><code>\${escHtml(f.fileName)}</code></td>
+            <td>\${projectBadge(f.project || '_global')}</td>
+            <td>\${fmtDate(f.createdAt)}</td>
+            <td><button class="btn-danger btn-sm" onclick="deleteFile(\${f.id}, '\${escHtml(f.fileName)}')">\u2715 Delete</button></td>
+          </tr>
+        \`).join('');
+      } catch (e) {
+        document.getElementById('file-rows').innerHTML =
+          '<tr><td colspan="5" class="empty-msg" style="color:var(--red)">Failed to load: ' + escHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    async function uploadFile() {
+      const provider = document.getElementById('file-provider').value;
+      const fileInput = document.getElementById('file-input');
+      const file = fileInput.files[0];
+
+      const projectSelect = document.getElementById('file-project').value;
+      const project = projectSelect === '__custom__'
+        ? (document.getElementById('file-custom-project').value.trim() || '_global')
+        : projectSelect;
+
+      if (!file) {
+        toast('Select a file first', 'error');
+        return;
+      }
+
+      try {
+        const content = await file.text();
+        await api('/v1/files', {
+          method: 'POST',
+          body: JSON.stringify({ provider, fileName: file.name, content, project }),
+        });
+        fileInput.value = '';
+        toast('File uploaded for ' + provider + ' (' + project + ')');
+        await refreshAll();
+      } catch (e) {
+        toast('Failed: ' + e.message, 'error');
+      }
+    }
+
+    async function deleteFile(id, fileName) {
+      if (!confirm('Delete file "' + fileName + '"?')) return;
+      try {
+        await api('/v1/files/' + id, { method: 'DELETE' });
+        toast('File deleted');
+        await refreshAll();
+      } catch (e) {
+        toast('Failed: ' + e.message, 'error');
+      }
+    }
+
     // ── Providers ───────────────────────────────
 
     async function loadProviders() {
@@ -875,6 +996,7 @@ export function dashboardHtml(): string {
     async function refreshAll() {
       await Promise.all([
         loadCredentials(),
+        loadFiles(),
         loadProviders(),
         loadModels(),
       ]);

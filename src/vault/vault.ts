@@ -13,7 +13,7 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { GatewayConfig, MaskedCredential } from '../core/types.js';
+import type { GatewayConfig, MaskedCredential, StoredFile } from '../core/types.js';
 import { encrypt, decrypt } from './crypto.js';
 import { GLOBAL_PROJECT, initializeDb } from './schema.js';
 
@@ -26,6 +26,19 @@ interface CredentialRow {
   id: number;
   provider: string;
   key_name: string;
+  project: string;
+  encrypted_value: Buffer;
+  iv: Buffer;
+  auth_tag: Buffer;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Row shape returned by SELECT queries on the files table. */
+interface FileRow {
+  id: number;
+  provider: string;
+  file_name: string;
   project: string;
   encrypted_value: Buffer;
   iv: Buffer;
@@ -241,6 +254,162 @@ export class Vault {
     }
     const visible = Math.min(MASK_VISIBLE_CHARS, value.length - 3);
     return value.slice(0, visible) + MASK_SUFFIX;
+  }
+
+  // ── File Storage ──────────────────────────────────────────
+
+  /**
+   * Store (upsert) an encrypted file.
+   *
+   * If a file with the same (provider, fileName, project) already exists,
+   * it is updated with the new encrypted content.
+   *
+   * @param provider - Provider identifier (e.g. "opencode")
+   * @param fileName - File name (e.g. "auth.json")
+   * @param content - File content as a string
+   * @param project - Project scope (defaults to '_global')
+   * @returns The row id of the stored file
+   */
+  storeFile(provider: string, fileName: string, content: string, project?: string): number {
+    const proj = project ?? GLOBAL_PROJECT;
+    const { encrypted, iv, authTag } = encrypt(content, this.masterKey);
+
+    const stmt = this.db.prepare(`
+      INSERT INTO files (provider, file_name, project, encrypted_value, iv, auth_tag, updated_at)
+      VALUES (@provider, @fileName, @project, @encrypted, @iv, @authTag, datetime('now'))
+      ON CONFLICT(provider, file_name, project) DO UPDATE SET
+        encrypted_value = @encrypted,
+        iv              = @iv,
+        auth_tag        = @authTag,
+        updated_at      = datetime('now')
+    `);
+
+    const result = stmt.run({
+      provider,
+      fileName,
+      project: proj,
+      encrypted,
+      iv,
+      authTag,
+    });
+
+    return Number(result.lastInsertRowid);
+  }
+
+  /**
+   * Retrieve and decrypt a stored file.
+   *
+   * When a project is specified, tries project-specific first,
+   * then falls back to '_global'.
+   *
+   * @returns Decrypted file content, or null if not found
+   */
+  getFile(provider: string, fileName: string, project?: string): string | null {
+    // If a project is specified and it's not _global, try project-specific first
+    if (project && project !== GLOBAL_PROJECT) {
+      const projectRow = this.db
+        .prepare(
+          'SELECT encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND file_name = ? AND project = ?',
+        )
+        .get(provider, fileName, project) as Pick<FileRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+
+      if (projectRow) {
+        return decrypt(
+          {
+            encrypted: projectRow.encrypted_value,
+            iv: projectRow.iv,
+            authTag: projectRow.auth_tag,
+          },
+          this.masterKey,
+        );
+      }
+    }
+
+    // Fall back to global
+    const row = this.db
+      .prepare(
+        'SELECT encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND file_name = ? AND project = ?',
+      )
+      .get(provider, fileName, GLOBAL_PROJECT) as Pick<FileRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+
+    if (!row) {
+      return null;
+    }
+
+    return decrypt(
+      {
+        encrypted: row.encrypted_value,
+        iv: row.iv,
+        authTag: row.auth_tag,
+      },
+      this.masterKey,
+    );
+  }
+
+  /**
+   * Check whether a file exists for the given provider/fileName.
+   *
+   * When a project is specified, checks project-specific first, then '_global'.
+   */
+  hasFile(provider: string, fileName: string, project?: string): boolean {
+    if (project && project !== GLOBAL_PROJECT) {
+      const projectRow = this.db
+        .prepare(
+          'SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?',
+        )
+        .get(provider, fileName, project);
+
+      if (projectRow !== undefined) {
+        return true;
+      }
+    }
+
+    const row = this.db
+      .prepare(
+        'SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?',
+      )
+      .get(provider, fileName, GLOBAL_PROJECT);
+
+    return row !== undefined;
+  }
+
+  /**
+   * Delete a stored file by its row id.
+   */
+  deleteFile(id: number): void {
+    this.db.prepare('DELETE FROM files WHERE id = ?').run(id);
+  }
+
+  /**
+   * List all stored files (metadata only, no content).
+   *
+   * If project is specified, returns project-specific + global files.
+   * If not specified, returns all files.
+   */
+  listFiles(project?: string): StoredFile[] {
+    let rows: FileRow[];
+
+    if (project) {
+      rows = this.db
+        .prepare(
+          'SELECT id, provider, file_name, project, created_at FROM files WHERE project = ? OR project = ? ORDER BY provider, file_name, project',
+        )
+        .all(project, GLOBAL_PROJECT) as FileRow[];
+    } else {
+      rows = this.db
+        .prepare(
+          'SELECT id, provider, file_name, project, created_at FROM files ORDER BY provider, file_name, project',
+        )
+        .all() as FileRow[];
+    }
+
+    return rows.map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      fileName: row.file_name,
+      project: row.project,
+      createdAt: row.created_at,
+    }));
   }
 
   /**

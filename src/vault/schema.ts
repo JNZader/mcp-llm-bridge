@@ -3,6 +3,7 @@
  *
  * Creates the `credentials` table with a unique constraint on
  * (provider, key_name, project) to support per-project credential scoping.
+ * Creates the `files` table for encrypted file storage (e.g. auth.json).
  * Handles migration from the old schema (without project column).
  */
 
@@ -79,4 +80,20 @@ export function initializeDb(db: Database.Database): void {
       );
     `);
   }
+
+  // ── Files table (for auth.json and similar config files) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS files (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider        TEXT NOT NULL,
+      file_name       TEXT NOT NULL,
+      project         TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
+      encrypted_value BLOB NOT NULL,
+      iv              BLOB NOT NULL,
+      auth_tag        BLOB NOT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(provider, file_name, project)
+    );
+  `);
 }

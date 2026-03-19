@@ -153,6 +153,58 @@ export function startHttpServer(
     }
   });
 
+  // ── Files CRUD ─────────────────────────────────────────
+
+  app.post('/v1/files', async (c) => {
+    try {
+      const body = await c.req.json<{
+        provider: string;
+        fileName: string;
+        content: string;
+        project?: string;
+      }>();
+
+      if (!body.provider || !body.fileName || !body.content) {
+        return c.json({ error: 'provider, fileName, and content are required' }, 400);
+      }
+
+      const headerProject = c.req.header('X-Project') ?? undefined;
+      const project = resolveProject(body.project, headerProject);
+      const id = vault.storeFile(body.provider, body.fileName, body.content, project);
+      return c.json({ id, provider: body.provider, fileName: body.fileName, project: project ?? '_global' }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.get('/v1/files', (c) => {
+    try {
+      const project = c.req.query('project') ?? c.req.header('X-Project') ?? undefined;
+      const files = vault.listFiles(project);
+      return c.json({ files });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.delete('/v1/files/:id', (c) => {
+    try {
+      const id = Number(c.req.param('id'));
+
+      if (isNaN(id)) {
+        return c.json({ error: 'id must be a number' }, 400);
+      }
+
+      vault.deleteFile(id);
+      return c.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
   // ── Start ──────────────────────────────────────────────
 
   serve(
