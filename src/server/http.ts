@@ -8,6 +8,7 @@
  */
 
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
 
 import type { GenerateRequest, GatewayConfig } from '../core/types.js';
@@ -34,6 +35,15 @@ export function startHttpServer(
   config: GatewayConfig,
 ): void {
   const app = new Hono();
+
+  // ── CORS — allow GitHub Pages dashboard and other origins ──
+  app.use('*', cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Project'],
+    exposeHeaders: ['Content-Length'],
+    maxAge: 86400,
+  }));
 
   // ── Dashboard ───────────────────────────────────────────
 
