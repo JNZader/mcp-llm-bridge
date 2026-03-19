@@ -5,6 +5,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
+# Install OpenCode CLI (direct binary — install script fails in slim containers)
+ARG OPENCODE_VERSION=1.2.27
+RUN curl -fsSL -o /tmp/opencode.tar.gz \
+      "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz" && \
+    tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin && \
+    chmod +x /usr/local/bin/opencode && \
+    rm -f /tmp/opencode.tar.gz && \
+    echo "OpenCode installed: $(opencode --version)"
+
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false
