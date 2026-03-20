@@ -13,6 +13,7 @@ import type {
   ModelInfo,
 } from './types.js';
 import { logger } from './logger.js';
+import { getCircuitBreakerRegistry, CircuitBreakerOpenError } from './circuit-breaker.js';
 
 export class Router {
   private providers: LLMProvider[] = [];
@@ -42,6 +43,7 @@ export class Router {
    *
    * Tries each candidate in resolution order and falls back to the next
    * on failure. Throws if all providers fail.
+   * Uses circuit breaker to skip providers that are currently failing.
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const candidates = await this.resolveCandidates(request);
@@ -52,8 +54,20 @@ export class Router {
       );
     }
 
+    // Filter out providers with open circuit breakers
+    const circuitBreaker = getCircuitBreakerRegistry();
+    const availableCandidates = candidates.filter((p) => circuitBreaker.canRequest(p.id));
+
+    if (availableCandidates.length === 0) {
+      // All candidates have open circuit breakers
+      const openProviders = candidates.map((p) => p.id).join(', ');
+      throw new Error(
+        `All providers have circuit breakers open: ${openProviders}. Wait for recovery or check provider status.`,
+      );
+    }
+
     if (request.strict) {
-      const provider = candidates[0];
+      const provider = availableCandidates[0];
 
       if (!provider) {
         throw new Error(
@@ -63,8 +77,10 @@ export class Router {
 
       try {
         const result = await provider.generate(request);
+        circuitBreaker.recordSuccess(provider.id);
         return this.withResolutionMetadata(request, result, false);
       } catch (error) {
+        circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
         logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         throw error;
@@ -73,11 +89,13 @@ export class Router {
 
     const errors: string[] = [];
 
-    for (const [index, provider] of candidates.entries()) {
+    for (const [index, provider] of availableCandidates.entries()) {
       try {
         const result = await provider.generate(request);
+        circuitBreaker.recordSuccess(provider.id);
         return this.withResolutionMetadata(request, result, index > 0);
       } catch (error) {
+        circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
         logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         errors.push(`${provider.id}: ${message}`);

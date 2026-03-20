@@ -10,6 +10,7 @@
 import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { compress } from 'hono/compress';
 import { serve } from '@hono/node-server';
 import type { Context, Next } from 'hono';
 
@@ -17,9 +18,16 @@ import type { GenerateRequest, GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
-import { VERSION, MAX_BODY_SIZE, MAX_PROMPT_LENGTH, VALID_PROVIDERS } from '../core/constants.js';
+import { VERSION, MAX_BODY_SIZE } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 import { RateLimiter } from './rate-limit.js';
+import {
+  getMetrics,
+  getMetricsContentType,
+  updateProviderAvailability,
+  httpRequestsTotal,
+  httpRequestDuration,
+} from '../core/metrics.js';
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -229,6 +237,9 @@ export function startHttpServer(
 
   // ── Security middleware ────────────────────────────────
 
+  // HTTP compression
+  app.use(compress());
+
   // Rate limiting
   app.use('*', rateLimitMiddleware(rateLimiter));
 
@@ -258,6 +269,15 @@ export function startHttpServer(
 
   app.get('/health', (c) => {
     return c.json({ status: 'ok', version: VERSION });
+  });
+
+  // ── Metrics ─────────────────────────────────────────────
+
+  app.get('/metrics', async (c) => {
+    // Update provider availability before returning metrics
+    await updateProviderAvailability(router);
+    const metrics = await getMetrics();
+    return c.text(metrics, 200, { 'Content-Type': getMetricsContentType() });
   });
 
   // ── Generate ───────────────────────────────────────────
