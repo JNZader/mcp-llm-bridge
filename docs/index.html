@@ -1256,6 +1256,7 @@
     // ── Auth Files ───────────────────────────────
 
     var selectedAuthFile = null;
+    var cachedModels = [];
 
     function getSelectedFileProject(selectId, customInputId, fallbackValue) {
       selectId = selectId || 'file-project';
@@ -1376,6 +1377,22 @@
 
     // ── Providers ───────────────────────────────
 
+    function populateTestModelDropdown() {
+      var providerSel = document.getElementById('test-provider');
+      var modelSel = document.getElementById('test-model');
+      var current = modelSel.value;
+      var selectedProvider = providerSel.value;
+      var filtered = selectedProvider
+        ? cachedModels.filter(function(m) { return m.provider === selectedProvider; })
+        : cachedModels;
+
+      modelSel.innerHTML = '<option value="">auto</option>' +
+        filtered.map(function(m) {
+          return '<option value="' + escHtml(m.id) + '">' + escHtml(m.id) + '</option>';
+        }).join('');
+      modelSel.value = filtered.some(function(m) { return m.id === current; }) ? current : '';
+    }
+
     async function loadProviders() {
       try {
         var result = await api('/v1/providers');
@@ -1408,6 +1425,7 @@
             return '<option value="' + escHtml(p.id) + '">' + escHtml(p.id) + '</option>';
           }).join('');
         sel.value = current;
+        populateTestModelDropdown();
       } catch (e) {
         document.getElementById('providers-grid').innerHTML =
           '<div class="empty-msg" style="color:var(--red)">Failed to load providers</div>';
@@ -1420,6 +1438,7 @@
       try {
         var result = await api('/v1/models');
         var models = result.models || result.data || [];
+        cachedModels = models;
         var wrap = document.getElementById('models-list');
 
         if (!models || models.length === 0) {
@@ -1445,13 +1464,7 @@
         }).join('');
 
         // Populate test model dropdown
-        var sel = document.getElementById('test-model');
-        var current = sel.value;
-        sel.innerHTML = '<option value="">auto</option>' +
-          models.map(function(m) {
-            return '<option value="' + escHtml(m.id) + '">' + escHtml(m.id) + '</option>';
-          }).join('');
-        sel.value = current;
+        populateTestModelDropdown();
       } catch (e) {
         document.getElementById('models-list').innerHTML =
           '<div class="empty-msg" style="color:var(--red)">Failed to load models</div>';
@@ -1562,6 +1575,7 @@
     }
 
     document.getElementById('file-project').addEventListener('change', toggleFileCustomProject);
+    document.getElementById('test-provider').addEventListener('change', populateTestModelDropdown);
     document.getElementById('file-filter-project').addEventListener('change', function() {
       toggleFileFilterCustomProject();
       refreshFiles().catch(function() {});

@@ -1035,6 +1035,7 @@ export function dashboardHtml(): string {
     // ── Auth Files ───────────────────────────────
 
     let selectedAuthFile = null;
+    let cachedModels = [];
 
     function getSelectedFileProject(selectId = 'file-project', customInputId = 'file-custom-project', fallbackValue = '_global') {
       const projectSelect = document.getElementById(selectId).value;
@@ -1153,6 +1154,22 @@ export function dashboardHtml(): string {
 
     // ── Providers ───────────────────────────────
 
+    function populateTestModelDropdown() {
+      const providerSel = document.getElementById('test-provider');
+      const modelSel = document.getElementById('test-model');
+      const current = modelSel.value;
+      const selectedProvider = providerSel.value;
+      const filtered = selectedProvider
+        ? cachedModels.filter(m => m.provider === selectedProvider)
+        : cachedModels;
+
+      modelSel.innerHTML = '<option value="">auto</option>' +
+        filtered.map(m =>
+          '<option value="' + escHtml(m.id) + '">' + escHtml(m.id) + '</option>'
+        ).join('');
+      modelSel.value = filtered.some(m => m.id === current) ? current : '';
+    }
+
     async function loadProviders() {
       try {
         const { providers } = await api('/v1/providers');
@@ -1184,6 +1201,7 @@ export function dashboardHtml(): string {
             '<option value="' + escHtml(p.id) + '">' + escHtml(p.id) + '</option>'
           ).join('');
         sel.value = current;
+        populateTestModelDropdown();
       } catch (e) {
         document.getElementById('providers-grid').innerHTML =
           '<div class="empty-msg" style="color:var(--red)">Failed to load providers</div>';
@@ -1196,6 +1214,7 @@ export function dashboardHtml(): string {
       try {
         const result = await api('/v1/models');
         const models = result.models ?? result.data ?? [];
+        cachedModels = models;
         const wrap = document.getElementById('models-list');
 
         if (!models || models.length === 0) {
@@ -1220,13 +1239,7 @@ export function dashboardHtml(): string {
         \`).join('');
 
         // Populate test model dropdown
-        const sel = document.getElementById('test-model');
-        const current = sel.value;
-        sel.innerHTML = '<option value="">auto</option>' +
-          models.map(m =>
-            '<option value="' + escHtml(m.id) + '">' + escHtml(m.id) + '</option>'
-          ).join('');
-        sel.value = current;
+        populateTestModelDropdown();
       } catch (e) {
         document.getElementById('models-list').innerHTML =
           '<div class="empty-msg" style="color:var(--red)">Failed to load models</div>';
@@ -1333,6 +1346,7 @@ export function dashboardHtml(): string {
     }
 
     document.getElementById('file-project').addEventListener('change', toggleFileCustomProject);
+    document.getElementById('test-provider').addEventListener('change', populateTestModelDropdown);
     document.getElementById('file-filter-project').addEventListener('change', function() {
       toggleFileFilterCustomProject();
       refreshFiles().catch(function() {});
