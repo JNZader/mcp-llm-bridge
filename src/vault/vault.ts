@@ -17,6 +17,12 @@ import type { GatewayConfig, MaskedCredential, StoredFile } from '../core/types.
 import { encrypt, decrypt } from './crypto.js';
 import { initializeDb } from './schema.js';
 import {
+  readClaudeOAuthToken,
+  refreshTokenIfNeeded,
+  syncToOpencodeAuth,
+  type TokenInfo,
+} from './claude-oauth.js';
+import {
   GLOBAL_PROJECT,
   MASK_VISIBLE_CHARS,
   MASK_SUFFIX,
@@ -600,6 +606,58 @@ export class Vault {
       ),
       project: row.project,
     }));
+  }
+
+  // ── Claude CLI OAuth Integration ─────────────────────────────
+
+  /**
+   * Get Claude OAuth token from CLI credentials, with automatic refresh and sync.
+   *
+   * This method:
+   * 1. Reads the OAuth token from ~/.claude/.credentials.json
+   * 2. Checks if the token needs refresh (within 5 minutes of expiry)
+   * 3. Attempts refresh if needed
+   * 4. Syncs the credentials to ~/.local/share/opencode/auth.json
+   * 5. Returns the access token
+   *
+   * @param project - Optional project identifier (for future multi-tenant use)
+   * @returns The OAuth access token, or null if not available
+   */
+  async getClaudeOAuthToken(project?: string): Promise<TokenInfo | null> {
+    // Read token from Claude CLI credentials
+    let token = readClaudeOAuthToken();
+
+    if (!token) {
+      return null;
+    }
+
+    // Check if token needs refresh
+    if (token.refreshToken) {
+      try {
+        token = await refreshTokenIfNeeded(token);
+      } catch (error) {
+        // Log but continue with existing token
+        console.warn('[vault] Token refresh failed, using existing token:', error);
+      }
+    }
+
+    // Sync to opencode auth.json
+    syncToOpencodeAuth(token, project);
+
+    return token;
+  }
+
+  /**
+   * Get Claude OAuth token synchronously (without refresh).
+   *
+   * Use this for quick lookups where you don't want async overhead.
+   * Does not trigger refresh or sync.
+   *
+   * @returns The OAuth access token, or null if not available
+   */
+  getClaudeOAuthTokenSync(): string | null {
+    const token = readClaudeOAuthToken();
+    return token?.accessToken ?? null;
   }
 
   /**
