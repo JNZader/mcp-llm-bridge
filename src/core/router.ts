@@ -92,29 +92,34 @@ export class Router {
 
   /** Return models from all registered providers. */
   async getAvailableModels(): Promise<ModelInfo[]> {
-    const models: ModelInfo[] = [];
-    for (const provider of this.providers) {
-      if (await provider.isAvailable()) {
-        models.push(...provider.models);
-      }
-    }
-    return models;
+    // Parallel availability checks for better performance
+    const results = await Promise.all(
+      this.providers.map(async (provider) => ({
+        provider,
+        available: await provider.isAvailable(),
+      })),
+    );
+
+    return results
+      .filter((r) => r.available)
+      .flatMap((r) => r.provider.models);
   }
 
   /** Return status information for each registered provider. */
   async getProviderStatuses(): Promise<
     Array<{ id: string; name: string; type: string; available: boolean }>
   > {
-    const statuses = [];
-    for (const provider of this.providers) {
-      statuses.push({
+    // Parallel availability checks for better performance
+    const results = await Promise.all(
+      this.providers.map(async (provider) => ({
         id: provider.id,
         name: provider.name,
         type: provider.type,
         available: await provider.isAvailable(),
-      });
-    }
-    return statuses;
+      })),
+    );
+
+    return results;
   }
 
   /**
@@ -128,12 +133,16 @@ export class Router {
   private async resolveCandidates(
     request: GenerateRequest,
   ): Promise<LLMProvider[]> {
-    const available: LLMProvider[] = [];
-    for (const p of this.providers) {
-      if (await p.isAvailable()) {
-        available.push(p);
-      }
-    }
+    // Parallel availability check - avoids N sequential isAvailable() calls
+    const availabilityResults = await Promise.all(
+      this.providers.map(async (provider) => ({
+        provider,
+        available: await provider.isAvailable(),
+      })),
+    );
+    const available = availabilityResults
+      .filter((r) => r.available)
+      .map((r) => r.provider);
 
     // 1. If model specified, find provider that has that model
     if (request.model) {
