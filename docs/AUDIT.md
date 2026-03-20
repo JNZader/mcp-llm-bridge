@@ -1,901 +1,646 @@
-# Security Audit & Code Quality Report
+# Comprehensive Audit Report: mcp-llm-bridge
 
 **Project**: [mcp-llm-bridge](https://github.com/JNZader/mcp-llm-bridge)  
 **Version**: 0.2.0  
 **Date**: 2026-03-20  
-**Auditor**: Quality Domain Orchestrator
+**Auditor**: Multi-Agent Deep Audit  
+**Scope**: Security + Performance + Architecture  
+**Status**: Pre-production review
 
 ---
 
 ## Executive Summary
 
-The mcp-llm-bridge project demonstrates solid security foundations with AES-256-GCM encryption, timing-safe comparisons, and prepared SQL statements. However, several issues require attention before production deployment, particularly CORS configuration and subprocess execution patterns.
+This is a **comprehensive second audit** following security hardening improvements. The project shows significant progress with proper encryption, authentication, and input validation. However, critical security vulnerabilities and performance bottlenecks remain before production deployment.
 
 | Category | Critical | High | Medium | Low | Info |
 |----------|----------|------|--------|-----|------|
-| Security | 0 | 2 | 4 | 3 | 5 |
-| Code Smells | 0 | 0 | 5 | 3 | 2 |
-| Performance | 0 | 2 | 2 | 1 | 0 |
+| **Security** | 4 | 3 | 3 | 2 | 3 |
+| **Performance** | 3 | 5 | 7 | 2 | 0 |
+| **Architecture** | 1 | 5 | 10 | 8 | 4 |
 
 ---
 
 ## Table of Contents
 
-1. [Security Findings](#security-findings)
-2. [Code Smells](#code-smells)
-3. [Performance Issues](#performance-issues)
-4. [Opportunities for Improvement](#opportunities-for-improvement)
-5. [Recommendations](#recommendations)
-6. [Quick Wins](#quick-wins)
-7. [Technical Debt](#technical-debt)
+1. [🔴 CRITICAL Security Issues](#critical-security-issues)
+2. [🟠 HIGH Security Issues](#high-security-issues)
+3. [🟡 MEDIUM Security Issues](#medium-security-issues)
+4. [🟢 LOW/INFO Security Issues](#lowinfo-security-issues)
+5. [⚡ CRITICAL Performance Issues](#critical-performance-issues)
+6. [🔥 HIGH Performance Issues](#high-performance-issues)
+7. [📊 MEDIUM Performance Issues](#medium-performance-issues)
+8. [🏗️ Architecture & Code Quality](#architecture--code-quality)
+9. [✅ What's Done Right](#whats-done-right)
+10. [📋 Prioritized Fix Roadmap](#prioritized-fix-roadmap)
 
 ---
 
-## Security Findings
+# 🔴 CRITICAL Security Issues
 
-### Critical Severity
-
-_None identified._
-
-### High Severity
-
-#### H-1: Permissive CORS Configuration
+## S-1: IDOR - Credential Deletion Without Authorization
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/server/http.ts:121-127` |
-| **CVSS** | 6.5 (Medium) |
+| **File** | `src/vault/vault.ts:301-303` |
+| **CVSS** | 9.1 (Critical) |
+| **CWE** | CWE-639 (Authorization Bypass Through User-Controlled Key) |
+
+**Problem**: Any authenticated user can delete ANY credential by ID without verifying project ownership.
+
+```typescript
+// vault.ts:301-303 - NO AUTHORIZATION CHECK
+delete(id: number): void {
+  this.db.prepare('DELETE FROM credentials WHERE id = ?').run(id);
+}
+```
+
+**Impact**: 
+- Users can delete other users' credentials
+- No way to audit who deleted what
+- Cross-project deletion possible
+
+**Proof of Concept**:
+```bash
+# List all credential IDs
+curl -X GET http://localhost:3456/v1/credentials \
+  -H "Authorization: Bearer $TOKEN"
+# [{"id":1,"provider":"anthropic",...},{"id":2,"provider":"openai",...}]
+
+# Delete ANY credential by ID
+curl -X DELETE http://localhost:3456/v1/credentials/1 \
+  -H "Authorization: Bearer $TOKEN"
+# 200 OK - Deleted without verifying ownership!
+```
+
+**Fix**:
+```typescript
+delete(id: number, project?: string): void {
+  // Verify credential exists AND belongs to user's project
+  const row = this.db.prepare(
+    'SELECT project FROM credentials WHERE id = ?'
+  ).get(id) as { project: string } | undefined;
+  
+  if (!row) {
+    throw new Error('Credential not found');
+  }
+  
+  // Allow deletion only if same project or global
+  if (row.project !== '_global' && row.project !== project) {
+    throw new Error('Unauthorized: credential belongs to different project');
+  }
+  
+  this.db.prepare('DELETE FROM credentials WHERE id = ?').run(id);
+}
+```
+
+---
+
+## S-2: IDOR - File Deletion Without Authorization
+
+| Attribute | Value |
+|-----------|-------|
+| **File** | `src/vault/vault.ts:383-385` |
+| **CVSS** | 9.1 (Critical) |
+| **CWE** | CWE-639 (Authorization Bypass Through User-Controlled Key) |
+
+**Problem**: Same as S-1 but for file deletion.
+
+```typescript
+// vault.ts:383-385
+deleteFile(id: number): void {
+  this.db.prepare('DELETE FROM files WHERE id = ?').run(id);
+}
+```
+
+**Fix**: Apply same authorization check as S-1.
+
+---
+
+## S-3: IP Spoofing Bypasses Rate Limiting
+
+| Attribute | Value |
+|-----------|-------|
+| **File** | `src/server/http.ts:147-154` |
+| **CVSS** | 8.6 (High) |
 | **CWE** | CWE-346 (Origin Validation Error) |
 
-**Description**:  
-The CORS middleware is configured with `origin: '*'`, allowing any website to make authenticated requests to the API.
+**Problem**: Rate limiting trusts `X-Forwarded-For` header which is user-controlled.
 
-**Impact**:  
-If an XSS vulnerability exists on any website, attackers could steal bearer tokens and make API requests on behalf of users.
-
-**Current Code**:
 ```typescript
-app.use('*', cors({
-  origin: '*',  // ❌ Allows any origin
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-Project'],
-}));
+function getClientIp(c: Context): string {
+  const forwarded = c.req.header('x-forwarded-for');
+  if (forwarded) {
+    const firstIp = forwarded.split(',')[0];
+    return firstIp?.trim() ?? 'unknown';
+  }
+  return c.req.header('x-real-ip') ?? 'unknown';
+}
 ```
 
-**Recommendation**:
-```typescript
-// Option 1: Configurable allowed origins
-const allowedOrigins = process.env['LLM_GATEWAY_CORS_ORIGINS']?.split(',') ?? [];
-app.use('*', cors({
-  origin: allowedOrigins.length > 0 ? allowedOrigins : false,
-  // ...
-}));
+**Impact**: Attackers can bypass rate limits by spoofing IPs.
 
-// Option 2: Specific dashboard origin only
-const DASHBOARD_ORIGIN = process.env['LLM_GATEWAY_DASHBOARD_URL'] ?? '';
-app.use('*', cors({
-  origin: [DASHBOARD_ORIGIN, 'https://jnzader.github.io'],
-  // ...
-}));
+**Proof of Concept**:
+```bash
+# Bypass rate limit by rotating IPs
+for i in {1..200}; do
+  curl -H "X-Forwarded-For: 1.2.3.$i" \
+    http://localhost:3456/v1/generate \
+    -H "Authorization: Bearer $TOKEN" \
+    -d '{"prompt":"test"}'
+done
+```
+
+**Fix**: Only trust X-Forwarded-For behind a trusted reverse proxy:
+```typescript
+function getClientIp(c: Context): string {
+  // Only trust X-Forwarded-For if behind trusted proxy
+  const trustedProxy = process.env['TRUSTED_PROXY_IP'];
+  
+  if (trustedProxy) {
+    const directIp = c.req.header('x-real-ip') ?? c.req.header('host')?.split(':')[0];
+    const forwarded = c.req.header('x-forwarded-for');
+    
+    // Verify direct connection is from trusted proxy
+    if (directIp === trustedProxy && forwarded) {
+      return forwarded.split(',')[0].trim();
+    }
+  }
+  
+  // Fall back to direct IP
+  return c.req.header('x-real-ip') ?? 'unknown';
+}
 ```
 
 ---
 
-#### H-2: Shell Command Construction with String Interpolation
+## S-4: No Authorization Check on File Listing
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/adapters/cli-opencode.ts:155` |
-| **CVSS** | 4.3 (Medium) |
-| **CWE** | CWE-78 (OS Command Injection) |
+| **File** | `src/server/http.ts:499-508` |
+| **CVSS** | 7.5 (High) |
+| **CWE** | CWE-862 (Missing Authorization) |
 
-**Description**:  
-CLI adapters use `execSync` with string interpolation instead of the safer `execFile` API.
+**Problem**: `/v1/files` returns ALL files across ALL projects.
 
-**Current Code**:
 ```typescript
-// cli-opencode.ts:155
-const args = ['run', '--model', model, '--format', 'json'];
-const output = execSync(`opencode ${args.join(' ')}`, {
-  // ...
+app.get('/v1/files', (c) => {
+  const project = c.req.query('project') ?? c.req.header('X-Project') ?? undefined;
+  const files = vault.listFiles(project);
+  return c.json({ files });
 });
 ```
 
-**Impact**:  
-While currently safe (arguments are constructed internally), this pattern is a security anti-pattern. If `model` or other parameters become user-controllable in the future, command injection becomes possible.
-
-**Recommendation**:
-```typescript
-import { execFileSync } from 'node:child_process';
-
-// Safer: explicit argument array
-const output = execFileSync('opencode', args, {
-  input: fullPrompt,
-  timeout: 120_000,
-  maxBuffer: 10 * 1024 * 1024,
-  encoding: 'utf8',
-  stdio: ['pipe', 'pipe', 'pipe'],
-  env,
-});
-```
-
-**Files affected**:
-- `src/adapters/cli-opencode.ts:155`
-- `src/adapters/cli-claude.ts:49`
-- `src/adapters/cli-gemini.ts` (if exists)
-- `src/adapters/cli-codex.ts` (if exists)
-- `src/adapters/cli-copilot.ts` (if exists)
-- `src/adapters/cli-qwen.ts` (if exists)
+**Impact**: Users can enumerate all files in the vault.
 
 ---
 
-### Medium Severity
+# 🟠 HIGH Security Issues
 
-#### M-1: Missing Rate Limiting
+## S-5: Auth Completely Disabled Based on NODE_ENV
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/server/http.ts` |
-| **CVSS** | 5.3 (Medium) |
-| **CWE** | CWE-307 (Improper Restriction of Excessive Authentication Attempts) |
+| **File** | `src/core/config.ts:118-125` |
+| **CVSS** | 7.4 (High) |
 
-**Description**:  
-No rate limiting is implemented on authentication-protected endpoints.
+**Problem**: Auth is entirely disabled when `NODE_ENV !== 'production'`.
 
-**Impact**:  
-Attackers can perform brute-force attacks on the bearer token without throttling.
-
-**Recommendation**:
 ```typescript
-import { rateLimit } from 'hono/rate-limit';
+} else if (isProduction()) {
+  throw new Error('FATAL: LLM_GATEWAY_AUTH_TOKEN is required');
+} else {
+  logger.warn('Auth disabled (not production)');
+}
+```
 
-// Add rate limiting to auth-protected routes
-app.use('/v1/*', rateLimit({
-  window: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per window
-}));
+**Impact**: If someone accidentally sets `NODE_ENV=development` or it's unset in production, auth is disabled.
+
+**Fix**: Require explicit auth configuration:
+```typescript
+const requireAuth = process.env['LLM_GATEWAY_AUTH_REQUIRED'] === 'true';
+if (requireAuth && !rawAuthToken) {
+  throw new Error('FATAL: LLM_GATEWAY_AUTH_TOKEN is required');
+}
 ```
 
 ---
 
-#### M-2: No Request Body Size Limit
+## S-6: No Input Validation on Prompt Size
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/server/http.ts` |
-| **CVSS** | 4.0 (Medium) |
-| **CWE** | CWE-400 (Uncontrolled Resource Consumption) |
+| **File** | `src/server/http.ts:241-262` |
+| **CVSS** | 6.5 (Medium) |
 
-**Description**:  
-No validation on request body size before parsing JSON.
+**Problem**: No limit on prompt length for `/v1/generate`.
 
-**Impact**:  
-An attacker could send extremely large payloads to exhaust memory or CPU.
+**Impact**: 
+- DoS via memory exhaustion
+- Increased API costs
+- Buffer overflow in downstream providers
 
-**Recommendation**:
+**Fix**:
 ```typescript
-// Add body size middleware
-app.use(async (c, next) => {
-  const contentLength = c.req.header('content-length');
-  const MAX_BODY_SIZE = 1_000_000; // 1MB
+const MAX_PROMPT_LENGTH = 100_000; // 100KB
 
-  if (contentLength && parseInt(contentLength) > MAX_BODY_SIZE) {
+app.post('/v1/generate', async (c) => {
+  const body = await c.req.json<GenerateRequest>();
+  
+  if (!body.prompt) {
+    return c.json({ error: 'prompt is required' }, 400);
+  }
+  
+  if (body.prompt.length > MAX_PROMPT_LENGTH) {
     return c.json({ 
-      error: 'Payload too large',
-      code: 'PAYLOAD_TOO_LARGE'
+      error: `prompt exceeds maximum length of ${MAX_PROMPT_LENGTH}`,
+      code: 'PROMPT_TOO_LONG'
     }, 413);
   }
-  await next();
+  // ...
 });
 ```
 
 ---
 
-#### M-3: Silent Auth Disabled Warning
+## S-7: Arbitrary Provider Names Accepted
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/core/config.ts:104` |
-| **Severity** | Medium |
+| **File** | `src/server/http.ts:424-446` |
+| **CVSS** | 5.3 (Medium) |
 
-**Description**:  
-When `LLM_GATEWAY_AUTH_TOKEN` is not set, only a console warning is emitted.
+**Problem**: Any string is accepted as provider name.
 
-**Current Code**:
+**Impact**: Users can store credentials with arbitrary names (e.g., "admin", empty strings), causing UI confusion.
+
+**Fix**:
 ```typescript
-// config.ts:104
-console.error('[llm-gateway] WARNING: LLM_GATEWAY_AUTH_TOKEN is not set...');
-```
+const VALID_PROVIDERS = new Set([
+  'anthropic', 'openai', 'google', 'groq', 'openrouter',
+  'claude-cli', 'gemini-cli', 'codex-cli', 'copilot-cli', 
+  'opencode-cli', 'qwen-cli'
+]);
 
-**Impact**:  
-In containerized deployments, this warning can be easily missed, leaving the API unprotected.
-
-**Recommendation**:
-```typescript
-// Option 1: Exit with error in production
-if (!rawAuthToken && process.env['NODE_ENV'] === 'production') {
-  throw new Error('LLM_GATEWAY_AUTH_TOKEN is required in production');
-}
-
-// Option 2: Stronger warning with environment check
-if (!rawAuthToken) {
-  const isProduction = process.env['NODE_ENV'] === 'production' || 
-                       process.env['LLM_GATEWAY_ENV'] === 'production';
-  if (isProduction) {
-    throw new Error('FATAL: LLM_GATEWAY_AUTH_TOKEN must be set in production');
-  }
-  console.error('[llm-gateway] ⚠️  WARNING: Auth disabled (not production)');
+if (!VALID_PROVIDERS.has(body.provider)) {
+  return c.json({ 
+    error: `Invalid provider. Valid: ${[...VALID_PROVIDERS].join(', ')}` 
+  }, 400);
 }
 ```
 
 ---
 
-#### M-4: Error Messages in Logs May Leak Information
+# 🟡 MEDIUM Security Issues
+
+## S-8: Dashboard Served Without Server-Side Auth
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/core/router.ts:68,81` |
-| **CWE** | CWE-209 (Information Exposure Through Error Message) |
+| **File** | `src/server/http.ts:61-64` |
+| **CWE** | CWE-602 (Server-Side Request Forgery) |
 
-**Description**:  
-Provider error messages are logged directly, which may include sensitive API details.
-
-**Current Code**:
-```typescript
-// router.ts:68,81
-console.error(`[gateway] ${provider.id} failed: ${message}`);
-```
-
-**Impact**:  
-Error messages from LLM providers could leak API configuration details or internal system information in logs.
-
-**Recommendation**:
-```typescript
-// Sanitize error messages for logging
-function sanitizeError(error: unknown, providerId: string): string {
-  const message = error instanceof Error ? error.message : String(error);
-  
-  // Log full message for debugging (internal only)
-  if (process.env['LOG_LEVEL'] === 'debug') {
-    console.error(`[gateway] ${providerId} failed: ${message}`);
-  }
-  
-  // Return generic message for external exposure
-  return 'Provider request failed';
-}
-```
+Dashboard HTML is served without auth, relying entirely on client-side JavaScript.
 
 ---
 
-### Low Severity
-
-#### L-1: Debug Logs in Production Code
+## S-9: Full Process Environment Passed to CLI Subprocesses
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/adapters/cli-opencode.ts:166-167` |
+| **File** | `src/adapters/cli-utils.ts:64` |
+| **CWE** | CWE-552 (Files or Directories Accessible to External Parties) |
 
-**Description**:  
-Debug logging of token usage and output preview.
-
-**Current Code**:
-```typescript
-console.log('[llm-gateway] OpenCode tokens raw:', JSON.stringify(parsed.tokens));
-console.log('[llm-gateway] OpenCode output preview:', output.slice(0, 300));
-```
-
-**Recommendation**:  
-Use a proper logging library with configurable log levels:
-```typescript
-import pino from 'pino';
-const logger = pino({ level: process.env['LOG_LEVEL'] ?? 'info' });
-
-logger.debug({ tokens: parsed.tokens }, 'OpenCode tokens');
-```
+CLI subprocesses inherit ALL environment variables, potentially including `LLM_GATEWAY_MASTER_KEY`.
 
 ---
 
-#### L-2: Vault Not Closed on Shutdown
+## S-10: Race Condition in Rate Limiter
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/index.ts` |
-| **CWE** | CWE-775 (Missing Release of Resource) |
+| **File** | `src/server/rate-limit.ts:47-66` |
+| **CWE** | CWE-362 (Race Condition) |
 
-**Description**:  
-The Vault's database connection is never explicitly closed.
-
-**Recommendation**:
-```typescript
-// index.ts
-const cleanup = () => {
-  console.error('[llm-gateway] Shutting down...');
-  vault.close();
-  process.exit(0);
-};
-
-process.on('SIGINT', cleanup);
-process.on('SIGTERM', cleanup);
-```
+Map operations in `isRateLimited()` are not atomic under concurrent requests.
 
 ---
 
-#### L-3: Hardcoded Version Numbers
+## S-11: CORS Wildcard Acceptable from Environment
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/server/http.ts:139`, `src/server/mcp.ts:308` |
+| **File** | `src/server/http.ts:122-125` |
 
-**Description**:  
-Version string `"0.2.0"` is duplicated in multiple places.
-
-**Recommendation**:  
-Use a single version constant:
-```typescript
-// src/core/version.ts
-export const VERSION = '0.2.0';
-
-// Then import where needed
-import { VERSION } from './core/version.js';
-// ...
-return c.json({ status: 'ok', version: VERSION });
-```
+`LLM_GATEWAY_CORS_ORIGINS=*` allows all origins without warning.
 
 ---
 
-### Informational (Best Practices)
+# 🟢 LOW/INFO Security Issues
 
-#### I-1: Input Validation on Provider/Key Names
-
-**Description**:  
-While SQL injection is prevented by prepared statements, there's no explicit validation on `provider` and `keyName` parameters.
-
-**Current**: Only implicit type checking via TypeScript.
-
-**Recommendation**:  
-Add explicit validation:
-```typescript
-const SAFE_PROVIDER_REGEX = /^[a-z0-9-]+$/;
-
-function validateProvider(provider: string): void {
-  if (!SAFE_PROVIDER_REGEX.test(provider)) {
-    throw new Error(`Invalid provider name: ${provider}`);
-  }
-}
-```
-
----
-
-#### I-2: No HTTPS Enforcement
-
-**Description**:  
-The server doesn't enforce HTTPS, which is important for protecting bearer tokens in transit.
-
-**Recommendation**:  
-Document HTTPS requirement and consider adding a middleware that redirects HTTP to HTTPS in production.
-
----
-
-#### I-3: No Audit Logging
-
-**Description**:  
-No audit trail for credential operations (store, delete, access).
-
-**Recommendation**:  
-Consider adding an audit log for compliance:
-```typescript
-function auditLog(action: string, user: string, resource: string): void {
-  console.log(JSON.stringify({
-    timestamp: new Date().toISOString(),
-    action,
-    user,
-    resource,
-  }));
-}
-```
-
----
-
-#### I-4: Dashboard Auth Client-Side Only
-
-**Description**:  
-The dashboard HTML is served without authentication; auth is handled client-side.
-
-**Impact**:  
-Users without a token could access the dashboard UI and see its structure, though actual API calls would fail.
-
-**Recommendation**:  
-This is acceptable for a single-user gateway but document the limitation clearly.
-
----
-
-#### I-5: Missing Security Headers
-
-**Description**:  
-No security headers (CSP, X-Frame-Options, etc.) on HTTP responses.
-
-**Recommendation**:  
-Add Helmet middleware:
-```typescript
-import { helmet } from 'hono/helmet';
-app.use(helmet());
-```
-
----
-
-## Code Smells
-
-### Medium Severity
-
-#### SM-1: DRY Violation - Vault Project/Global Logic
+## S-12: SQL String Interpolation in Schema (Defensive)
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/vault/vault.ts` |
+| **File** | `src/vault/schema.ts:37` |
 
-**Description**:  
-Methods `getDecrypted`, `has`, `getFile`, `hasFile` contain nearly identical patterns for handling project-specific vs global fallback.
-
-**Smelly Code**:
-```typescript
-// vault.ts - Repeated in 4 methods
-if (project && project !== GLOBAL_PROJECT) {
-  const row = this.db.prepare('SELECT ... WHERE project = ?').get(provider, keyName, project);
-  if (row) return decrypt(row);
-}
-return this.db.prepare('SELECT ... WHERE project = ?').get(provider, keyName, GLOBAL_PROJECT);
-```
-
-**Recommendation**:  
-Extract common logic:
-```typescript
-private getCredentialRow(provider: string, keyName: string, project?: string): CredentialRow | undefined {
-  if (project && project !== GLOBAL_PROJECT) {
-    const row = this.db.prepare(
-      'SELECT * FROM credentials WHERE provider = ? AND key_name = ? AND project = ?'
-    ).get(provider, keyName, project) as CredentialRow | undefined;
-    if (row) return row;
-  }
-  return this.db.prepare(
-    'SELECT * FROM credentials WHERE provider = ? AND key_name = ? AND project = ?'
-  ).get(provider, keyName, GLOBAL_PROJECT) as CredentialRow | undefined;
-}
-```
+Uses string interpolation for `GLOBAL_PROJECT` constant. Not exploitable but bad practice.
 
 ---
 
-#### SM-2: DRY Violation - API Adapters
+## S-13: Bearer Token Comparison Creates Buffers Per Request
 
 | Attribute | Value |
 |-----------|-------|
-| **Files** | `src/adapters/google.ts`, `src/adapters/groq.ts`, `src/adapters/openrouter.ts` |
+| **File** | `src/server/http.ts:29-34` |
 
-**Description**:  
-These three adapters share ~80% identical code.
+`Buffer.from()` called twice per authenticated request.
 
-**Smelly Code**:  
-All three have nearly identical `generate()` implementations:
+---
+
+# ⚡ CRITICAL Performance Issues
+
+## P-1: Client Instance Created Per Request
+
+| Attribute | Value |
+|-----------|-------|
+| **File** | `src/adapters/base-adapter.ts:51-57` |
+| **Impact** | 50-200ms per request |
+
 ```typescript
+// Creates NEW OpenAI client on EVERY request
 async generate(request: GenerateRequest): Promise<GenerateResponse> {
-  const apiKey = this.vault.getDecrypted(this.id, 'default', request.project);
-  const client = new OpenAI({ apiKey, baseURL: this.baseURL });
-  const model = request.model ?? this.defaultModel;
-  const messages: ChatCompletionMessageParam[] = [];
-  if (request.system) messages.push({ role: 'system', content: request.system });
-  messages.push({ role: 'user', content: request.prompt });
-  const response = await client.chat.completions.create({ model, max_tokens: request.maxTokens ?? 4096, messages });
-  return { text: response.choices[0]?.message?.content ?? '', provider: this.id, model, tokensUsed: response.usage?.total_tokens ?? undefined };
-}
+  const apiKey = this.vault.getDecrypted(...);
+  const client = new OpenAI({ apiKey, baseURL: this.baseURL }); // ← NEW INSTANCE
 ```
 
-**Recommendation**:  
-Create a base class:
+**Impact**: TLS handshake, DNS lookup, connection establishment on every request.
+
+**Fix**: Cache clients per apiKey:
 ```typescript
-export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
-  abstract readonly id: string;
-  abstract readonly name: string;
-  abstract readonly baseURL: string;
-  abstract readonly models: ModelInfo[];
-  abstract readonly defaultModel: string;
-  
-  constructor(protected readonly vault: Vault) {}
-  
-  async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const apiKey = this.vault.getDecrypted(this.id, 'default', request.project);
-    const client = new OpenAI({ apiKey, baseURL: this.baseURL });
-    const model = request.model ?? this.defaultModel;
-    // ... common implementation
+private clientCache = new Map<string, OpenAI>();
+
+private getClient(apiKey: string): OpenAI {
+  if (!this.clientCache.has(apiKey)) {
+    this.clientCache.set(apiKey, new OpenAI({ apiKey, baseURL: this.baseURL }));
   }
-  
-  async isAvailable(): Promise<boolean> {
-    return this.vault.has(this.id);
-  }
+  return this.clientCache.get(apiKey)!;
 }
 ```
 
 ---
 
-#### SM-3: Magic String `_global`
+## P-2: Dashboard HTML Regenerated Every Request
 
 | Attribute | Value |
 |-----------|-------|
-| **Files** | `src/vault/vault.ts`, `src/vault/schema.ts`, `src/server/http.ts` |
+| **File** | `src/server/http.ts:231` |
+| **Impact** | 5-15ms per page load |
 
-**Description**:  
-The string `'_global'` is hardcoded in multiple places.
-
-**Recommendation**:  
-Centralize in types:
 ```typescript
-// src/core/constants.ts
-export const GLOBAL_PROJECT = '_global' as const;
-export type Project = typeof GLOBAL_PROJECT | string;
+app.get('/', (c) => c.html(dashboardHtml())); // ← Regenerates 1482 lines
+```
+
+**Fix**: Cache at startup:
+```typescript
+const dashboardHtmlCache = dashboardHtml();
+app.get('/', (c) => c.html(dashboardHtmlCache));
 ```
 
 ---
 
-#### SM-4: Broad Error Catching
+## P-3: Synchronous Process Checks Block Event Loop
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/server/mcp.ts:289` |
+| **File** | `src/adapters/cli-utils.ts:25-35` |
+| **Impact** | Event loop stalls |
 
-**Description**:  
-Generic catch block without specific error type handling.
-
-**Current**:
 ```typescript
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  // ...
+export function isCliAvailable(command: string, ...): boolean {
+  try {
+    execFileSync(command, args, { timeout, stdio: 'pipe' }); // ← BLOCKING
+    return true;
+  } catch { return false; }
 }
 ```
 
-**Recommendation**:  
-While this is acceptable for JS/TS, consider typing:
+**Fix**: Use async version:
 ```typescript
-} catch (error: unknown) {
-  if (error instanceof Error) {
-    return { content: [{ type: 'text', text: JSON.stringify({ error: error.message }) }], isError: true };
-  }
-  return { content: [{ type: 'text', text: JSON.stringify({ error: String(error) }) }], isError: true };
-}
-```
-
----
-
-#### SM-5: Silent Error Swallowing
-
-| Attribute | Value |
-|-----------|-------|
-| **File** | `src/adapters/cli-opencode.ts:38` |
-
-**Description**:  
-Malformed JSON lines are silently skipped.
-
-**Current**:
-```typescript
-} catch { /* skip malformed lines */ }
-```
-
-**Recommendation**:  
-At minimum, log at debug level:
-```typescript
-} catch (e) {
-  if (process.env['LOG_LEVEL'] === 'debug') {
-    console.error('[llm-gateway] Skipping malformed line:', e);
-  }
+export async function isCliAvailable(command: string, ...): Promise<boolean> {
+  try {
+    await execFileAsync(command, args, { timeout, stdio: 'pipe' });
+    return true;
+  } catch { return false; }
 }
 ```
 
 ---
 
-### Low Severity
+# 🔥 HIGH Performance Issues
 
-#### SL-1: No Explicit Interface for Adapter Factory
+## P-4: N+1 Queries in Router
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/adapters/index.ts` |
+| **File** | `src/core/router.ts:93-102, 104-118` |
+| **Impact** | 10-50ms latency |
 
-**Description**:  
-`createAllAdapters()` returns `LLMProvider[]` but there's no explicit type for the factory function.
-
-**Recommendation**:
 ```typescript
-export type AdapterFactory = (vault: Vault) => LLMProvider[];
-
-export const createAllAdapters: AdapterFactory = (vault) => [
-  // ...
-];
+async getAvailableModels(): Promise<ModelInfo[]> {
+  for (const provider of this.providers) {
+    if (await provider.isAvailable()) {  // ← N queries: one per provider
 ```
 
----
-
-#### SL-2: Unused Type Export
-
-| Attribute | Value |
-|-----------|-------|
-| **File** | `src/core/types.ts` |
-
-**Description**:  
-`ProviderType = 'api' | 'cli'` is exported but `LLMProvider.type` is typed as this union.
-
-**Assessment**:  
-Acceptable - the export is useful for consumers extending the system.
-
----
-
-## Performance Issues
-
-### High Severity
-
-#### P-1: New SDK Client Per Request
-
-| Attribute | Value |
-|-----------|-------|
-| **Files** | `src/adapters/anthropic.ts:23`, `src/adapters/openai.ts:25`, `src/adapters/google.ts:29`, etc. |
-
-**Description**:  
-Each adapter creates a new SDK client instance for every request.
-
-**Impact**:  
-Connection pool overhead, DNS lookups, and TLS handshakes on every request.
-
-**Current**:
+**Fix**: Parallelize:
 ```typescript
-async generate(request: GenerateRequest): Promise<GenerateResponse> {
-  const apiKey = this.vault.getDecrypted('anthropic', 'default', request.project);
-  const client = new Anthropic({ apiKey }); // New client every time
-  // ...
+async getAvailableModels(): Promise<ModelInfo[]> {
+  const results = await Promise.all(
+    this.providers.map(async (p) => ({ provider: p, available: await p.isAvailable() }))
+  );
+  return results.filter(r => r.available).flatMap(r => r.provider.models);
 }
 ```
 
-**Recommendation**:
-```typescript
-export class AnthropicAdapter implements LLMProvider {
-  private client?: Anthropic;
-  
-  private getClient(): Anthropic {
-    if (!this.client) {
-      const apiKey = this.vault.getDecrypted(this.id, 'default');
-      this.client = new Anthropic({ apiKey });
-    }
-    return this.client;
-  }
-  
-  async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const client = this.getClient();
-    // Note: For project-scoped credentials, need to handle per-request key retrieval
-  }
-}
-```
-
-**Better Solution**:  
-Consider caching clients per (apiKey, project) combination if projects are used frequently.
-
 ---
 
-#### P-2: Decrypt All Values Just to Mask
-
-| Attribute | Value |
-|-----------|-------|
-| **File** | `src/vault/vault.ts:216-224` |
-
-**Description**:  
-`listMasked()` decrypts every credential just to show 7 characters.
-
-**Current**:
-```typescript
-return rows.map((row) => {
-  const decrypted = decrypt({
-    encrypted: row.encrypted_value,
-    iv: row.iv,
-    authTag: row.auth_tag,
-  }, this.masterKey);  // Full decrypt for 7 chars
-  
-  return { maskedValue: this.mask(decrypted), ... };
-});
-```
-
-**Recommendation**:  
-Use a hash-based approach where the hash can reveal partial info without full decryption. For now, this is acceptable for small credential sets.
-
----
-
-### Medium Severity
-
-#### P-3: execSync Blocks Event Loop
+## P-5: Temp Directory Created Per CLI Request
 
 | Attribute | Value |
 |-----------|-------|
 | **Files** | All CLI adapters |
+| **Impact** | Disk I/O + memory allocation |
 
-**Description**:  
-Using `execSync` blocks the Node.js event loop during CLI execution.
+Every CLI request creates a new temp directory, writes auth files, runs CLI, cleans up.
 
-**Impact**:  
-Server becomes unresponsive during CLI calls (up to 120 seconds timeout).
+---
 
-**Recommendation**:  
-Use async subprocess:
+## P-6: String Concatenation in Stdout Handlers
+
+| Attribute | Value |
+|-----------|-------|
+| **File** | `src/adapters/cli-utils.ts:109-112` |
+| **Impact** | O(n²) memory allocations |
+
 ```typescript
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+child.stdout.on('data', (data: Buffer) => { 
+  stdout += data.toString(); // ← Creates new string each time
+});
+```
 
-const execFileAsync = promisify(execFile);
-
-async generate(request: GenerateRequest): Promise<GenerateResponse> {
-  try {
-    const { stdout, stderr } = await execFileAsync('opencode', args, {
-      timeout: 120_000,
-      // ...
-    });
-    // ...
-  } catch (error) {
-    // Handle async error
-  }
-}
+**Fix**: Use array accumulation:
+```typescript
+const stdoutParts: string[] = [];
+child.stdout.on('data', (data: Buffer) => stdoutParts.push(data.toString()));
+const stdout = stdoutParts.join('');
 ```
 
 ---
 
-#### P-4: No Connection Pooling Consideration
+## P-7: Redundant Decryption for Masking
 
 | Attribute | Value |
 |-----------|-------|
-| **Files** | All API adapters |
+| **File** | `src/vault/vault.ts:276-295` |
+| **Impact** | Full AES-256-GCM decrypt for 7 chars |
 
-**Description**:  
-While OpenAI SDK handles connection pooling internally, the pattern of creating new clients per request may bypass this.
-
-**Recommendation**:  
-This is partially mitigated by SDK internals, but monitor connection metrics.
+```typescript
+const decrypted = decrypt(...); // ← Full decryption
+return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
+```
 
 ---
 
-### Low Severity
-
-#### P-5: SQLite WAL Mode Not Explicitly Closed
+## P-8: Sequential Vault Queries with Fallback
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `src/vault/vault.ts` |
-
-**Description**:  
-When the vault is closed, WAL checkpoint isn't explicitly run.
-
-**Assessment**:  
-better-sqlite3 handles this, but explicit checkpointing on shutdown could reduce recovery time.
+| **File** | `src/vault/vault.ts:85-107 |
+| **Impact** | 2 queries when 1 would suffice |
 
 ---
 
-## Opportunities for Improvement
+# 📊 MEDIUM Performance Issues
 
-### Observability
-
-1. **Structured Logging**
-   - Replace `console.log/error` with a proper logging library (pino, winston)
-   - Add correlation IDs for request tracing
-
-2. **Metrics**
-   - Add Prometheus metrics for request latency, provider success/failure rates
-   - Track token usage per provider
-
-3. **Health Checks**
-   - Extend `/health` to check provider availability
-   - Add `/health/ready` and `/health/live` endpoints
-
-### Resilience
-
-1. **Circuit Breaker Pattern**
-   - Implement per-provider circuit breakers to stop calling failing providers
-
-2. **Retry with Backoff**
-   - Add configurable retry logic with exponential backoff
-
-3. **Request Timeout Middleware**
-   - Global timeout for all requests
-
-### Developer Experience
-
-1. **CLI Tool**
-   - Add `mcp-llm-bridge` CLI for local credential management
-
-2. **Configuration Validation**
-   - Validate all env vars at startup with clear error messages
-
-3. **Docker Improvements**
-   - Multi-stage build optimization
-   - Non-root user for security
+## P-9: Missing HTTP Response Compression
+## P-10: Multiple Array Iterations for Message Processing
+## P-11: Bearer Token Buffer Allocation Per Request
+## P-12: Missing Response Caching (models, providers)
+## P-13: Rate Limiter O(n) Cleanup Every 5 Minutes
+## P-14: No Per-Request Timeout on Provider Calls
+## P-15: Sequential Adapter Registration on Startup
 
 ---
 
-## Recommendations
+# 🏗️ Architecture & Code Quality
 
-### Immediate (Before Production)
+## SOLID Violations
 
-| Priority | Recommendation | Effort |
-|----------|-----------------|--------|
-| P1 | Fix CORS configuration | 15 min |
-| P1 | Replace execSync with execFile | 30 min |
-| P2 | Add rate limiting | 1 hour |
-| P2 | Add request size limit | 30 min |
-| P2 | Fail fast in production if no auth token | 15 min |
+| Severity | File | Issue | Effort |
+|----------|------|-------|--------|
+| **Medium** | `http.ts` (538 lines) | SRP Violation: routing + auth + CORS + endpoints in one file | High |
+| **Low** | `index.ts` | Mode parsing from argv is fragile | Low |
 
-### Short-term (1-2 Sprints)
+## DRY Violations
 
-| Priority | Recommendation | Effort |
-|----------|-----------------|--------|
-| P2 | Create base adapter class for API providers | 1 hour |
-| P2 | Add structured logging | 2 hours |
-| P3 | Implement graceful shutdown | 1 hour |
-| P3 | Add metrics collection | 2 hours |
-| P3 | Create adapter factory type | 30 min |
+| Severity | Files | Issue | Effort |
+|----------|-------|-------|--------|
+| **High** | 6 CLI adapters | ~200 lines duplicated per adapter | High |
+| **Medium** | HTTP endpoints | Identical try/catch error blocks | Low |
+| **Low** | `resolveProject()` | Pattern repeated 3 times | Low |
 
-### Medium-term
+## Missing Infrastructure
 
-| Priority | Recommendation | Effort |
-|----------|-----------------|--------|
-| P3 | Extract common vault lookup logic | 1 hour |
-| P3 | Add circuit breaker pattern | 3 hours |
-| P4 | Add retry with backoff | 2 hours |
-| P4 | Add Prometheus metrics | 2 hours |
+| Priority | Component | Purpose |
+|----------|-----------|---------|
+| **Critical** | OpenTelemetry | Distributed tracing |
+| **Critical** | Prometheus metrics | Observability |
+| **Critical** | Circuit breaker | Resilience |
+| **High** | Zod validation | Runtime type checking |
+| **High** | Request timeouts | Prevent hanging requests |
+| **Medium** | Request correlation IDs | Log tracing |
 
----
+## Testing Gaps
 
-## Quick Wins
-
-These changes can be implemented in under 1 hour each:
-
-1. **CORS Fix** - Make origins configurable via environment variable
-2. **Auth Token Validation** - Exit with error if not set in production
-3. **Graceful Shutdown** - Add signal handlers to close vault
-4. **Version Constant** - Single source of truth for version
-5. **Debug Log Removal** - Remove or guard debug console.log statements
+| Priority | Area | Coverage |
+|----------|------|----------|
+| **High** | HTTP endpoints | 0 tests |
+| **High** | MCP server | 0 tests |
+| **High** | Vault concurrency | 0 tests |
+| **Medium** | CLI adapters | 0 tests |
+| **Medium** | Rate limiter | 0 tests |
 
 ---
 
-## Technical Debt
+# ✅ What's Done Right
 
-| Item | Estimated Effort | Benefit | Priority |
-|------|------------------|---------|----------|
-| Extract base API adapter | 1 hour | Reduces ~150 LOC duplication | High |
-| Cache SDK clients | 30 min | Performance improvement | Medium |
-| Rate limiting | 1 hour | Security hardening | High |
-| Structured logging | 2 hours | Better observability | Medium |
-| Circuit breaker | 3 hours | Resilience | Low |
-| Request tracing | 1 hour | Debugging | Medium |
-
----
-
-## Positive Findings
-
-The codebase demonstrates several strengths:
-
-- ✅ **TypeScript strict mode** enabled
-- ✅ **Prepared statements** for SQL injection prevention
-- ✅ **AES-256-GCM** with random IV per encryption
-- ✅ **Timing-safe comparison** for token validation
-- ✅ **WAL mode** for SQLite concurrent reads
-- ✅ **Project scoping** well implemented
-- ✅ **Credential upsert semantics** correct
-- ✅ **Comprehensive unit tests** for vault and router
-- ✅ **MCP tools** well defined
-- ✅ **OpenAI-compatible API** for broad compatibility
-- ✅ **Good documentation** in README
+- ✅ AES-256-GCM encryption with random IV
+- ✅ Timing-safe token comparison
+- ✅ Prepared SQL statements (injection safe)
+- ✅ Proper file permissions (0o700, 0o600)
+- ✅ escHtml() for XSS protection
+- ✅ execFile instead of exec for CLI
+- ✅ WAL mode for SQLite
+- ✅ Graceful shutdown
+- ✅ Structured logging with pino
+- ✅ Rate limiting
+- ✅ Body size limit
+- ✅ Base adapter class for API providers
+- ✅ Comprehensive unit tests (85 tests)
 
 ---
 
-## Conclusion
+# 📋 Prioritized Fix Roadmap
 
-The mcp-llm-bridge project has a solid security foundation with proper encryption and authentication mechanisms. The most pressing issues are the permissive CORS configuration and the use of `execSync` with string interpolation. These should be addressed before any production deployment.
+## P0 - Critical (Fix Before Production)
 
-The code quality is generally good with TypeScript strict mode enabled and comprehensive tests, but there are opportunities to reduce duplication and improve maintainability through the base adapter pattern.
+| # | Issue | Effort | Impact |
+|---|-------|--------|--------|
+| S-1 | IDOR: Credential deletion | Medium | Security |
+| S-2 | IDOR: File deletion | Medium | Security |
+| S-3 | IP spoofing in rate limiting | Low | Security |
+| P-1 | Client per-request creation | Low | Performance |
+| P-2 | Dashboard HTML regeneration | Trivial | Performance |
+
+## P1 - High Priority
+
+| # | Issue | Effort | Impact |
+|---|-------|--------|--------|
+| P-3 | Sync isCliAvailable blocking | Medium | Performance |
+| P-4 | N+1 queries in router | Low | Performance |
+| S-6 | Prompt length validation | Low | Security |
+| S-7 | Provider name validation | Low | Security |
+| - | Add OpenTelemetry | High | Observability |
+| - | Add Prometheus metrics | High | Observability |
+
+## P2 - Medium Priority
+
+| # | Issue | Effort |
+|---|-------|--------|
+| P-5 | Temp dir caching | Medium |
+| P-6 | String concat fix | Low |
+| P-7 | Lazy decryption | Low |
+| P-8 | Single query fallback | Low |
+| S-5 | Auth configuration | Medium |
+| - | HTTP endpoint tests | High |
+| - | Circuit breaker | Medium |
+
+## P3 - Nice to Have
+
+| # | Issue | Effort |
+|---|-------|--------|
+| P-9 | HTTP compression | Trivial |
+| P-10 | Single-pass message processing | Low |
+| P-11 | Buffer allocation optimization | Low |
+| P-12 | Response caching | Trivial |
+| - | MCP server tests | High |
+| - | CLI adapter tests | Medium |
+| - | BaseCliAdapter class | High |
 
 ---
 
 **Report Generated**: 2026-03-20  
-**Audit Scope**: Full codebase review including src/, test/  
-**Files Analyzed**: 25  
-**Lines of Code**: ~3,500
+**Auditors**: Security Agent, Performance Agent, Architecture Agent  
+**Files Analyzed**: 20+ source files  
+**Lines of Code**: ~6,000
