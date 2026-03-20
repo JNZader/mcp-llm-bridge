@@ -195,6 +195,14 @@ describe('GeminiCliAdapter', () => {
       assertModelInfo(model, 'gemini-cli');
     }
   });
+
+  it('uses the curated Gemini model list', () => {
+    assert.deepEqual(adapter.models.map((model) => model.id), [
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+      'gemini-2.0-flash',
+    ]);
+  });
 });
 
 describe('CodexCliAdapter', () => {
@@ -209,6 +217,14 @@ describe('CodexCliAdapter', () => {
     for (const model of adapter.models) {
       assertModelInfo(model, 'codex-cli');
     }
+  });
+
+  it('uses the curated Codex model list', () => {
+    assert.deepEqual(adapter.models.map((model) => model.id), [
+      'gpt-5.4',
+      'gpt-5.2-codex',
+      'gpt-5.1-codex',
+    ]);
   });
 });
 
@@ -225,6 +241,15 @@ describe('QwenCliAdapter', () => {
       assertModelInfo(model, 'qwen-cli');
     }
   });
+
+  it('uses the curated Qwen model list', () => {
+    assert.deepEqual(adapter.models.map((model) => model.id), [
+      'qwen3-coder-plus',
+      'qwen-plus',
+      'qwen-max',
+      'qwen-turbo',
+    ]);
+  });
 });
 
 describe('CopilotCliAdapter', () => {
@@ -239,6 +264,10 @@ describe('CopilotCliAdapter', () => {
     for (const model of adapter.models) {
       assertModelInfo(model, 'copilot-cli');
     }
+  });
+
+  it('honestly exposes the Copilot CLI model surface', () => {
+    assert.deepEqual(adapter.models.map((model) => model.id), ['copilot-cli']);
   });
 });
 

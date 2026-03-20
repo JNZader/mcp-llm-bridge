@@ -413,6 +413,116 @@ export class Vault {
   }
 
   /**
+   * List stored files for a single provider.
+   *
+   * If project is specified, returns project-specific files first and then
+   * global files that are not overridden by project-specific filenames.
+   * If no project is specified, returns only global files for the provider.
+   */
+  listProviderFiles(provider: string, project?: string): StoredFile[] {
+    if (project && project !== GLOBAL_PROJECT) {
+      const rows = this.db
+        .prepare(
+          'SELECT id, provider, file_name, project, created_at FROM files WHERE provider = ? AND (project = ? OR project = ?) ORDER BY CASE WHEN project = ? THEN 0 ELSE 1 END, file_name',
+        )
+        .all(provider, project, GLOBAL_PROJECT, project) as Array<Pick<FileRow, 'id' | 'provider' | 'file_name' | 'project' | 'created_at'>>;
+
+      const seen = new Set<string>();
+      const result: StoredFile[] = [];
+
+      for (const row of rows) {
+        if (seen.has(row.file_name)) {
+          continue;
+        }
+        seen.add(row.file_name);
+        result.push({
+          id: row.id,
+          provider: row.provider,
+          fileName: row.file_name,
+          project: row.project,
+          createdAt: row.created_at,
+        });
+      }
+
+      return result;
+    }
+
+    const rows = this.db
+      .prepare(
+        'SELECT id, provider, file_name, project, created_at FROM files WHERE provider = ? AND project = ? ORDER BY file_name',
+      )
+      .all(provider, GLOBAL_PROJECT) as Array<Pick<FileRow, 'id' | 'provider' | 'file_name' | 'project' | 'created_at'>>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      fileName: row.file_name,
+      project: row.project,
+      createdAt: row.created_at,
+    }));
+  }
+
+  /**
+   * Retrieve decrypted files for a single provider.
+   *
+   * If project is specified, project-specific files override global files
+   * with the same filename. If no project is specified, only global files
+   * are returned.
+   */
+  getProviderFiles(provider: string, project?: string): Array<{ fileName: string; content: string; project: string }> {
+    if (project && project !== GLOBAL_PROJECT) {
+      const rows = this.db
+        .prepare(
+          'SELECT file_name, project, encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND (project = ? OR project = ?) ORDER BY CASE WHEN project = ? THEN 0 ELSE 1 END, file_name',
+        )
+        .all(provider, project, GLOBAL_PROJECT, project) as Array<Pick<FileRow, 'file_name' | 'project' | 'encrypted_value' | 'iv' | 'auth_tag'>>;
+
+      const seen = new Set<string>();
+      const result: Array<{ fileName: string; content: string; project: string }> = [];
+
+      for (const row of rows) {
+        if (seen.has(row.file_name)) {
+          continue;
+        }
+        seen.add(row.file_name);
+        result.push({
+          fileName: row.file_name,
+          content: decrypt(
+            {
+              encrypted: row.encrypted_value,
+              iv: row.iv,
+              authTag: row.auth_tag,
+            },
+            this.masterKey,
+          ),
+          project: row.project,
+        });
+      }
+
+      return result;
+    }
+
+    const rows = this.db
+      .prepare(
+        'SELECT file_name, project, encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND project = ? ORDER BY file_name',
+      )
+      .all(provider, GLOBAL_PROJECT) as Array<Pick<FileRow, 'file_name' | 'project' | 'encrypted_value' | 'iv' | 'auth_tag'>>;
+
+    return rows.map((row) => ({
+      fileName: row.file_name,
+      content: decrypt(
+        {
+          encrypted: row.encrypted_value,
+          iv: row.iv,
+          authTag: row.auth_tag,
+        },
+        this.masterKey,
+      ),
+      project: row.project,
+    }));
+  }
+
+  /**
    * Close the underlying database connection.
    */
   close(): void {

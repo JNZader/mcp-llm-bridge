@@ -772,7 +772,7 @@
           </div>
           <span id="file-count" class="badge">0 files</span>
         </div>
-        <p class="help-text">Auth files are encrypted at rest. Common filenames: opencode -> auth.json, claude -> .credentials.json, gemini/qwen -> oauth_creds.json, codex -> auth.json.</p>
+        <p class="help-text">Auth files are encrypted at rest. Recommended uploads: opencode -> auth.json, claude -> .credentials.json (or full .claude files), gemini -> settings.json + oauth_creds.json, qwen -> settings.json + oauth_creds.json, codex -> auth.json (or full .codex files).</p>
         <div class="table-wrap">
           <table>
             <thead>
@@ -826,7 +826,7 @@
         <div class="form-row" style="display:block">
           <div class="form-group">
             <label for="file-name-manual">Manual File Name</label>
-            <input type="text" id="file-name-manual" placeholder="auth.json or .credentials.json">
+              <input type="text" id="file-name-manual" placeholder="auth.json, .credentials.json, settings.json, oauth_creds.json">
           </div>
           <div class="form-group" style="margin-top:10px">
             <label for="file-content-manual">Manual File Contents</label>

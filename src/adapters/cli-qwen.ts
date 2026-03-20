@@ -9,18 +9,17 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { materializeProviderHome } from './cli-home.js';
 
 export class QwenCliAdapter implements LLMProvider {
   readonly id = 'qwen-cli';
   readonly name = 'Qwen CLI';
   readonly type = 'cli' as const;
   readonly models = [
-    { id: 'qwen-coder-plus', name: 'Qwen Coder Plus', provider: 'qwen-cli', maxTokens: 8192 },
+    { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus', provider: 'qwen-cli', maxTokens: 8192 },
     { id: 'qwen-plus', name: 'Qwen Plus', provider: 'qwen-cli', maxTokens: 8192 },
     { id: 'qwen-max', name: 'Qwen Max', provider: 'qwen-cli', maxTokens: 8192 },
     { id: 'qwen-turbo', name: 'Qwen Turbo', provider: 'qwen-cli', maxTokens: 8192 },
@@ -33,21 +32,23 @@ export class QwenCliAdapter implements LLMProvider {
   }
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const model = request.model ?? 'qwen-coder-plus';
-    const credContent = this.vault.getFile('qwen', 'oauth_creds.json', request.project);
-
-    // Build temp dir for oauth_creds.json if available
-    const tempBase = `/tmp/qwen-auth-${process.pid}-${Date.now()}`;
-    const qwenDir = join(tempBase, '.qwen');
+    const model = request.model ?? 'qwen3-coder-plus';
+    const providerFiles = this.vault.getProviderFiles('qwen', request.project);
+    const hasSettings = providerFiles.some((file) => file.fileName === 'settings.json');
+    const hasOauthCreds = providerFiles.some((file) => file.fileName === 'oauth_creds.json');
+    const mount = providerFiles.length > 0
+      ? materializeProviderHome('qwen', providerFiles)
+      : null;
 
     try {
-      // Set up oauth_creds.json via HOME override if available
       const env: Record<string, string> = { ...process.env as Record<string, string> };
 
-      if (credContent) {
-        mkdirSync(qwenDir, { recursive: true, mode: 0o700 });
-        writeFileSync(join(qwenDir, 'oauth_creds.json'), credContent, { mode: 0o600 });
-        env['HOME'] = tempBase;
+      if (providerFiles.length > 0 && (!hasSettings || !hasOauthCreds)) {
+        throw new Error('Qwen CLI auth incomplete: upload settings.json and oauth_creds.json');
+      }
+
+      if (mount) {
+        env['HOME'] = mount.homeDir;
       }
 
       const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
@@ -85,10 +86,7 @@ export class QwenCliAdapter implements LLMProvider {
         `Qwen CLI failed: ${execError.message ?? String(error)}`,
       );
     } finally {
-      // Clean up temp files
-      if (existsSync(tempBase)) {
-        rmSync(tempBase, { recursive: true, force: true });
-      }
+      mount?.cleanup();
     }
   }
 

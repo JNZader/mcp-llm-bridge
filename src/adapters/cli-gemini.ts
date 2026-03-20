@@ -9,11 +9,10 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { materializeProviderHome } from './cli-home.js';
 
 export class GeminiCliAdapter implements LLMProvider {
   readonly id = 'gemini-cli';
@@ -23,7 +22,6 @@ export class GeminiCliAdapter implements LLMProvider {
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini-cli', maxTokens: 8192 },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini-cli', maxTokens: 8192 },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini-cli', maxTokens: 8192 },
-    { id: 'gemini-3-flash', name: 'Gemini 3 Flash', provider: 'gemini-cli', maxTokens: 8192 },
   ];
 
   private readonly vault: Vault;
@@ -34,20 +32,22 @@ export class GeminiCliAdapter implements LLMProvider {
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const model = request.model ?? 'gemini-2.5-flash';
-    const credContent = this.vault.getFile('gemini', 'oauth_creds.json', request.project);
-
-    // Build temp dir for oauth_creds.json if available
-    const tempBase = `/tmp/gemini-auth-${process.pid}-${Date.now()}`;
-    const geminiDir = join(tempBase, '.gemini');
+    const providerFiles = this.vault.getProviderFiles('gemini', request.project);
+    const hasSettings = providerFiles.some((file) => file.fileName === 'settings.json');
+    const hasOauthCreds = providerFiles.some((file) => file.fileName === 'oauth_creds.json');
+    const mount = providerFiles.length > 0
+      ? materializeProviderHome('gemini', providerFiles)
+      : null;
 
     try {
-      // Set up oauth_creds.json via HOME override if available
       const env: Record<string, string> = { ...process.env as Record<string, string> };
 
-      if (credContent) {
-        mkdirSync(geminiDir, { recursive: true, mode: 0o700 });
-        writeFileSync(join(geminiDir, 'oauth_creds.json'), credContent, { mode: 0o600 });
-        env['HOME'] = tempBase;
+      if (providerFiles.length > 0 && (!hasSettings || !hasOauthCreds)) {
+        throw new Error('Gemini CLI auth incomplete: upload settings.json and oauth_creds.json');
+      }
+
+      if (mount) {
+        env['HOME'] = mount.homeDir;
       }
 
       const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
@@ -87,10 +87,7 @@ export class GeminiCliAdapter implements LLMProvider {
         `Gemini CLI failed: ${execError.message ?? String(error)}`,
       );
     } finally {
-      // Clean up temp files
-      if (existsSync(tempBase)) {
-        rmSync(tempBase, { recursive: true, force: true });
-      }
+      mount?.cleanup();
     }
   }
 

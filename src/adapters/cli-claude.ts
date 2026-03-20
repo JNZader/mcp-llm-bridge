@@ -7,11 +7,10 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { materializeProviderHome } from './cli-home.js';
 
 export class ClaudeCliAdapter implements LLMProvider {
   readonly id = 'claude-cli';
@@ -32,20 +31,16 @@ export class ClaudeCliAdapter implements LLMProvider {
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const model = request.model ?? 'claude-sonnet-4-5';
-    const credContent = this.vault.getFile('claude', '.credentials.json', request.project);
-
-    // Build temp dir for .credentials.json if available
-    const tempBase = `/tmp/claude-auth-${process.pid}-${Date.now()}`;
-    const claudeDir = join(tempBase, '.claude');
+    const providerFiles = this.vault.getProviderFiles('claude', request.project);
+    const mount = providerFiles.length > 0
+      ? materializeProviderHome('claude', providerFiles)
+      : null;
 
     try {
-      // Set up .credentials.json via HOME override if available
       const env: Record<string, string> = { ...process.env as Record<string, string> };
 
-      if (credContent) {
-        mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
-        writeFileSync(join(claudeDir, '.credentials.json'), credContent, { mode: 0o600 });
-        env['HOME'] = tempBase;
+      if (mount) {
+        env['HOME'] = mount.homeDir;
       }
 
       const args = ['-p', JSON.stringify(request.prompt), '--output-format', 'json', '--max-turns', '1', '--model', model];
@@ -94,10 +89,7 @@ export class ClaudeCliAdapter implements LLMProvider {
         `Claude CLI failed: ${execError.message ?? String(error)}`,
       );
     } finally {
-      // Clean up temp files
-      if (existsSync(tempBase)) {
-        rmSync(tempBase, { recursive: true, force: true });
-      }
+      mount?.cleanup();
     }
   }
 

@@ -9,20 +9,19 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { materializeProviderHome } from './cli-home.js';
 
 export class CodexCliAdapter implements LLMProvider {
   readonly id = 'codex-cli';
   readonly name = 'Codex CLI';
   readonly type = 'cli' as const;
   readonly models = [
-    { id: 'codex-mini-latest', name: 'Codex Mini Latest', provider: 'codex-cli', maxTokens: 8192 },
-    { id: 'o4-mini', name: 'o4-mini', provider: 'codex-cli', maxTokens: 8192 },
-    { id: 'o3', name: 'o3', provider: 'codex-cli', maxTokens: 8192 },
+    { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'codex-cli', maxTokens: 8192 },
+    { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex', provider: 'codex-cli', maxTokens: 8192 },
+    { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex', provider: 'codex-cli', maxTokens: 8192 },
   ];
 
   private readonly vault: Vault;
@@ -32,21 +31,17 @@ export class CodexCliAdapter implements LLMProvider {
   }
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const model = request.model ?? 'codex-mini-latest';
-    const credContent = this.vault.getFile('codex', 'auth.json', request.project);
-
-    // Build temp dir for auth.json if available
-    const tempBase = `/tmp/codex-auth-${process.pid}-${Date.now()}`;
-    const codexDir = join(tempBase, '.codex');
+    const model = request.model ?? 'gpt-5.4';
+    const providerFiles = this.vault.getProviderFiles('codex', request.project);
+    const mount = providerFiles.length > 0
+      ? materializeProviderHome('codex', providerFiles)
+      : null;
 
     try {
-      // Set up auth.json via HOME override if available
       const env: Record<string, string> = { ...process.env as Record<string, string> };
 
-      if (credContent) {
-        mkdirSync(codexDir, { recursive: true, mode: 0o700 });
-        writeFileSync(join(codexDir, 'auth.json'), credContent, { mode: 0o600 });
-        env['HOME'] = tempBase;
+      if (mount) {
+        env['HOME'] = mount.homeDir;
       }
 
       const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
@@ -69,10 +64,7 @@ export class CodexCliAdapter implements LLMProvider {
         `Codex CLI failed: ${execError.message ?? String(error)}`,
       );
     } finally {
-      // Clean up temp files
-      if (existsSync(tempBase)) {
-        rmSync(tempBase, { recursive: true, force: true });
-      }
+      mount?.cleanup();
     }
   }
 

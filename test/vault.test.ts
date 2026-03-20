@@ -280,4 +280,44 @@ describe('Vault project scoping', () => {
     const nonGlobal = list.filter(c => c.project !== '_global');
     assert.equal(nonGlobal.length, 0, 'Should only include global credentials');
   });
+
+  it('getProviderFiles returns project-specific files before global fallbacks', () => {
+    vault.storeFile('gemini', 'settings.json', '{"scope":"global"}');
+    vault.storeFile('gemini', 'oauth_creds.json', '{"token":"global"}');
+    vault.storeFile('gemini', 'settings.json', '{"scope":"project"}', 'proj-a');
+    vault.storeFile('gemini', 'state.json', '{"state":"project"}', 'proj-a');
+
+    const files = vault.getProviderFiles('gemini', 'proj-a');
+
+    assert.deepEqual(files, [
+      { fileName: 'settings.json', content: '{"scope":"project"}', project: 'proj-a' },
+      { fileName: 'state.json', content: '{"state":"project"}', project: 'proj-a' },
+      { fileName: 'oauth_creds.json', content: '{"token":"global"}', project: '_global' },
+    ]);
+  });
+
+  it('listProviderFiles returns only global files when no project is specified', () => {
+    vault.storeFile('codex', 'auth.json', '{"scope":"global"}');
+    vault.storeFile('codex', 'auth.json', '{"scope":"project"}', 'proj-b');
+    vault.storeFile('codex', 'session.json', '{"global":true}');
+
+    const files = vault.listProviderFiles('codex');
+
+    assert.deepEqual(files.map((file) => ({
+      fileName: file.fileName,
+      project: file.project,
+    })), [
+      { fileName: 'auth.json', project: '_global' },
+      { fileName: 'session.json', project: '_global' },
+    ]);
+  });
+
+  it('getProviderFiles returns only global files when project is _global', () => {
+    const files = vault.getProviderFiles('codex', '_global');
+
+    assert.deepEqual(files, [
+      { fileName: 'auth.json', content: '{"scope":"global"}', project: '_global' },
+      { fileName: 'session.json', content: '{"global":true}', project: '_global' },
+    ]);
+  });
 });
