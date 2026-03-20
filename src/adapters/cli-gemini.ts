@@ -17,9 +17,16 @@ const GEMINI_CONFIG: CliAdapterConfig = {
   defaultModel: 'gemini-2.5-flash',
   supportsSystemPrompt: false,
   models: [
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini-cli', maxTokens: 8192 },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini-cli', maxTokens: 8192 },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini-cli', maxTokens: 8192 },
+    // Gemini 3 series
+    { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-3.1-flash', name: 'Gemini 3.1 Flash', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', provider: 'gemini-cli', maxTokens: 1024000 },
+    // Gemini 2.5 series
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini-cli', maxTokens: 1024000 },
   ],
 };
 
