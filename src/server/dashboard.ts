@@ -169,6 +169,28 @@ export function dashboardHtml(): string {
       font-size: 0.78rem;
     }
 
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(168, 85, 247, 0.08);
+      color: var(--text);
+      font-size: 0.8rem;
+      white-space: nowrap;
+    }
+
     /* ── Buttons ──────────────────────────────────── */
     button, .btn {
       font-family: var(--font-sans);
@@ -253,6 +275,43 @@ export function dashboardHtml(): string {
       min-height: 80px;
       font-family: var(--font-mono);
       font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    .drop-zone {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 110px;
+      padding: 18px;
+      border: 1px dashed var(--border-hl);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-dim);
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.active {
+      border-color: var(--accent);
+      background: rgba(168, 85, 247, 0.08);
+      color: var(--text);
+    }
+
+    .selected-file {
+      min-height: 20px;
+      margin-top: 8px;
+      color: var(--text-dim);
+      font-size: 0.82rem;
+      font-family: var(--font-mono);
+    }
+
+    .help-text {
+      margin: 10px 0 0;
+      color: var(--text-dim);
+      font-size: 0.82rem;
       line-height: 1.5;
     }
 
@@ -629,6 +688,28 @@ export function dashboardHtml(): string {
     <section id="sec-files">
       <h2>\uD83D\uDCC1 Auth Files</h2>
       <div class="card">
+        <div class="toolbar">
+          <div class="form-row" style="margin-top:0">
+            <button type="button" onclick="refreshFiles()">Refresh</button>
+            <div class="form-group">
+              <label for="file-filter-project">Project Filter</label>
+              <select id="file-filter-project">
+                <option value="">All</option>
+                <option value="_global">_global</option>
+                <option value="ghagga">ghagga</option>
+                <option value="md-evals">md-evals</option>
+                <option value="repoforge">repoforge</option>
+                <option value="__custom__">__custom__</option>
+              </select>
+            </div>
+            <div class="form-group" id="file-filter-custom-project-group" style="display:none">
+              <label for="file-filter-custom-project">Custom Project</label>
+              <input type="text" id="file-filter-custom-project" placeholder="my-project" style="width:140px">
+            </div>
+          </div>
+          <span id="file-count" class="badge">0 files</span>
+        </div>
+        <p class="help-text">Auth files are encrypted at rest. Common filenames: opencode -> auth.json, claude -> .credentials.json, gemini/qwen -> oauth_creds.json, codex -> auth.json.</p>
         <div class="table-wrap">
           <table>
             <thead>
@@ -658,23 +739,40 @@ export function dashboardHtml(): string {
             </select>
           </div>
           <div class="form-group">
-            <label for="file-input">File</label>
-            <input type="file" id="file-input" accept=".json" style="font-size:0.85rem">
-          </div>
-          <div class="form-group">
             <label for="file-project">Project</label>
             <select id="file-project">
               <option value="_global">_global (shared)</option>
               <option value="ghagga">ghagga</option>
               <option value="md-evals">md-evals</option>
               <option value="repoforge">repoforge</option>
-              <option value="__custom__">custom\u2026</option>
+              <option value="__custom__">__custom__</option>
             </select>
           </div>
           <div class="form-group" id="file-custom-project-group" style="display:none">
             <label for="file-custom-project">Custom Project</label>
             <input type="text" id="file-custom-project" placeholder="my-project" style="width:140px">
           </div>
+        </div>
+
+        <div class="form-row" style="display:block">
+          <input type="file" id="file-input" accept=".json,application/json" style="display:none">
+          <div id="file-drop-zone" class="drop-zone">Drop auth file here or click to choose</div>
+          <div id="file-selected-name" class="selected-file">No file selected.</div>
+        </div>
+
+        <div class="form-row" style="display:block">
+          <div class="form-group">
+            <label for="file-name-manual">Manual File Name</label>
+            <input type="text" id="file-name-manual" placeholder="auth.json or .credentials.json">
+          </div>
+          <div class="form-group" style="margin-top:10px">
+            <label for="file-content-manual">Manual File Contents</label>
+            <textarea id="file-content-manual" placeholder="Paste auth file contents here (JSON)"></textarea>
+          </div>
+          <p class="help-text">Use manual paste when your browser file picker hides dotfiles such as <code>.credentials.json</code>.</p>
+        </div>
+
+        <div class="form-row">
           <button class="btn-primary" onclick="uploadFile()">Upload</button>
         </div>
       </div>
@@ -936,17 +1034,55 @@ export function dashboardHtml(): string {
 
     // ── Auth Files ───────────────────────────────
 
-    document.getElementById('file-project').addEventListener('change', function() {
+    let selectedAuthFile = null;
+
+    function getSelectedFileProject(selectId = 'file-project', customInputId = 'file-custom-project', fallbackValue = '_global') {
+      const projectSelect = document.getElementById(selectId).value;
+      if (projectSelect === '__custom__') {
+        return document.getElementById(customInputId).value.trim() || fallbackValue;
+      }
+      return projectSelect || fallbackValue;
+    }
+
+    function setSelectedFile(file) {
+      selectedAuthFile = file || null;
+      document.getElementById('file-selected-name').textContent = file ? file.name : 'No file selected.';
+    }
+
+    function clearSelectedFile() {
+      selectedAuthFile = null;
+      document.getElementById('file-input').value = '';
+      document.getElementById('file-selected-name').textContent = 'No file selected.';
+    }
+
+    function updateFileCount(count) {
+      document.getElementById('file-count').textContent = count === 1 ? '1 file' : count + ' files';
+    }
+
+    function toggleFileCustomProject() {
       const customGroup = document.getElementById('file-custom-project-group');
-      customGroup.style.display = this.value === '__custom__' ? 'flex' : 'none';
-    });
+      customGroup.style.display = document.getElementById('file-project').value === '__custom__' ? 'flex' : 'none';
+    }
+
+    function toggleFileFilterCustomProject() {
+      const customGroup = document.getElementById('file-filter-custom-project-group');
+      customGroup.style.display = document.getElementById('file-filter-project').value === '__custom__' ? 'flex' : 'none';
+    }
+
+    async function refreshFiles() {
+      await loadFiles();
+    }
 
     async function loadFiles() {
+      const tbody = document.getElementById('file-rows');
       try {
-        const { files } = await api('/v1/files');
-        const tbody = document.getElementById('file-rows');
+        const project = getSelectedFileProject('file-filter-project', 'file-filter-custom-project', '');
+        const url = project ? '/v1/files?project=' + encodeURIComponent(project) : '/v1/files';
+        const { files } = await api(url);
+        console.debug('[dashboard] loaded files:', files);
+        updateFileCount(files ? files.length : 0);
         if (!files || files.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No auth files stored. Upload one below.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-msg">No auth files stored yet.</td></tr>';
           return;
         }
         tbody.innerHTML = files.map(f => \`
@@ -959,35 +1095,46 @@ export function dashboardHtml(): string {
           </tr>
         \`).join('');
       } catch (e) {
-        document.getElementById('file-rows').innerHTML =
+        updateFileCount(0);
+        tbody.innerHTML =
           '<tr><td colspan="5" class="empty-msg" style="color:var(--red)">Failed to load: ' + escHtml(e.message) + '</td></tr>';
       }
     }
 
     async function uploadFile() {
       const provider = document.getElementById('file-provider').value;
-      const fileInput = document.getElementById('file-input');
-      const file = fileInput.files[0];
+      const project = getSelectedFileProject('file-project', 'file-custom-project', '_global');
+      const manualName = document.getElementById('file-name-manual').value.trim();
+      const manualContent = document.getElementById('file-content-manual').value.trim();
 
-      const projectSelect = document.getElementById('file-project').value;
-      const project = projectSelect === '__custom__'
-        ? (document.getElementById('file-custom-project').value.trim() || '_global')
-        : projectSelect;
+      let fileName = '';
+      let content = '';
 
-      if (!file) {
-        toast('Select a file first', 'error');
+      if (manualContent) {
+        if (!manualName) {
+          toast('Manual file name is required when pasting contents', 'error');
+          return;
+        }
+        fileName = manualName;
+        content = manualContent;
+      } else if (selectedAuthFile) {
+        fileName = selectedAuthFile.name;
+        content = await selectedAuthFile.text();
+      } else {
+        toast('Select/drop a file or paste its contents first', 'error');
         return;
       }
 
       try {
-        const content = await file.text();
         await api('/v1/files', {
           method: 'POST',
-          body: JSON.stringify({ provider, fileName: file.name, content, project }),
+          body: JSON.stringify({ provider, fileName, content, project }),
         });
-        fileInput.value = '';
+        clearSelectedFile();
+        document.getElementById('file-name-manual').value = '';
+        document.getElementById('file-content-manual').value = '';
         toast('File uploaded for ' + provider + ' (' + project + ')');
-        await refreshAll();
+        await refreshFiles();
       } catch (e) {
         toast('Failed: ' + e.message, 'error');
       }
@@ -998,7 +1145,7 @@ export function dashboardHtml(): string {
       try {
         await api('/v1/files/' + id, { method: 'DELETE' });
         toast('File deleted');
-        await refreshAll();
+        await refreshFiles();
       } catch (e) {
         toast('Failed: ' + e.message, 'error');
       }
@@ -1183,6 +1330,50 @@ export function dashboardHtml(): string {
         // If other error, just ignore — sections show their own errors
       }
     }
+
+    document.getElementById('file-project').addEventListener('change', toggleFileCustomProject);
+    document.getElementById('file-filter-project').addEventListener('change', function() {
+      toggleFileFilterCustomProject();
+      refreshFiles().catch(function() {});
+    });
+    document.getElementById('file-filter-custom-project').addEventListener('input', function() {
+      if (document.getElementById('file-filter-project').value === '__custom__') {
+        refreshFiles().catch(function() {});
+      }
+    });
+
+    const fileDropZone = document.getElementById('file-drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    fileDropZone.addEventListener('click', function() {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', function() {
+      setSelectedFile(fileInput.files[0] || null);
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+      fileDropZone.addEventListener(eventName, function(event) {
+        event.preventDefault();
+        fileDropZone.classList.add('active');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      fileDropZone.addEventListener(eventName, function(event) {
+        event.preventDefault();
+        fileDropZone.classList.remove('active');
+      });
+    });
+
+    fileDropZone.addEventListener('drop', function(event) {
+      const droppedFile = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null;
+      setSelectedFile(droppedFile || null);
+    });
+
+    toggleFileCustomProject();
+    toggleFileFilterCustomProject();
 
     init();
   </script>
