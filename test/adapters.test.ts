@@ -253,7 +253,7 @@ describe('QwenCliAdapter', () => {
 });
 
 describe('CopilotCliAdapter', () => {
-  const adapter = new CopilotCliAdapter();
+  const adapter = new CopilotCliAdapter(vault);
 
   it('has required properties', () => {
     assertProviderInterface(adapter, 'copilot-cli');
@@ -292,6 +292,14 @@ describe('CopilotCliAdapter', () => {
   it('exposes multiple native Copilot models instead of a placeholder', () => {
     assert.ok(adapter.models.length > 1);
     assert.ok(adapter.models.every((model) => model.id !== 'copilot-cli'));
+  });
+
+  it('uses project-scoped Copilot credentials from vault when present', () => {
+    vault.store('copilot', 'default', 'ghu-global-copilot');
+    vault.store('copilot', 'default', 'ghu-project-copilot', 'test-proj');
+
+    const projectKey = vault.getDecrypted('copilot', 'default', 'test-proj');
+    assert.equal(projectKey, 'ghu-project-copilot');
   });
 });
 

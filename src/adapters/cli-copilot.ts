@@ -8,6 +8,7 @@
 import { execSync } from 'node:child_process';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
+import type { Vault } from '../vault/vault.js';
 
 export class CopilotCliAdapter implements LLMProvider {
   readonly id = 'copilot-cli';
@@ -34,14 +35,32 @@ export class CopilotCliAdapter implements LLMProvider {
     { id: 'claude-opus-4.6-fast', name: 'Claude Opus 4.6 Fast (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
   ];
 
+  private readonly vault: Vault;
+
+  constructor(vault: Vault) {
+    this.vault = vault;
+  }
+
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const model = request.model ?? 'gpt-4.1';
     const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
+    const env: Record<string, string> = { ...process.env as Record<string, string> };
+
+    try {
+      const token = this.vault.getDecrypted('copilot', 'default', request.project);
+      env['COPILOT_GITHUB_TOKEN'] = token;
+      env['GH_TOKEN'] = token;
+      env['GITHUB_TOKEN'] = token;
+    } catch {
+      // Fall back to any local environment auth already present.
+    }
+
     const output = execSync(`copilot -p ${JSON.stringify(fullPrompt)} --model ${model} --allow-all-tools`, {
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      env,
     });
 
     return { text: output.trim(), provider: this.id, model, tokensUsed: 0 };

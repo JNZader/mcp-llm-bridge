@@ -36,8 +36,7 @@ export {
  *
  * API adapters (Anthropic, OpenAI, Google, Groq, OpenRouter) receive the
  * Vault for credential retrieval. CLI adapters (OpenCode, Claude, Gemini,
- * Codex, Qwen) also receive the Vault for auth file access. Copilot CLI
- * is standalone (uses GitHub auth).
+ * Codex, Qwen, Copilot) also receive the Vault for auth material access.
  *
  * Order: API adapters first (by priority), then CLI adapters.
  */
@@ -53,6 +52,6 @@ export function createAllAdapters(vault: Vault): LLMProvider[] {
     new GeminiCliAdapter(vault),
     new CodexCliAdapter(vault),
     new QwenCliAdapter(vault),
-    new CopilotCliAdapter(),
+    new CopilotCliAdapter(vault),
   ];
 }
