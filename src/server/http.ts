@@ -464,10 +464,18 @@ export function startHttpServer(
         return c.json({ error: 'id must be a number' }, 400);
       }
 
-      vault.delete(id);
+      const project = c.req.query('project') ?? c.req.header('X-Project') ?? undefined;
+      vault.delete(id, project);
       return c.json({ ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // Return 403 for authorization errors, 404 for not found
+      if (message.includes('Unauthorized')) {
+        return c.json({ error: message, code: 'UNAUTHORIZED' }, 403);
+      }
+      if (message.includes('not found')) {
+        return c.json({ error: message, code: 'NOT_FOUND' }, 404);
+      }
       return c.json({ error: message }, 500);
     }
   });
@@ -516,10 +524,18 @@ export function startHttpServer(
         return c.json({ error: 'id must be a number' }, 400);
       }
 
-      vault.deleteFile(id);
+      const project = c.req.query('project') ?? c.req.header('X-Project') ?? undefined;
+      vault.deleteFile(id, project);
       return c.json({ ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // Return 403 for authorization errors, 404 for not found
+      if (message.includes('Unauthorized')) {
+        return c.json({ error: message, code: 'UNAUTHORIZED' }, 403);
+      }
+      if (message.includes('not found')) {
+        return c.json({ error: message, code: 'NOT_FOUND' }, 404);
+      }
       return c.json({ error: message }, 500);
     }
   });

@@ -297,8 +297,34 @@ export class Vault {
 
   /**
    * Delete a credential by its row id.
+   * 
+   * Authorization: Only allows deletion if the credential belongs to
+   * the specified project (or is global), preventing IDOR attacks.
+   * 
+   * @param id - The credential row id
+   * @param project - The project scope to authorize against (optional)
+   * @throws Error if credential not found or unauthorized
    */
-  delete(id: number): void {
+  delete(id: number, project?: string): void {
+    // First, verify the credential exists and get its project
+    const row = this.db
+      .prepare('SELECT project FROM credentials WHERE id = ?')
+      .get(id) as { project: string } | undefined;
+
+    if (!row) {
+      throw new Error(`Credential not found: id ${id}`);
+    }
+
+    // Authorization check: allow deletion if same project or global
+    const isGlobal = row.project === GLOBAL_PROJECT;
+    const isSameProject = row.project === project;
+
+    if (!isGlobal && !isSameProject) {
+      throw new Error(
+        `Unauthorized: credential belongs to project "${row.project}", not "${project ?? '_global'}"`,
+      );
+    }
+
     this.db.prepare('DELETE FROM credentials WHERE id = ?').run(id);
   }
 
@@ -379,8 +405,34 @@ export class Vault {
 
   /**
    * Delete a stored file by its row id.
+   * 
+   * Authorization: Only allows deletion if the file belongs to
+   * the specified project (or is global), preventing IDOR attacks.
+   * 
+   * @param id - The file row id
+   * @param project - The project scope to authorize against (optional)
+   * @throws Error if file not found or unauthorized
    */
-  deleteFile(id: number): void {
+  deleteFile(id: number, project?: string): void {
+    // First, verify the file exists and get its project
+    const row = this.db
+      .prepare('SELECT project FROM files WHERE id = ?')
+      .get(id) as { project: string } | undefined;
+
+    if (!row) {
+      throw new Error(`File not found: id ${id}`);
+    }
+
+    // Authorization check: allow deletion if same project or global
+    const isGlobal = row.project === GLOBAL_PROJECT;
+    const isSameProject = row.project === project;
+
+    if (!isGlobal && !isSameProject) {
+      throw new Error(
+        `Unauthorized: file belongs to project "${row.project}", not "${project ?? '_global'}"`,
+      );
+    }
+
     this.db.prepare('DELETE FROM files WHERE id = ?').run(id);
   }
 
