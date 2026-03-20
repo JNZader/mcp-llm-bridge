@@ -607,17 +607,17 @@ return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
 | ~~Critical~~ | ~~Circuit breaker~~ | ~~Resilience~~ | ✅ **DONE** |
 | ~~High~~ | ~~Zod validation~~ | ~~Runtime type checking~~ | ✅ **DONE** |
 | ~~High~~ | ~~Request timeouts~~ | ~~Prevent hanging requests~~ | ✅ **DONE** |
-| **Medium** | Request correlation IDs | Log tracing | 🔲 Pending |
+| ~~Medium~~ | ~~Request correlation IDs~~ | ~~Log tracing~~ | ✅ **DONE** |
 
 ## Testing Gaps
 
 | Priority | Area | Coverage | Status |
 |----------|------|----------|--------|
 | ~~High~~ | ~~HTTP endpoints~~ | ~~Basic tests~~ | ✅ **DONE** |
-| **High** | MCP server | 0 tests | 🔲 Pending |
-| **High** | Vault concurrency | 0 tests | 🔲 Pending |
-| **Medium** | CLI adapters | 0 tests | 🔲 Pending |
-| **Medium** | Rate limiter | 0 tests | 🔲 Pending |
+| ~~High~~ | ~~MCP server~~ | ~~Schema validation tests~~ | ✅ **DONE** |
+| ~~High~~ | ~~Vault concurrency~~ | ~~8 concurrency tests~~ | ✅ **DONE** |
+| ~~Medium~~ | ~~CLI adapters~~ | ~~16 tests~~ | ✅ **DONE** |
+| ~~Medium~~ | ~~Rate limiter~~ | ~~9 tests~~ | ✅ **DONE** |
 
 ---
 
@@ -652,6 +652,8 @@ return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
 - ✅ **NEW**: Circuit breaker pattern for provider resilience
 - ✅ **NEW**: HTTP compression middleware
 - ✅ **NEW**: BaseCliAdapter for DRY CLI adapter code
+- ✅ **NEW**: Request correlation IDs for log tracing
+- ✅ **NEW**: Comprehensive test suite (HTTP, MCP, vault, rate limiter, router, CLI adapters)
 
 ---
 
@@ -696,12 +698,12 @@ return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
 |---|-------|--------|
 | S-5 | Auth configuration | 🔲 Pending |
 | S-8 | Dashboard server-side auth | 🔲 Pending |
-| - | HTTP endpoint tests | ✅ FIXED (basic) |
-| - | MCP server tests | 🔲 Pending |
-| - | CLI adapter tests | 🔲 Pending |
-| - | Rate limiter tests | 🔲 Pending |
-| - | Request timeouts | ✅ FIXED |
-| - | Request correlation IDs | 🔲 Pending |
+| - | HTTP endpoint tests | ✅ DONE |
+| - | MCP server tests | ✅ DONE |
+| - | CLI adapter tests | ✅ DONE |
+| - | Rate limiter tests | ✅ DONE |
+| - | Request timeouts | ✅ DONE |
+| - | Request correlation IDs | ✅ DONE |
 
 ---
 

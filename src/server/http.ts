@@ -17,6 +17,9 @@ import type { Context, Next } from 'hono';
 /** Request timeout in milliseconds (2 minutes). */
 const REQUEST_TIMEOUT_MS = 120_000;
 
+/** Header name for request correlation ID. */
+export const CORRELATION_ID_HEADER = 'X-Correlation-ID';
+
 import type { GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
@@ -207,6 +210,25 @@ async function requestTimeout(c: Context, next: Next): Promise<void> {
 }
 
 /**
+ * Correlation ID middleware.
+ * Generates or extracts a correlation ID for request tracing.
+ * The correlation ID is added to the response headers and available in context.
+ */
+async function correlationId(c: Context, next: Next): Promise<void> {
+  // Use existing correlation ID from header or generate new one
+  const existingId = c.req.header(CORRELATION_ID_HEADER);
+  const correlationId = existingId ?? randomUUID();
+  
+  // Store in context variables for access in handlers
+  c.set('correlationId', correlationId);
+  
+  // Add to response headers
+  c.header(CORRELATION_ID_HEADER, correlationId);
+  
+  await next();
+}
+
+/**
  * Rate limit middleware factory.
  * Creates a middleware that rate limits requests per IP.
  */
@@ -267,6 +289,9 @@ export function startHttpServer(
 
   // Request timeout
   app.use(requestTimeout);
+
+  // Correlation ID for request tracing
+  app.use(correlationId);
 
   // Rate limiting
   app.use('*', rateLimitMiddleware(rateLimiter));
