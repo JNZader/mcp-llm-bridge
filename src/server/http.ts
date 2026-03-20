@@ -18,6 +18,7 @@ import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
 import { VERSION, MAX_BODY_SIZE } from '../core/constants.js';
+import { RateLimiter } from './rate-limit.js';
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -139,6 +140,55 @@ async function bodySizeLimit(c: Context, next: Next): Promise<void> {
 }
 
 /**
+ * Get the client IP address from the request.
+ * Handles X-Forwarded-For header for proxied requests.
+ */
+function getClientIp(c: Context): string {
+  const forwarded = c.req.header('x-forwarded-for');
+  if (forwarded) {
+    const firstIp = forwarded.split(',')[0];
+    return firstIp?.trim() ?? 'unknown';
+  }
+  return c.req.header('x-real-ip') ?? 'unknown';
+}
+
+/**
+ * Rate limit middleware factory.
+ * Creates a middleware that rate limits requests per IP.
+ */
+function rateLimitMiddleware(limiter: RateLimiter) {
+  return async (c: Context, next: Next): Promise<void> => {
+    // Skip rate limiting for health checks
+    if (c.req.method === 'GET' && c.req.path === '/health') {
+      return next();
+    }
+
+    const ip = getClientIp(c);
+
+    if (limiter.isRateLimited(ip)) {
+      const resetAt = limiter.getResetAt(ip);
+      const retryAfter = Math.ceil((resetAt - Date.now()) / 1000);
+      c.header('Retry-After', String(retryAfter));
+      c.header('X-RateLimit-Remaining', '0');
+      c.header('X-RateLimit-Reset', String(Math.floor(resetAt / 1000)));
+      c.status(429);
+      c.json({
+        error: 'Too many requests',
+        code: 'RATE_LIMITED',
+        retryAfter,
+      });
+      return;
+    }
+
+    // Add rate limit headers to response
+    c.header('X-RateLimit-Remaining', String(limiter.getRemaining(ip)));
+    c.header('X-RateLimit-Reset', String(Math.floor(limiter.getResetAt(ip) / 1000)));
+
+    await next();
+  };
+}
+
+/**
  * Start the HTTP server on the configured port.
  *
  * All endpoints share the same Router and Vault instances
@@ -151,7 +201,13 @@ export function startHttpServer(
 ): void {
   const app = new Hono();
 
+  // ── Rate limiter — 100 requests per 15 minutes per IP ──
+  const rateLimiter = new RateLimiter();
+
   // ── Security middleware ────────────────────────────────
+
+  // Rate limiting
+  app.use('*', rateLimitMiddleware(rateLimiter));
 
   // Body size limit
   app.use('*', bodySizeLimit);
