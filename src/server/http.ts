@@ -17,7 +17,7 @@ import type { GenerateRequest, GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
-import { VERSION, MAX_BODY_SIZE } from '../core/constants.js';
+import { VERSION, MAX_BODY_SIZE, MAX_PROMPT_LENGTH, VALID_PROVIDERS } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 import { RateLimiter } from './rate-limit.js';
 
@@ -270,6 +270,14 @@ export function startHttpServer(
         return c.json({ error: 'prompt is required' }, 400);
       }
 
+      // Validate prompt length to prevent resource exhaustion
+      if (body.prompt.length > MAX_PROMPT_LENGTH) {
+        return c.json({
+          error: `prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`,
+          code: 'PROMPT_TOO_LONG',
+        }, 400);
+      }
+
       const headerProject = c.req.header('X-Project') ?? undefined;
       const project = resolveProject(body.project, headerProject);
 
@@ -456,6 +464,15 @@ export function startHttpServer(
 
       if (!body.provider || !body.apiKey) {
         return c.json({ error: 'provider and apiKey are required' }, 400);
+      }
+
+      // Validate provider is a known adapter ID
+      if (!VALID_PROVIDERS.has(body.provider)) {
+        return c.json({
+          error: `unknown provider: ${body.provider}`,
+          code: 'INVALID_PROVIDER',
+          validProviders: [...VALID_PROVIDERS],
+        }, 400);
       }
 
       const keyName = body.keyName ?? 'default';
