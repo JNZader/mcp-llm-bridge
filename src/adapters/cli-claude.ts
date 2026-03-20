@@ -9,7 +9,7 @@
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
-import { execCliSync, isCliAvailable } from './cli-utils.js';
+import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
 
 export class ClaudeCliAdapter implements LLMProvider {
   readonly id = 'claude-cli';
@@ -88,6 +88,6 @@ export class ClaudeCliAdapter implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    return isCliAvailable('claude');
+    return isCliAvailableAsync('claude');
   }
 }
