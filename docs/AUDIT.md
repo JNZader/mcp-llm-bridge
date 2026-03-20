@@ -640,6 +640,8 @@ return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
 - ✅ IP spoofing prevention
 - ✅ Prompt length validation
 - ✅ Provider name validation
+- ✅ Explicit auth configuration (LLM_GATEWAY_AUTH_REQUIRED)
+- ✅ Dashboard server-side auth enforcement
 - ✅ SDK client caching
 - ✅ Dashboard HTML caching
 - ✅ Async CLI availability checks
@@ -696,8 +698,8 @@ return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
 
 | # | Issue | Status |
 |---|-------|--------|
-| S-5 | Auth configuration | 🔲 Pending |
-| S-8 | Dashboard server-side auth | 🔲 Pending |
+| S-5 | Auth configuration | ✅ DONE |
+| S-8 | Dashboard server-side auth | ✅ DONE |
 | - | HTTP endpoint tests | ✅ DONE |
 | - | MCP server tests | ✅ DONE |
 | - | CLI adapter tests | ✅ DONE |
