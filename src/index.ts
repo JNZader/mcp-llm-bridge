@@ -9,13 +9,22 @@
  * - `serve`:            HTTP server only (no MCP stdio)
  */
 
+// Initialize tracing before other imports
+import { initTracing, shutdownTracing } from './core/tracing.js';
+initTracing();
+
 import { loadConfig } from './core/config.js';
 import { logger } from './core/logger.js';
+import { initMetrics } from './core/metrics.js';
 import { Router } from './core/router.js';
 import { Vault } from './vault/index.js';
 import { createAllAdapters } from './adapters/index.js';
 import { startMcpServer } from './server/mcp.js';
 import { startHttpServer } from './server/http.js';
+import { cleanupAllProviderHomes } from './adapters/cli-home.js';
+
+// Initialize metrics
+initMetrics();
 
 // Parse mode from argv
 const mode = process.argv[2]; // "serve" | "--http" | undefined
@@ -32,12 +41,14 @@ for (const adapter of createAllAdapters(vault)) {
 
 /**
  * Graceful shutdown handler.
- * Closes the vault database connection on exit.
+ * Closes the vault database connection, provider homes, and tracing on exit.
  */
-function setupGracefulShutdown(vault: Vault): void {
-  const cleanup = (signal: string) => {
+async function setupGracefulShutdown(vault: Vault): Promise<void> {
+  const cleanup = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
+    cleanupAllProviderHomes();
     vault.close();
+    await shutdownTracing();
     process.exit(0);
   };
 
@@ -46,7 +57,7 @@ function setupGracefulShutdown(vault: Vault): void {
 }
 
 // Setup graceful shutdown
-setupGracefulShutdown(vault);
+await setupGracefulShutdown(vault);
 
 if (mode === 'serve') {
   // HTTP only

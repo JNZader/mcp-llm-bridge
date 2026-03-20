@@ -13,6 +13,7 @@ import type {
   ModelInfo,
 } from './types.js';
 import { logger } from './logger.js';
+import { getCircuitBreakerRegistry, CircuitBreakerOpenError } from './circuit-breaker.js';
 
 export class Router {
   private providers: LLMProvider[] = [];
@@ -42,6 +43,7 @@ export class Router {
    *
    * Tries each candidate in resolution order and falls back to the next
    * on failure. Throws if all providers fail.
+   * Uses circuit breaker to skip providers that are currently failing.
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const candidates = await this.resolveCandidates(request);
@@ -52,8 +54,20 @@ export class Router {
       );
     }
 
+    // Filter out providers with open circuit breakers
+    const circuitBreaker = getCircuitBreakerRegistry();
+    const availableCandidates = candidates.filter((p) => circuitBreaker.canRequest(p.id));
+
+    if (availableCandidates.length === 0) {
+      // All candidates have open circuit breakers
+      const openProviders = candidates.map((p) => p.id).join(', ');
+      throw new Error(
+        `All providers have circuit breakers open: ${openProviders}. Wait for recovery or check provider status.`,
+      );
+    }
+
     if (request.strict) {
-      const provider = candidates[0];
+      const provider = availableCandidates[0];
 
       if (!provider) {
         throw new Error(
@@ -63,8 +77,10 @@ export class Router {
 
       try {
         const result = await provider.generate(request);
+        circuitBreaker.recordSuccess(provider.id);
         return this.withResolutionMetadata(request, result, false);
       } catch (error) {
+        circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
         logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         throw error;
@@ -73,11 +89,13 @@ export class Router {
 
     const errors: string[] = [];
 
-    for (const [index, provider] of candidates.entries()) {
+    for (const [index, provider] of availableCandidates.entries()) {
       try {
         const result = await provider.generate(request);
+        circuitBreaker.recordSuccess(provider.id);
         return this.withResolutionMetadata(request, result, index > 0);
       } catch (error) {
+        circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
         logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         errors.push(`${provider.id}: ${message}`);
@@ -92,29 +110,34 @@ export class Router {
 
   /** Return models from all registered providers. */
   async getAvailableModels(): Promise<ModelInfo[]> {
-    const models: ModelInfo[] = [];
-    for (const provider of this.providers) {
-      if (await provider.isAvailable()) {
-        models.push(...provider.models);
-      }
-    }
-    return models;
+    // Parallel availability checks for better performance
+    const results = await Promise.all(
+      this.providers.map(async (provider) => ({
+        provider,
+        available: await provider.isAvailable(),
+      })),
+    );
+
+    return results
+      .filter((r) => r.available)
+      .flatMap((r) => r.provider.models);
   }
 
   /** Return status information for each registered provider. */
   async getProviderStatuses(): Promise<
     Array<{ id: string; name: string; type: string; available: boolean }>
   > {
-    const statuses = [];
-    for (const provider of this.providers) {
-      statuses.push({
+    // Parallel availability checks for better performance
+    const results = await Promise.all(
+      this.providers.map(async (provider) => ({
         id: provider.id,
         name: provider.name,
         type: provider.type,
         available: await provider.isAvailable(),
-      });
-    }
-    return statuses;
+      })),
+    );
+
+    return results;
   }
 
   /**
@@ -128,12 +151,16 @@ export class Router {
   private async resolveCandidates(
     request: GenerateRequest,
   ): Promise<LLMProvider[]> {
-    const available: LLMProvider[] = [];
-    for (const p of this.providers) {
-      if (await p.isAvailable()) {
-        available.push(p);
-      }
-    }
+    // Parallel availability check - avoids N sequential isAvailable() calls
+    const availabilityResults = await Promise.all(
+      this.providers.map(async (provider) => ({
+        provider,
+        available: await provider.isAvailable(),
+      })),
+    );
+    const available = availabilityResults
+      .filter((r) => r.available)
+      .map((r) => r.provider);
 
     // 1. If model specified, find provider that has that model
     if (request.model) {

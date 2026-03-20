@@ -29,5 +29,23 @@ export const MASK_SUFFIX = '...***';
 /** Maximum request body size (1MB). */
 export const MAX_BODY_SIZE = 1_000_000;
 
+/** Maximum prompt length (100KB) to prevent resource exhaustion. */
+export const MAX_PROMPT_LENGTH = 102_400;
+
+/** Valid provider IDs for credential validation. */
+export const VALID_PROVIDERS = new Set([
+  'anthropic',
+  'openai',
+  'google',
+  'groq',
+  'openrouter',
+  'opencode-cli',
+  'claude-cli',
+  'gemini-cli',
+  'codex-cli',
+  'qwen-cli',
+  'copilot-cli',
+]);
+
 /** Default log level. */
 export const DEFAULT_LOG_LEVEL = 'info' as const;

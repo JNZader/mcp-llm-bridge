@@ -31,6 +31,7 @@ interface CredentialRow {
   encrypted_value: Buffer;
   iv: Buffer;
   auth_tag: Buffer;
+  length_hint: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -108,17 +109,17 @@ export class Vault {
 
   /**
    * Check if a credential exists with project-first then global fallback.
+   * Uses a single query with ORDER BY for efficient lookup.
    */
   private hasCredential(provider: string, keyName: string, project?: string): boolean {
-    const resolved = this.resolveProject(project);
-
-    if (this.db.prepare('SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?').get(provider, keyName, resolved)) {
-      return true;
-    }
     if (project && project !== GLOBAL_PROJECT) {
-      return !!this.db.prepare('SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?').get(provider, keyName, GLOBAL_PROJECT);
+      // Single query: check project-specific first, then global fallback
+      const row = this.db
+        .prepare('SELECT project FROM credentials WHERE provider = ? AND key_name = ? AND project IN (?, ?) ORDER BY CASE WHEN project = ? THEN 0 ELSE 1 END LIMIT 1')
+        .get(provider, keyName, project, GLOBAL_PROJECT, project);
+      return !!row;
     }
-    return false;
+    return !!this.db.prepare('SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?').get(provider, keyName, GLOBAL_PROJECT);
   }
 
   /**
@@ -151,17 +152,17 @@ export class Vault {
 
   /**
    * Check if a file exists with project-first then global fallback.
+   * Uses a single query with ORDER BY for efficient lookup.
    */
   private hasFileImpl(provider: string, fileName: string, project?: string): boolean {
-    const resolved = this.resolveProject(project);
-
-    if (this.db.prepare('SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?').get(provider, fileName, resolved)) {
-      return true;
-    }
     if (project && project !== GLOBAL_PROJECT) {
-      return !!this.db.prepare('SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?').get(provider, fileName, GLOBAL_PROJECT);
+      // Single query: check project-specific first, then global fallback
+      const row = this.db
+        .prepare('SELECT project FROM files WHERE provider = ? AND file_name = ? AND project IN (?, ?) ORDER BY CASE WHEN project = ? THEN 0 ELSE 1 END LIMIT 1')
+        .get(provider, fileName, project, GLOBAL_PROJECT, project);
+      return !!row;
     }
-    return false;
+    return !!this.db.prepare('SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?').get(provider, fileName, GLOBAL_PROJECT);
   }
 
   /**
@@ -194,12 +195,13 @@ export class Vault {
     const { encrypted, iv, authTag } = encrypt(apiKey, this.masterKey);
 
     const stmt = this.db.prepare(`
-      INSERT INTO credentials (provider, key_name, project, encrypted_value, iv, auth_tag, updated_at)
-      VALUES (@provider, @keyName, @project, @encrypted, @iv, @authTag, datetime('now'))
+      INSERT INTO credentials (provider, key_name, project, encrypted_value, iv, auth_tag, length_hint, updated_at)
+      VALUES (@provider, @keyName, @project, @encrypted, @iv, @authTag, @lengthHint, datetime('now'))
       ON CONFLICT(provider, key_name, project) DO UPDATE SET
         encrypted_value = @encrypted,
         iv              = @iv,
         auth_tag        = @authTag,
+        length_hint     = @lengthHint,
         updated_at      = datetime('now')
     `);
 
@@ -210,6 +212,7 @@ export class Vault {
       encrypted,
       iv,
       authTag,
+      lengthHint: apiKey.length,
     });
 
     return Number(result.lastInsertRowid);
@@ -274,21 +277,30 @@ export class Vault {
     }
 
     return rows.map((row) => {
-      const decrypted = decrypt(
-        {
-          encrypted: row.encrypted_value,
-          iv: row.iv,
-          authTag: row.auth_tag,
-        },
-        this.masterKey,
-      );
+      // Use length_hint for masking if available (lazy - no decryption needed)
+      // Fall back to decrypting for existing records without length_hint
+      let maskedValue: string;
+      if (row.length_hint != null) {
+        maskedValue = this.maskByLength(row.length_hint);
+      } else {
+        // Fallback: decrypt then mask (for legacy records)
+        const decrypted = decrypt(
+          {
+            encrypted: row.encrypted_value,
+            iv: row.iv,
+            authTag: row.auth_tag,
+          },
+          this.masterKey,
+        );
+        maskedValue = this.mask(decrypted);
+      }
 
       return {
         id: row.id,
         provider: row.provider,
         keyName: row.key_name,
         project: row.project,
-        maskedValue: this.mask(decrypted),
+        maskedValue,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       };
@@ -297,8 +309,34 @@ export class Vault {
 
   /**
    * Delete a credential by its row id.
+   * 
+   * Authorization: Only allows deletion if the credential belongs to
+   * the specified project (or is global), preventing IDOR attacks.
+   * 
+   * @param id - The credential row id
+   * @param project - The project scope to authorize against (optional)
+   * @throws Error if credential not found or unauthorized
    */
-  delete(id: number): void {
+  delete(id: number, project?: string): void {
+    // First, verify the credential exists and get its project
+    const row = this.db
+      .prepare('SELECT project FROM credentials WHERE id = ?')
+      .get(id) as { project: string } | undefined;
+
+    if (!row) {
+      throw new Error(`Credential not found: id ${id}`);
+    }
+
+    // Authorization check: allow deletion if same project or global
+    const isGlobal = row.project === GLOBAL_PROJECT;
+    const isSameProject = row.project === project;
+
+    if (!isGlobal && !isSameProject) {
+      throw new Error(
+        `Unauthorized: credential belongs to project "${row.project}", not "${project ?? '_global'}"`,
+      );
+    }
+
     this.db.prepare('DELETE FROM credentials WHERE id = ?').run(id);
   }
 
@@ -314,6 +352,18 @@ export class Vault {
     }
     const visible = Math.min(MASK_VISIBLE_CHARS, value.length - 3);
     return value.slice(0, visible) + MASK_SUFFIX;
+  }
+
+  /**
+   * Mask a value based on its length (without needing the actual value).
+   * Used for lazy masking when length_hint is available.
+   */
+  maskByLength(length: number): string {
+    if (length <= 4) {
+      return '***';
+    }
+    const visible = Math.min(MASK_VISIBLE_CHARS, length - 3);
+    return '█'.repeat(visible) + MASK_SUFFIX;
   }
 
   // ── File Storage ──────────────────────────────────────────
@@ -379,8 +429,34 @@ export class Vault {
 
   /**
    * Delete a stored file by its row id.
+   * 
+   * Authorization: Only allows deletion if the file belongs to
+   * the specified project (or is global), preventing IDOR attacks.
+   * 
+   * @param id - The file row id
+   * @param project - The project scope to authorize against (optional)
+   * @throws Error if file not found or unauthorized
    */
-  deleteFile(id: number): void {
+  deleteFile(id: number, project?: string): void {
+    // First, verify the file exists and get its project
+    const row = this.db
+      .prepare('SELECT project FROM files WHERE id = ?')
+      .get(id) as { project: string } | undefined;
+
+    if (!row) {
+      throw new Error(`File not found: id ${id}`);
+    }
+
+    // Authorization check: allow deletion if same project or global
+    const isGlobal = row.project === GLOBAL_PROJECT;
+    const isSameProject = row.project === project;
+
+    if (!isGlobal && !isSameProject) {
+      throw new Error(
+        `Unauthorized: file belongs to project "${row.project}", not "${project ?? '_global'}"`,
+      );
+    }
+
     this.db.prepare('DELETE FROM files WHERE id = ?').run(id);
   }
 

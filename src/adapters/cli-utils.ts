@@ -35,6 +35,36 @@ export function isCliAvailable(command: string, args: string[] = ['--version'], 
 }
 
 /**
+ * Async version of isCliAvailable that doesn't block the event loop.
+ *
+ * @param command - The CLI binary name
+ * @param args - Arguments for version check
+ * @param timeout - Timeout in milliseconds (default: 5000)
+ * @returns Promise<true> if available, Promise<false> otherwise
+ */
+export async function isCliAvailableAsync(
+  command: string,
+  args: string[] = ['--version'],
+  timeout = 5000,
+): Promise<boolean> {
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const child = execFile(command, args, { timeout } as any);
+
+      child.on('close', (code: number | null) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Exit code ${code}`));
+      });
+      child.on('error', reject);
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Execute a CLI command synchronously using execFileSync.
  * This is the safer alternative to execSync with string interpolation.
  *
@@ -75,7 +105,7 @@ export interface CliError extends Error {
 
 /**
  * Execute a CLI command asynchronously using execFile.
- * This is the recommended approach for production use.
+ * Uses array accumulation to avoid O(n²) string concatenation.
  *
  * @param command - The CLI binary name
  * @param args - Command arguments array
@@ -102,14 +132,15 @@ export async function execCliAsync(
       env: env ?? process.env as Record<string, string>,
     });
 
-    let stdout = '';
-    let stderr = '';
+    // Use array accumulation instead of string concatenation for O(n) complexity
+    const stdoutParts: string[] = [];
+    const stderrParts: string[] = [];
 
     if (child.stdout) {
-      child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
+      child.stdout.on('data', (data: Buffer) => stdoutParts.push(data.toString()));
     }
     if (child.stderr) {
-      child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
+      child.stderr.on('data', (data: Buffer) => stderrParts.push(data.toString()));
     }
 
     if (input && child.stdin) {
@@ -119,11 +150,11 @@ export async function execCliAsync(
 
     child.on('close', (code) => {
       if (code === 0) {
-        resolve({ stdout, stderr });
+        resolve({ stdout: stdoutParts.join(''), stderr: stderrParts.join('') });
       } else {
         const error = new Error(`Process exited with code ${code}`) as CliError;
-        error.stdout = stdout;
-        error.stderr = stderr;
+        error.stdout = stdoutParts.join('');
+        error.stderr = stderrParts.join('');
         reject(error);
       }
     });

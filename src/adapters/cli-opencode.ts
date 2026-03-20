@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
-import { execCliSync, isCliAvailable } from './cli-utils.js';
+import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
 
 /**
  * Parse OpenCode's newline-delimited JSON output into text + token usage.
@@ -195,6 +195,6 @@ export class CliOpenCodeAdapter implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    return isCliAvailable('opencode');
+    return isCliAvailableAsync('opencode');
   }
 }

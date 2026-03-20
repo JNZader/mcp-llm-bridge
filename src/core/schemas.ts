@@ -1,0 +1,106 @@
+/**
+ * Zod validation schemas for request/response validation.
+ * 
+ * Provides runtime type checking for incoming requests.
+ */
+
+import { z } from 'zod';
+
+/** Maximum prompt length (100KB). */
+export const MAX_PROMPT_LENGTH = 102_400;
+
+/** Valid provider IDs. */
+export const VALID_PROVIDERS = new Set([
+  'anthropic',
+  'openai',
+  'google',
+  'groq',
+  'openrouter',
+  'opencode-cli',
+  'claude-cli',
+  'gemini-cli',
+  'codex-cli',
+  'qwen-cli',
+  'copilot-cli',
+]);
+
+/** Generate request schema. */
+export const generateRequestSchema = z.object({
+  prompt: z.string()
+    .min(1, 'prompt is required')
+    .max(MAX_PROMPT_LENGTH, `prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`),
+  model: z.string().optional(),
+  provider: z.string().optional(),
+  system: z.string().optional(),
+  maxTokens: z.number().int().positive().optional(),
+  strict: z.boolean().optional(),
+  project: z.string().optional(),
+});
+
+/** Chat message schema. */
+export const chatMessageSchema = z.object({
+  role: z.enum(['system', 'user', 'assistant']),
+  content: z.string(),
+});
+
+/** Chat completions request schema. */
+export const chatCompletionsSchema = z.object({
+  model: z.string().optional(),
+  messages: z.array(chatMessageSchema)
+    .min(1, 'messages is required'),
+  max_tokens: z.number().int().positive().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  stream: z.boolean().optional(),
+});
+
+/** Credential store schema. */
+export const credentialStoreSchema = z.object({
+  provider: z.string()
+    .min(1, 'provider is required'),
+  keyName: z.string().optional(),
+  apiKey: z.string().min(1, 'apiKey is required'),
+  project: z.string().optional(),
+});
+
+/** File store schema. */
+export const fileStoreSchema = z.object({
+  provider: z.string().min(1, 'provider is required'),
+  fileName: z.string().min(1, 'fileName is required'),
+  content: z.string().min(1, 'content is required'),
+  project: z.string().optional(),
+});
+
+/** Type exports. */
+export type GenerateRequest = z.infer<typeof generateRequestSchema>;
+export type ChatCompletionsRequest = z.infer<typeof chatCompletionsSchema>;
+export type CredentialStoreRequest = z.infer<typeof credentialStoreSchema>;
+export type FileStoreRequest = z.infer<typeof fileStoreSchema>;
+
+/**
+ * Validate a generate request.
+ * Returns the validated data or throws a ZodError.
+ */
+export function validateGenerateRequest(data: unknown) {
+  return generateRequestSchema.parse(data);
+}
+
+/**
+ * Validate a chat completions request.
+ */
+export function validateChatCompletions(data: unknown) {
+  return chatCompletionsSchema.parse(data);
+}
+
+/**
+ * Validate a credential store request.
+ */
+export function validateCredentialStore(data: unknown) {
+  return credentialStoreSchema.parse(data);
+}
+
+/**
+ * Validate a file store request.
+ */
+export function validateFileStore(data: unknown) {
+  return fileStoreSchema.parse(data);
+}

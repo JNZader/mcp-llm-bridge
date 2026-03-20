@@ -106,7 +106,12 @@ export function loadConfig(): GatewayConfig {
   }
 
   const rawAuthToken = process.env['LLM_GATEWAY_AUTH_TOKEN']?.trim();
+  const authRequired = process.env['LLM_GATEWAY_AUTH_REQUIRED'];
   let authToken: string | undefined;
+
+  // Explicit auth configuration: LLM_GATEWAY_AUTH_REQUIRED takes precedence
+  const explicitAuthDisabled = authRequired === 'false';
+  const explicitAuthRequired = authRequired === 'true';
 
   if (rawAuthToken) {
     if (rawAuthToken.length < MIN_AUTH_TOKEN_LENGTH) {
@@ -115,13 +120,21 @@ export function loadConfig(): GatewayConfig {
       );
     }
     authToken = rawAuthToken;
-  } else if (isProduction()) {
+  } else if (explicitAuthRequired) {
+    throw new Error(
+      'FATAL: LLM_GATEWAY_AUTH_TOKEN is required because LLM_GATEWAY_AUTH_REQUIRED=true. ' +
+      'Set LLM_GATEWAY_AUTH_TOKEN environment variable.',
+    );
+  } else if (isProduction() && !explicitAuthDisabled) {
     throw new Error(
       'FATAL: LLM_GATEWAY_AUTH_TOKEN is required in production. ' +
-      'Set LLM_GATEWAY_AUTH_TOKEN environment variable or set NODE_ENV=development.',
+      'Set LLM_GATEWAY_AUTH_TOKEN environment variable, set NODE_ENV=development, ' +
+      'or set LLM_GATEWAY_AUTH_REQUIRED=false to explicitly disable auth.',
     );
+  } else if (explicitAuthDisabled) {
+    logger.info('Auth explicitly disabled via LLM_GATEWAY_AUTH_REQUIRED=false');
   } else {
-    logger.warn('Auth disabled (not production)');
+    logger.warn('Auth disabled (not production, LLM_GATEWAY_AUTH_REQUIRED not set)');
   }
 
   return { masterKey, dbPath, httpPort, authToken };
