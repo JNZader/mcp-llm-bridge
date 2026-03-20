@@ -224,12 +224,14 @@ function rateLimitMiddleware(limiter: RateLimiter) {
  *
  * All endpoints share the same Router and Vault instances
  * as the MCP server.
+ * 
+ * @returns The HTTP server instance
  */
 export function startHttpServer(
   router: Router,
   vault: Vault,
   config: GatewayConfig,
-): void {
+): http.Server {
   const app = new Hono();
 
   // ── Rate limiter — 100 requests per 15 minutes per IP ──
@@ -603,7 +605,7 @@ export function startHttpServer(
 
   // ── Start ──────────────────────────────────────────────
 
-  serve(
+  const server = serve(
     {
       fetch: app.fetch,
       port: config.httpPort,
@@ -612,4 +614,6 @@ export function startHttpServer(
       logger.info({ port: info.port }, 'HTTP server started');
     },
   );
+
+  return server;
 }
