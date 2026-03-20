@@ -250,7 +250,9 @@ export function startHttpServer(
 
   // ── Dashboard ───────────────────────────────────────────
 
-  app.get('/', (c) => c.html(dashboardHtml()));
+  // Cache dashboard HTML at startup to avoid regenerating on every request
+  const dashboardHtmlCache = dashboardHtml();
+  app.get('/', (c) => c.html(dashboardHtmlCache));
 
   // ── Health ──────────────────────────────────────────────
 
