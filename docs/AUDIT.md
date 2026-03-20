@@ -605,15 +605,15 @@ return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
 | ~~Critical~~ | ~~OpenTelemetry~~ | ~~Distributed tracing~~ | ✅ **DONE** |
 | ~~Critical~~ | ~~Prometheus metrics~~ | ~~Observability~~ | ✅ **DONE** |
 | ~~Critical~~ | ~~Circuit breaker~~ | ~~Resilience~~ | ✅ **DONE** |
-| **High** | Zod validation | Runtime type checking | 🔲 Pending |
-| **High** | Request timeouts | Prevent hanging requests | 🔲 Pending |
+| ~~High~~ | ~~Zod validation~~ | ~~Runtime type checking~~ | ✅ **DONE** |
+| ~~High~~ | ~~Request timeouts~~ | ~~Prevent hanging requests~~ | ✅ **DONE** |
 | **Medium** | Request correlation IDs | Log tracing | 🔲 Pending |
 
 ## Testing Gaps
 
 | Priority | Area | Coverage | Status |
 |----------|------|----------|--------|
-| **High** | HTTP endpoints | Basic tests | 🔲 Partial |
+| ~~High~~ | ~~HTTP endpoints~~ | ~~Basic tests~~ | ✅ **DONE** |
 | **High** | MCP server | 0 tests | 🔲 Pending |
 | **High** | Vault concurrency | 0 tests | 🔲 Pending |
 | **Medium** | CLI adapters | 0 tests | 🔲 Pending |
@@ -696,12 +696,11 @@ return { maskedValue: this.mask(decrypted), ... }; // ← Shows first 7 chars
 |---|-------|--------|
 | S-5 | Auth configuration | 🔲 Pending |
 | S-8 | Dashboard server-side auth | 🔲 Pending |
-| - | HTTP endpoint tests | 🔲 Partial |
+| - | HTTP endpoint tests | ✅ FIXED (basic) |
 | - | MCP server tests | 🔲 Pending |
 | - | CLI adapter tests | 🔲 Pending |
 | - | Rate limiter tests | 🔲 Pending |
-| P-9 | HTTP compression | ✅ FIXED |
-| - | Request timeouts | 🔲 Pending |
+| - | Request timeouts | ✅ FIXED |
 | - | Request correlation IDs | 🔲 Pending |
 
 ---
