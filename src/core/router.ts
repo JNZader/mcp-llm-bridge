@@ -22,6 +22,7 @@ export class Router {
     request: GenerateRequest,
     result: GenerateResponse,
     fallbackUsed: boolean,
+    latencyMs: number,
   ): GenerateResponse {
     return {
       ...result,
@@ -30,6 +31,8 @@ export class Router {
       resolvedProvider: result.provider,
       resolvedModel: result.model,
       fallbackUsed,
+      latencyMs,
+      sessionId: result.sessionId,
     };
   }
 
@@ -46,6 +49,7 @@ export class Router {
    * Uses circuit breaker to skip providers that are currently failing.
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
+    const startTime = Date.now();
     const candidates = await this.resolveCandidates(request);
 
     if (candidates.length === 0) {
@@ -78,7 +82,8 @@ export class Router {
       try {
         const result = await provider.generate(request);
         circuitBreaker.recordSuccess(provider.id);
-        return this.withResolutionMetadata(request, result, false);
+        const latencyMs = Date.now() - startTime;
+        return this.withResolutionMetadata(request, result, false, latencyMs);
       } catch (error) {
         circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
@@ -93,7 +98,8 @@ export class Router {
       try {
         const result = await provider.generate(request);
         circuitBreaker.recordSuccess(provider.id);
-        return this.withResolutionMetadata(request, result, index > 0);
+        const latencyMs = Date.now() - startTime;
+        return this.withResolutionMetadata(request, result, index > 0, latencyMs);
       } catch (error) {
         circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);

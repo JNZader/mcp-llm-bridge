@@ -40,9 +40,11 @@ export interface GenerateResponse {
   tokensUsed?: number;
   requestedProvider?: string;
   requestedModel?: string;
-  resolvedProvider?: string;
-  resolvedModel?: string;
-  fallbackUsed?: boolean;
+  resolvedProvider: string;
+  resolvedModel: string;
+  fallbackUsed: boolean;
+  latencyMs?: number;
+  sessionId?: string;
 }
 
 export interface StoredCredential {

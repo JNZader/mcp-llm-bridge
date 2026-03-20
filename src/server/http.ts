@@ -258,6 +258,34 @@ function rateLimitMiddleware(limiter: RateLimiter) {
   };
 }
 
+/** Server start time for uptime calculation. */
+let serverStartTime: number = Date.now();
+
+/**
+ * Detect Anthropic subscription tier from stored credentials.
+ * 
+ * @param vault - The credential vault
+ * @returns Subscription tier: "pro", "max", "api", or "none"
+ */
+function detectAnthropicSubscription(vault: Vault): 'pro' | 'max' | 'api' | 'none' {
+  try {
+    // Try to get the decrypted API key to check its format
+    const apiKey = vault.getDecrypted('anthropic', 'default');
+    
+    // Check key prefix patterns for tier detection
+    if (apiKey.startsWith('sk-ant-')) {
+      // Standard Anthropic API key
+      return 'api';
+    }
+    
+    // Default to API for any other key format
+    return 'api';
+  } catch {
+    // No credential found
+    return 'none';
+  }
+}
+
 /**
  * Start the HTTP server on the configured port.
  *
@@ -271,6 +299,9 @@ export function startHttpServer(
   vault: Vault,
   config: GatewayConfig,
 ): http.Server {
+  // Reset start time on server creation
+  serverStartTime = Date.now();
+  
   const app = new Hono();
 
   // ── Rate limiter — 100 requests per 15 minutes per IP ──
@@ -314,8 +345,38 @@ export function startHttpServer(
 
   // ── Health ──────────────────────────────────────────────
 
-  app.get('/health', (c) => {
-    return c.json({ status: 'ok', version: VERSION });
+  app.get('/health', async (c) => {
+    // Calculate uptime in seconds
+    const uptimeSeconds = Math.floor((Date.now() - serverStartTime) / 1000);
+    
+    // Get provider statuses for counts
+    const providers = await router.getProviderStatuses();
+    const availableCount = providers.filter(p => p.available).length;
+    
+    // Detect auth mode
+    const authMode = config.authToken ? 'bearer' : 'disabled';
+    
+    // Detect Anthropic subscription tier
+    const subscription = detectAnthropicSubscription(vault);
+    
+    return c.json({
+      status: 'ok',
+      version: VERSION,
+      timestamp: new Date().toISOString(),
+      uptime: uptimeSeconds,
+      auth: {
+        enabled: !!config.authToken,
+        mode: authMode,
+      },
+      providers: {
+        total: providers.length,
+        available: availableCount,
+      },
+      subscription: {
+        anthropic: subscription,
+      },
+      mode: 'proxy',
+    });
   });
 
   // ── Metrics ─────────────────────────────────────────────

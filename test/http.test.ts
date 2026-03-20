@@ -110,6 +110,46 @@ describe('GET /health', () => {
     assert.equal(data.status, 'ok');
     assert.equal(data.version, '0.2.0');
   });
+
+  it('returns enhanced health info with required fields', async () => {
+    const res = await request('GET', '/health');
+    assert.equal(res.status, 200);
+    const data = res.data as {
+      status: string;
+      version: string;
+      timestamp: string;
+      uptime: number;
+      auth: { enabled: boolean; mode: string };
+      providers: { total: number; available: number };
+      subscription: { anthropic: string };
+      mode: string;
+    };
+    
+    // Verify all required fields are present
+    assert.equal(data.status, 'ok');
+    assert.equal(data.version, '0.2.0');
+    assert.ok(typeof data.timestamp === 'string');
+    assert.ok(data.timestamp.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/));
+    assert.ok(typeof data.uptime === 'number');
+    assert.ok(data.uptime >= 0);
+    
+    // Auth info
+    assert.ok(typeof data.auth.enabled === 'boolean');
+    assert.ok(['bearer', 'disabled'].includes(data.auth.mode));
+    
+    // Providers info
+    assert.ok(typeof data.providers.total === 'number');
+    assert.ok(data.providers.total >= 0);
+    assert.ok(typeof data.providers.available === 'number');
+    assert.ok(data.providers.available >= 0);
+    assert.ok(data.providers.available <= data.providers.total);
+    
+    // Subscription info
+    assert.ok(['pro', 'max', 'api', 'none'].includes(data.subscription.anthropic));
+    
+    // Mode
+    assert.equal(data.mode, 'proxy');
+  });
 });
 
 // ── Models endpoint ─────────────────────────────────────────
