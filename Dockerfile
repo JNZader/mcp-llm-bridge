@@ -14,9 +14,21 @@ RUN curl -fsSL -o /tmp/opencode.tar.gz \
     rm -f /tmp/opencode.tar.gz && \
     echo "OpenCode installed: $(opencode --version)"
 
-# Install Claude CLI (Claude Code) via npm for Max subscription support
-RUN npm install -g @anthropic-ai/claude-code && \
-    echo "Claude CLI installed: $(claude --version)"
+# Install all CLI tools via npm
+# Claude Code (Max subscription), Gemini CLI (Google), Codex (OpenAI), Qwen, Copilot (GitHub)
+RUN npm install -g \
+      @anthropic-ai/claude-code \
+      @google/gemini-cli \
+      @openai/codex \
+      @qwen-code/qwen-code \
+      @github/copilot \
+    2>&1 || true && \
+    echo "=== CLI tools installed ===" && \
+    (which claude && claude --version || echo "WARNING: claude not installed") && \
+    (which gemini || echo "WARNING: gemini not installed") && \
+    (which codex && codex --version || echo "WARNING: codex not installed") && \
+    (which qwen && qwen --version || echo "WARNING: qwen not installed") && \
+    (which copilot || echo "WARNING: copilot not installed")
 
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./

@@ -14,6 +14,7 @@ import { CliOpenCodeAdapter } from './cli-opencode.js';
 import { ClaudeCliAdapter } from './cli-claude.js';
 import { GeminiCliAdapter } from './cli-gemini.js';
 import { CodexCliAdapter } from './cli-codex.js';
+import { QwenCliAdapter } from './cli-qwen.js';
 import { CopilotCliAdapter } from './cli-copilot.js';
 
 export {
@@ -26,6 +27,7 @@ export {
   ClaudeCliAdapter,
   GeminiCliAdapter,
   CodexCliAdapter,
+  QwenCliAdapter,
   CopilotCliAdapter,
 };
 
@@ -33,8 +35,9 @@ export {
  * Create all available provider adapters.
  *
  * API adapters (Anthropic, OpenAI, Google, Groq, OpenRouter) receive the
- * Vault for credential retrieval. OpenCode CLI and Claude CLI also receive
- * the Vault for auth file access. Other CLI adapters are standalone.
+ * Vault for credential retrieval. CLI adapters (OpenCode, Claude, Gemini,
+ * Codex, Qwen) also receive the Vault for auth file access. Copilot CLI
+ * is standalone (uses GitHub auth).
  *
  * Order: API adapters first (by priority), then CLI adapters.
  */
@@ -47,8 +50,9 @@ export function createAllAdapters(vault: Vault): LLMProvider[] {
     new OpenRouterAdapter(vault),
     new CliOpenCodeAdapter(vault),
     new ClaudeCliAdapter(vault),
-    new GeminiCliAdapter(),
-    new CodexCliAdapter(),
+    new GeminiCliAdapter(vault),
+    new CodexCliAdapter(vault),
+    new QwenCliAdapter(vault),
     new CopilotCliAdapter(),
   ];
 }

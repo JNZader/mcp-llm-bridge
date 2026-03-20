@@ -20,6 +20,7 @@ import {
   ClaudeCliAdapter,
   GeminiCliAdapter,
   CodexCliAdapter,
+  QwenCliAdapter,
   CopilotCliAdapter,
   createAllAdapters,
 } from '../src/adapters/index.js';
@@ -182,7 +183,7 @@ describe('ClaudeCliAdapter', () => {
 });
 
 describe('GeminiCliAdapter', () => {
-  const adapter = new GeminiCliAdapter();
+  const adapter = new GeminiCliAdapter(vault);
 
   it('has required properties', () => {
     assertProviderInterface(adapter, 'gemini-cli');
@@ -197,7 +198,7 @@ describe('GeminiCliAdapter', () => {
 });
 
 describe('CodexCliAdapter', () => {
-  const adapter = new CodexCliAdapter();
+  const adapter = new CodexCliAdapter(vault);
 
   it('has required properties', () => {
     assertProviderInterface(adapter, 'codex-cli');
@@ -207,6 +208,21 @@ describe('CodexCliAdapter', () => {
   it('models have required fields', () => {
     for (const model of adapter.models) {
       assertModelInfo(model, 'codex-cli');
+    }
+  });
+});
+
+describe('QwenCliAdapter', () => {
+  const adapter = new QwenCliAdapter(vault);
+
+  it('has required properties', () => {
+    assertProviderInterface(adapter, 'qwen-cli');
+    assert.equal(adapter.type, 'cli');
+  });
+
+  it('models have required fields', () => {
+    for (const model of adapter.models) {
+      assertModelInfo(model, 'qwen-cli');
     }
   });
 });
@@ -229,16 +245,16 @@ describe('CopilotCliAdapter', () => {
 // ── Factory function ──────────────────────────────────────
 
 describe('createAllAdapters()', () => {
-  it('returns 10 adapters', () => {
+  it('returns 11 adapters', () => {
     const adapters = createAllAdapters(vault);
-    assert.equal(adapters.length, 10, 'Should return exactly 10 adapters');
+    assert.equal(adapters.length, 11, 'Should return exactly 11 adapters');
   });
 
   it('all adapters implement LLMProvider interface', () => {
     const adapters = createAllAdapters(vault);
     const expectedIds = [
       'anthropic', 'openai', 'google', 'groq', 'openrouter',
-      'opencode-cli', 'claude-cli', 'gemini-cli', 'codex-cli', 'copilot-cli',
+      'opencode-cli', 'claude-cli', 'gemini-cli', 'codex-cli', 'qwen-cli', 'copilot-cli',
     ];
 
     for (const adapter of adapters) {
@@ -257,7 +273,7 @@ describe('createAllAdapters()', () => {
     const cliAdapters = adapters.filter(a => a.type === 'cli');
 
     assert.equal(apiAdapters.length, 5, 'Should have 5 API adapters');
-    assert.equal(cliAdapters.length, 5, 'Should have 5 CLI adapters');
+    assert.equal(cliAdapters.length, 6, 'Should have 6 CLI adapters');
 
     // Verify API adapters come first in the array
     const firstCliIndex = adapters.findIndex(a => a.type === 'cli');
