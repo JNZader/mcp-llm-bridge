@@ -167,7 +167,7 @@ describe('OpenRouterAdapter', () => {
 });
 
 describe('ClaudeCliAdapter', () => {
-  const adapter = new ClaudeCliAdapter();
+  const adapter = new ClaudeCliAdapter(vault);
 
   it('has required properties', () => {
     assertProviderInterface(adapter, 'claude-cli');

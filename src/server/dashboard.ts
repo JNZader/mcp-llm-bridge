@@ -651,6 +651,7 @@ export function dashboardHtml(): string {
             <label for="file-provider">Provider</label>
             <select id="file-provider">
               <option value="opencode">opencode</option>
+              <option value="claude">claude</option>
             </select>
           </div>
           <div class="form-group">

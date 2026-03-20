@@ -14,6 +14,10 @@ RUN curl -fsSL -o /tmp/opencode.tar.gz \
     rm -f /tmp/opencode.tar.gz && \
     echo "OpenCode installed: $(opencode --version)"
 
+# Install Claude CLI (Claude Code) via npm for Max subscription support
+RUN npm install -g @anthropic-ai/claude-code && \
+    echo "Claude CLI installed: $(claude --version)"
+
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false

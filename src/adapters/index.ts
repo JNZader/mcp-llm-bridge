@@ -33,8 +33,8 @@ export {
  * Create all available provider adapters.
  *
  * API adapters (Anthropic, OpenAI, Google, Groq, OpenRouter) receive the
- * Vault for credential retrieval. OpenCode CLI also receives the Vault
- * for auth.json file access. Other CLI adapters are standalone.
+ * Vault for credential retrieval. OpenCode CLI and Claude CLI also receive
+ * the Vault for auth file access. Other CLI adapters are standalone.
  *
  * Order: API adapters first (by priority), then CLI adapters.
  */
@@ -46,7 +46,7 @@ export function createAllAdapters(vault: Vault): LLMProvider[] {
     new GroqAdapter(vault),
     new OpenRouterAdapter(vault),
     new CliOpenCodeAdapter(vault),
-    new ClaudeCliAdapter(),
+    new ClaudeCliAdapter(vault),
     new GeminiCliAdapter(),
     new CodexCliAdapter(),
     new CopilotCliAdapter(),
