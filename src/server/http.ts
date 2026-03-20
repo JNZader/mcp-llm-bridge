@@ -14,7 +14,10 @@ import { compress } from 'hono/compress';
 import { serve } from '@hono/node-server';
 import type { Context, Next } from 'hono';
 
-import type { GenerateRequest, GatewayConfig } from '../core/types.js';
+/** Request timeout in milliseconds (2 minutes). */
+const REQUEST_TIMEOUT_MS = 120_000;
+
+import type { GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
@@ -25,9 +28,13 @@ import {
   getMetrics,
   getMetricsContentType,
   updateProviderAvailability,
-  httpRequestsTotal,
-  httpRequestDuration,
 } from '../core/metrics.js';
+import {
+  validateGenerateRequest,
+  validateChatCompletions,
+  validateCredentialStore,
+  validateFileStore,
+} from '../core/schemas.js';
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -184,6 +191,22 @@ function getClientIp(c: Context): string {
 }
 
 /**
+ * Request timeout middleware.
+ * Aborts requests that take too long.
+ */
+async function requestTimeout(c: Context, next: Next): Promise<void> {
+  const timeoutId = setTimeout(() => {
+    c.abort(408);
+  }, REQUEST_TIMEOUT_MS);
+
+  try {
+    await next();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Rate limit middleware factory.
  * Creates a middleware that rate limits requests per IP.
  */
@@ -242,6 +265,9 @@ export function startHttpServer(
   // HTTP compression
   app.use(compress());
 
+  // Request timeout
+  app.use(requestTimeout);
+
   // Rate limiting
   app.use('*', rateLimitMiddleware(rateLimiter));
 
@@ -286,26 +312,36 @@ export function startHttpServer(
 
   app.post('/v1/generate', async (c) => {
     try {
-      const body = await c.req.json<GenerateRequest>();
+      const body = await c.req.json();
 
-      if (!body.prompt) {
-        return c.json({ error: 'prompt is required' }, 400);
-      }
-
-      // Validate prompt length to prevent resource exhaustion
-      if (body.prompt.length > MAX_PROMPT_LENGTH) {
-        return c.json({
-          error: `prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`,
-          code: 'PROMPT_TOO_LONG',
-        }, 400);
+      // Validate with Zod
+      let validated: ReturnType<typeof validateGenerateRequest>;
+      try {
+        validated = validateGenerateRequest(body);
+      } catch (error) {
+        // Handle ZodError in Zod 4 - issues are accessed via .issues property
+        if (error && typeof error === 'object' && 'issues' in error) {
+          const issues = (error as { issues: Array<{ message: string; path: string[] }> }).issues;
+          const firstIssue = issues[0];
+          return c.json({
+            error: firstIssue?.message ?? 'Validation error',
+            code: 'VALIDATION_ERROR',
+            field: firstIssue?.path?.join('.') ?? '',
+          }, 400);
+        }
+        throw error;
       }
 
       const headerProject = c.req.header('X-Project') ?? undefined;
-      const project = resolveProject(body.project, headerProject);
+      const project = resolveProject(validated.project, headerProject);
 
       const result = await router.generate({
-        ...body,
-        strict: body.strict,
+        prompt: validated.prompt,
+        model: validated.model,
+        provider: validated.provider,
+        system: validated.system,
+        maxTokens: validated.maxTokens,
+        strict: validated.strict,
         project,
       });
       return c.json(result);
@@ -319,19 +355,31 @@ export function startHttpServer(
 
   app.post('/v1/chat/completions', async (c) => {
     try {
-      const body = await c.req.json<{
-        model?: string;
-        messages?: Array<{
-          role: 'system' | 'user' | 'assistant';
-          content: string;
-        }>;
-        max_tokens?: number;
-        temperature?: number;
-        stream?: boolean;
-      }>();
+      const body = await c.req.json();
+
+      // Validate with Zod
+      let validated: ReturnType<typeof validateChatCompletions>;
+      try {
+        validated = validateChatCompletions(body);
+      } catch (error) {
+        // Handle ZodError in Zod 4 - issues are accessed via .issues property
+        if (error && typeof error === 'object' && 'issues' in error) {
+          const issues = (error as { issues: Array<{ message: string; path: string[] }> }).issues;
+          const firstIssue = issues[0];
+          return c.json({
+            error: {
+              message: firstIssue?.message ?? 'Validation error',
+              type: 'invalid_request_error',
+              param: firstIssue?.path?.join('.') || undefined,
+              code: null,
+            },
+          }, 400);
+        }
+        throw error;
+      }
 
       // Reject streaming — not supported
-      if (body.stream) {
+      if (validated.stream) {
         return c.json({
           error: {
             message: 'Streaming not supported',
@@ -342,26 +390,14 @@ export function startHttpServer(
         }, 400);
       }
 
-      // Validate messages
-      if (!body.messages || body.messages.length === 0) {
-        return c.json({
-          error: {
-            message: 'messages is required',
-            type: 'invalid_request_error',
-            param: 'messages',
-            code: null,
-          },
-        }, 400);
-      }
-
       // Extract system messages → concatenate as system prompt
-      const systemMessages = body.messages
+      const systemMessages = validated.messages
         .filter((m) => m.role === 'system')
         .map((m) => m.content);
       const system = systemMessages.length > 0 ? systemMessages.join('\n') : undefined;
 
       // Extract conversation messages → last user message is the main prompt
-      const conversationMessages = body.messages.filter((m) => m.role !== 'system');
+      const conversationMessages = validated.messages.filter((m) => m.role !== 'system');
       const lastUserMessage = [...conversationMessages].reverse().find((m) => m.role === 'user');
 
       if (!lastUserMessage) {
@@ -390,8 +426,8 @@ export function startHttpServer(
       const result = await router.generate({
         prompt,
         system,
-        model: body.model,
-        maxTokens: body.max_tokens,
+        model: validated.model,
+        maxTokens: validated.max_tokens,
         project: headerProject,
       });
 
@@ -477,31 +513,32 @@ export function startHttpServer(
 
   app.post('/v1/credentials', async (c) => {
     try {
-      const body = await c.req.json<{
-        provider: string;
-        keyName?: string;
-        apiKey: string;
-        project?: string;
-      }>();
+      const body = await c.req.json();
 
-      if (!body.provider || !body.apiKey) {
-        return c.json({ error: 'provider and apiKey are required' }, 400);
+      // Validate with Zod
+      let validated: ReturnType<typeof validateCredentialStore>;
+      try {
+        validated = validateCredentialStore(body);
+      } catch (error) {
+        // Handle ZodError in Zod 4 - issues are accessed via .issues property
+        if (error && typeof error === 'object' && 'issues' in error) {
+          const issues = (error as { issues: Array<{ message: string; path: string[] }> }).issues;
+          const firstIssue = issues[0];
+          return c.json({
+            error: firstIssue?.message ?? 'Validation error',
+            code: 'VALIDATION_ERROR',
+            field: firstIssue?.path?.join('.') ?? '',
+            validProviders: [...VALID_PROVIDERS],
+          }, 400);
+        }
+        throw error;
       }
 
-      // Validate provider is a known adapter ID
-      if (!VALID_PROVIDERS.has(body.provider)) {
-        return c.json({
-          error: `unknown provider: ${body.provider}`,
-          code: 'INVALID_PROVIDER',
-          validProviders: [...VALID_PROVIDERS],
-        }, 400);
-      }
-
-      const keyName = body.keyName ?? 'default';
+      const keyName = validated.keyName ?? 'default';
       const headerProject = c.req.header('X-Project') ?? undefined;
-      const project = resolveProject(body.project, headerProject);
-      const id = vault.store(body.provider, keyName, body.apiKey, project);
-      return c.json({ id, provider: body.provider, keyName, project: project ?? '_global' }, 201);
+      const project = resolveProject(validated.project, headerProject);
+      const id = vault.store(validated.provider, keyName, validated.apiKey, project);
+      return c.json({ id, provider: validated.provider, keyName, project: project ?? '_global' }, 201);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);
@@ -547,21 +584,30 @@ export function startHttpServer(
 
   app.post('/v1/files', async (c) => {
     try {
-      const body = await c.req.json<{
-        provider: string;
-        fileName: string;
-        content: string;
-        project?: string;
-      }>();
+      const body = await c.req.json();
 
-      if (!body.provider || !body.fileName || !body.content) {
-        return c.json({ error: 'provider, fileName, and content are required' }, 400);
+      // Validate with Zod
+      let validated: ReturnType<typeof validateFileStore>;
+      try {
+        validated = validateFileStore(body);
+      } catch (error) {
+        // Handle ZodError in Zod 4 - issues are accessed via .issues property
+        if (error && typeof error === 'object' && 'issues' in error) {
+          const issues = (error as { issues: Array<{ message: string; path: string[] }> }).issues;
+          const firstIssue = issues[0];
+          return c.json({
+            error: firstIssue?.message ?? 'Validation error',
+            code: 'VALIDATION_ERROR',
+            field: firstIssue?.path?.join('.') ?? '',
+          }, 400);
+        }
+        throw error;
       }
 
       const headerProject = c.req.header('X-Project') ?? undefined;
-      const project = resolveProject(body.project, headerProject);
-      const id = vault.storeFile(body.provider, body.fileName, body.content, project);
-      return c.json({ id, provider: body.provider, fileName: body.fileName, project: project ?? '_global' }, 201);
+      const project = resolveProject(validated.project, headerProject);
+      const id = vault.storeFile(validated.provider, validated.fileName, validated.content, project);
+      return c.json({ id, provider: validated.provider, fileName: validated.fileName, project: project ?? '_global' }, 201);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);
