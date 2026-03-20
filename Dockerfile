@@ -1,5 +1,8 @@
 FROM node:22-slim
 
+# Force cache invalidation on each build
+ARG CACHE_BUST=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
