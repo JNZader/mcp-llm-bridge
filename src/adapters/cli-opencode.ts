@@ -162,6 +162,10 @@ export class CliOpenCodeAdapter implements LLMProvider {
       });
 
       const parsed = parseOpenCodeOutput(output);
+      if (parsed.tokens) {
+        console.log('[llm-gateway] OpenCode tokens raw:', JSON.stringify(parsed.tokens));
+        console.log('[llm-gateway] OpenCode output preview:', output.slice(0, 300));
+      }
       const totalTokens = parsed.tokens
         ? (parsed.tokens.input ?? 0) + (parsed.tokens.output ?? 0)
         : 0;
