@@ -16,6 +16,21 @@ import type {
 export class Router {
   private providers: LLMProvider[] = [];
 
+  private withResolutionMetadata(
+    request: GenerateRequest,
+    result: GenerateResponse,
+    fallbackUsed: boolean,
+  ): GenerateResponse {
+    return {
+      ...result,
+      requestedProvider: request.provider,
+      requestedModel: request.model,
+      resolvedProvider: result.provider,
+      resolvedModel: result.model,
+      fallbackUsed,
+    };
+  }
+
   /** Register a provider adapter with the router. */
   register(provider: LLMProvider): void {
     this.providers.push(provider);
@@ -46,7 +61,8 @@ export class Router {
       }
 
       try {
-        return await provider.generate(request);
+        const result = await provider.generate(request);
+        return this.withResolutionMetadata(request, result, false);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[gateway] ${provider.id} failed: ${message}`);
@@ -56,9 +72,10 @@ export class Router {
 
     const errors: string[] = [];
 
-    for (const provider of candidates) {
+    for (const [index, provider] of candidates.entries()) {
       try {
-        return await provider.generate(request);
+        const result = await provider.generate(request);
+        return this.withResolutionMetadata(request, result, index > 0);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`[gateway] ${provider.id} failed: ${message}`);

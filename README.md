@@ -105,6 +105,8 @@ These endpoints follow the OpenAI API format, making the gateway a drop-in repla
 
 Standard OpenAI chat completions format. Supports system messages, conversation history, model selection, and temperature.
 
+The response stays OpenAI-compatible and adds an `x_gateway` object with resolution metadata so clients can tell what actually answered, including fallback usage.
+
 > **Note:** Streaming (`stream: true`) is not supported.
 
 ```bash
@@ -134,7 +136,15 @@ Response:
     "message": { "role": "assistant", "content": "The capital of France is Paris." },
     "finish_reason": "stop"
   }],
-  "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 150 }
+  "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 150 },
+  "x_gateway": {
+    "requestedProvider": null,
+    "requestedModel": "claude-sonnet-4-20250514",
+    "resolvedProvider": "anthropic",
+    "resolvedModel": "claude-sonnet-4-20250514",
+    "fallbackUsed": false,
+    "tokensUsed": 150
+  }
 }
 ```
 
@@ -171,6 +181,8 @@ Response:
 #### `POST /v1/generate`
 
 The gateway's native generation endpoint. Supports provider/model selection and per-project scoping.
+
+Responses include both the backward-compatible `provider` / `model` fields and richer routing metadata so callers can distinguish requested values from the provider/model that actually answered.
 
 ```bash
 # Auto-select provider
@@ -211,7 +223,12 @@ Response:
   "text": "Quicksort is a divide-and-conquer...",
   "provider": "anthropic",
   "model": "claude-sonnet-4-20250514",
-  "tokensUsed": 150
+  "tokensUsed": 150,
+  "requestedProvider": null,
+  "requestedModel": null,
+  "resolvedProvider": "anthropic",
+  "resolvedModel": "claude-sonnet-4-20250514",
+  "fallbackUsed": false
 }
 ```
 

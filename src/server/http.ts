@@ -86,6 +86,24 @@ function resolveProject(bodyProject: string | undefined, headerProject: string |
   return bodyProject ?? headerProject ?? undefined;
 }
 
+function buildGatewayMetadata(result: {
+  requestedProvider?: string;
+  requestedModel?: string;
+  resolvedProvider?: string;
+  resolvedModel?: string;
+  fallbackUsed?: boolean;
+  tokensUsed?: number;
+}) {
+  return {
+    requestedProvider: result.requestedProvider,
+    requestedModel: result.requestedModel,
+    resolvedProvider: result.resolvedProvider,
+    resolvedModel: result.resolvedModel,
+    fallbackUsed: result.fallbackUsed,
+    tokensUsed: result.tokensUsed,
+  };
+}
+
 /**
  * Start the HTTP server on the configured port.
  *
@@ -246,6 +264,7 @@ export function startHttpServer(
           completion_tokens: 0,
           total_tokens: result.tokensUsed ?? 0,
         },
+        x_gateway: buildGatewayMetadata(result),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

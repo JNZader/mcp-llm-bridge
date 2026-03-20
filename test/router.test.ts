@@ -93,6 +93,11 @@ describe('Router.generate()', () => {
     const result = await router.generate({ prompt: 'test' });
     assert.equal(result.text, 'from-first');
     assert.equal(result.provider, 'first');
+    assert.equal(result.fallbackUsed, false);
+    assert.equal(result.resolvedProvider, 'first');
+    assert.equal(result.resolvedModel, 'model-a');
+    assert.equal(result.requestedProvider, undefined);
+    assert.equal(result.requestedModel, undefined);
   });
 
   it('routes to correct provider when model param is specified', async () => {
@@ -115,6 +120,9 @@ describe('Router.generate()', () => {
     const result = await router.generate({ prompt: 'test', model: 'model-b' });
     assert.equal(result.text, 'from-b');
     assert.equal(result.provider, 'provider-b');
+    assert.equal(result.requestedModel, 'model-b');
+    assert.equal(result.resolvedProvider, 'provider-b');
+    assert.equal(result.fallbackUsed, false);
   });
 
   it('routes to correct provider when provider param is specified', async () => {
@@ -137,6 +145,9 @@ describe('Router.generate()', () => {
     const result = await router.generate({ prompt: 'test', provider: 'beta' });
     assert.equal(result.text, 'from-beta');
     assert.equal(result.provider, 'beta');
+    assert.equal(result.requestedProvider, 'beta');
+    assert.equal(result.resolvedProvider, 'beta');
+    assert.equal(result.fallbackUsed, false);
   });
 
   it('falls back to second provider if first fails', async () => {
@@ -160,6 +171,9 @@ describe('Router.generate()', () => {
     const result = await router.generate({ prompt: 'test' });
     assert.equal(result.text, 'from-backup');
     assert.equal(result.provider, 'backup');
+    assert.equal(result.resolvedProvider, 'backup');
+    assert.equal(result.resolvedModel, 'backup-model');
+    assert.equal(result.fallbackUsed, true);
   });
 
   it('throws immediately in strict mode when first candidate fails', async () => {
@@ -223,6 +237,7 @@ describe('Router.generate()', () => {
 
     const result = await router.generate({ prompt: 'test', strict: false });
     assert.equal(result.provider, 'backup');
+    assert.equal(result.fallbackUsed, true);
     assert.equal(backupGenerate.mock.callCount(), 1);
   });
 
@@ -329,5 +344,6 @@ describe('Router provider ordering', () => {
     // Without specifying provider/model, API should be tried first
     const result = await router.generate({ prompt: 'test' });
     assert.equal(result.provider, 'api-second', 'API provider should be tried before CLI');
+    assert.equal(result.fallbackUsed, false);
   });
 });

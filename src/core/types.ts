@@ -38,6 +38,11 @@ export interface GenerateResponse {
   provider: string;
   model: string;
   tokensUsed?: number;
+  requestedProvider?: string;
+  requestedModel?: string;
+  resolvedProvider?: string;
+  resolvedModel?: string;
+  fallbackUsed?: boolean;
 }
 
 export interface StoredCredential {

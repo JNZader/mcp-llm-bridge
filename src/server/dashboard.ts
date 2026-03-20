@@ -432,20 +432,53 @@ export function dashboardHtml(): string {
     .response-area.visible { display: block; }
 
     .response-meta {
-      display: flex;
-      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
       font-size: 0.78rem;
       color: var(--text-dim);
       margin-top: 8px;
       display: none;
     }
 
-    .response-meta.visible { display: flex; }
+    .response-meta.visible { display: grid; }
 
     .response-meta span {
       display: flex;
       align-items: center;
       gap: 4px;
+    }
+
+    .meta-item {
+      min-height: 40px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.02);
+      flex-wrap: wrap;
+    }
+
+    .route-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 64px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .route-badge.direct {
+      color: var(--green);
+      background: rgba(63, 185, 80, 0.12);
+      border: 1px solid rgba(63, 185, 80, 0.35);
+    }
+
+    .route-badge.fallback {
+      color: var(--orange);
+      background: rgba(210, 153, 34, 0.12);
+      border: 1px solid rgba(210, 153, 34, 0.35);
     }
 
     .checkbox-group {
@@ -862,9 +895,12 @@ export function dashboardHtml(): string {
           <p class="help-text">Strict mode is recommended for debugging provider-specific issues.</p>
           <div id="test-response" class="response-area"></div>
           <div id="test-meta" class="response-meta">
-            <span id="meta-provider">\u2014</span>
-            <span id="meta-model">\u2014</span>
-            <span id="meta-tokens">\u2014</span>
+            <span id="meta-requested-provider" class="meta-item">\u2014</span>
+            <span id="meta-requested-model" class="meta-item">\u2014</span>
+            <span id="meta-resolved-provider" class="meta-item">\u2014</span>
+            <span id="meta-resolved-model" class="meta-item">\u2014</span>
+            <span id="meta-route" class="meta-item">\u2014</span>
+            <span id="meta-tokens" class="meta-item">\u2014</span>
           </div>
         </div>
       </div>
@@ -1203,6 +1239,10 @@ export function dashboardHtml(): string {
       document.getElementById('test-strict').checked = !!provider;
     }
 
+    function formatMetaValue(value) {
+      return value == null || value === '' ? 'auto' : String(value);
+    }
+
     async function loadProviders() {
       try {
         const { providers } = await api('/v1/providers');
@@ -1321,9 +1361,13 @@ export function dashboardHtml(): string {
         respEl.style.color = '';
         respEl.textContent = result.text;
 
-        document.getElementById('meta-provider').textContent = '\u26A1 ' + (result.provider || '\u2014');
-        document.getElementById('meta-model').textContent    = '\uD83E\uDDE0 ' + (result.model || '\u2014');
-        document.getElementById('meta-tokens').textContent   = '\uD83D\uDD22 ' + (result.tokensUsed != null ? result.tokensUsed + ' tokens' : '\u2014');
+        const fallbackUsed = result.fallbackUsed === true;
+        document.getElementById('meta-requested-provider').textContent = 'Requested provider: ' + formatMetaValue(result.requestedProvider);
+        document.getElementById('meta-requested-model').textContent = 'Requested model: ' + formatMetaValue(result.requestedModel);
+        document.getElementById('meta-resolved-provider').textContent = 'Resolved provider: ' + formatMetaValue(result.resolvedProvider || result.provider);
+        document.getElementById('meta-resolved-model').textContent = 'Resolved model: ' + formatMetaValue(result.resolvedModel || result.model);
+        document.getElementById('meta-route').innerHTML = 'Fallback used: <span class="route-badge ' + (fallbackUsed ? 'fallback">yes' : 'direct">direct') + '</span>';
+        document.getElementById('meta-tokens').textContent = 'Tokens used: ' + (result.tokensUsed != null ? String(result.tokensUsed) : '\u2014');
         metaEl.className = 'response-meta visible';
       } catch (e) {
         respEl.textContent = 'Error: ' + e.message;
