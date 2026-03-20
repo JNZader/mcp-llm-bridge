@@ -69,6 +69,117 @@ export class Vault {
     initializeDb(this.db);
   }
 
+  // ── Private helpers for project/global lookup ──────────────
+
+  /**
+   * Resolve project: if provided and not _global, return it; otherwise _global.
+   */
+  private resolveProject(project?: string): string {
+    return project && project !== GLOBAL_PROJECT ? project : GLOBAL_PROJECT;
+  }
+
+  /**
+   * Find a credential row with project-first then global fallback.
+   * Returns the decrypted value if found, or null if not found.
+   */
+  private findCredentialDecrypted(provider: string, keyName: string, project?: string): string | null {
+    const resolved = this.resolveProject(project);
+
+    const projectRow = this.db
+      .prepare('SELECT encrypted_value, iv, auth_tag FROM credentials WHERE provider = ? AND key_name = ? AND project = ?')
+      .get(provider, keyName, resolved) as Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+
+    if (projectRow) {
+      return this.decryptRow(projectRow);
+    }
+
+    // If project was specified and not _global, try global
+    if (project && project !== GLOBAL_PROJECT) {
+      const globalRow = this.db
+        .prepare('SELECT encrypted_value, iv, auth_tag FROM credentials WHERE provider = ? AND key_name = ? AND project = ?')
+        .get(provider, keyName, GLOBAL_PROJECT) as Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+      if (globalRow) {
+        return this.decryptRow(globalRow);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a credential exists with project-first then global fallback.
+   */
+  private hasCredential(provider: string, keyName: string, project?: string): boolean {
+    const resolved = this.resolveProject(project);
+
+    if (this.db.prepare('SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?').get(provider, keyName, resolved)) {
+      return true;
+    }
+    if (project && project !== GLOBAL_PROJECT) {
+      return !!this.db.prepare('SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?').get(provider, keyName, GLOBAL_PROJECT);
+    }
+    return false;
+  }
+
+  /**
+   * Find a file row with project-first then global fallback.
+   * Returns the decrypted content if found, or null if not found.
+   */
+  private findFileDecrypted(provider: string, fileName: string, project?: string): string | null {
+    const resolved = this.resolveProject(project);
+
+    const projectRow = this.db
+      .prepare('SELECT encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND file_name = ? AND project = ?')
+      .get(provider, fileName, resolved) as Pick<FileRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+
+    if (projectRow) {
+      return this.decryptRow(projectRow);
+    }
+
+    // If project was specified and not _global, try global
+    if (project && project !== GLOBAL_PROJECT) {
+      const globalRow = this.db
+        .prepare('SELECT encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND file_name = ? AND project = ?')
+        .get(provider, fileName, GLOBAL_PROJECT) as Pick<FileRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+      if (globalRow) {
+        return this.decryptRow(globalRow);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if a file exists with project-first then global fallback.
+   */
+  private hasFileImpl(provider: string, fileName: string, project?: string): boolean {
+    const resolved = this.resolveProject(project);
+
+    if (this.db.prepare('SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?').get(provider, fileName, resolved)) {
+      return true;
+    }
+    if (project && project !== GLOBAL_PROJECT) {
+      return !!this.db.prepare('SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?').get(provider, fileName, GLOBAL_PROJECT);
+    }
+    return false;
+  }
+
+  /**
+   * Decrypt an encrypted credential row.
+   */
+  private decryptRow(row: Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'>): string {
+    return decrypt(
+      {
+        encrypted: row.encrypted_value,
+        iv: row.iv,
+        authTag: row.auth_tag,
+      },
+      this.masterKey,
+    );
+  }
+
+  // ── Public API ─────────────────────────────────────────────
+
   /**
    * Store (upsert) an encrypted credential.
    *
@@ -116,34 +227,9 @@ export class Vault {
    * @throws Error if no credential is found for the given provider/keyName
    */
   getDecrypted(provider: string, keyName = 'default', project?: string): string {
-    // If a project is specified and it's not _global, try project-specific first
-    if (project && project !== GLOBAL_PROJECT) {
-      const projectRow = this.db
-        .prepare(
-          'SELECT encrypted_value, iv, auth_tag FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
-        )
-        .get(provider, keyName, project) as Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
+    const decrypted = this.findCredentialDecrypted(provider, keyName, project);
 
-      if (projectRow) {
-        return decrypt(
-          {
-            encrypted: projectRow.encrypted_value,
-            iv: projectRow.iv,
-            authTag: projectRow.auth_tag,
-          },
-          this.masterKey,
-        );
-      }
-    }
-
-    // Fall back to global
-    const row = this.db
-      .prepare(
-        'SELECT encrypted_value, iv, auth_tag FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
-      )
-      .get(provider, keyName, GLOBAL_PROJECT) as Pick<CredentialRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
-
-    if (!row) {
+    if (!decrypted) {
       const scopeInfo = project && project !== GLOBAL_PROJECT
         ? ` (checked project "${project}" and global)`
         : '';
@@ -152,14 +238,7 @@ export class Vault {
       );
     }
 
-    return decrypt(
-      {
-        encrypted: row.encrypted_value,
-        iv: row.iv,
-        authTag: row.auth_tag,
-      },
-      this.masterKey,
-    );
+    return decrypted;
   }
 
   /**
@@ -168,27 +247,7 @@ export class Vault {
    * When a project is specified, checks project-specific first, then '_global'.
    */
   has(provider: string, keyName = 'default', project?: string): boolean {
-    // If a project is specified and it's not _global, check project-specific first
-    if (project && project !== GLOBAL_PROJECT) {
-      const projectRow = this.db
-        .prepare(
-          'SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
-        )
-        .get(provider, keyName, project);
-
-      if (projectRow !== undefined) {
-        return true;
-      }
-    }
-
-    // Fall back to global
-    const row = this.db
-      .prepare(
-        'SELECT 1 FROM credentials WHERE provider = ? AND key_name = ? AND project = ?',
-      )
-      .get(provider, keyName, GLOBAL_PROJECT);
-
-    return row !== undefined;
+    return this.hasCredential(provider, keyName, project);
   }
 
   /**
@@ -306,45 +365,7 @@ export class Vault {
    * @returns Decrypted file content, or null if not found
    */
   getFile(provider: string, fileName: string, project?: string): string | null {
-    // If a project is specified and it's not _global, try project-specific first
-    if (project && project !== GLOBAL_PROJECT) {
-      const projectRow = this.db
-        .prepare(
-          'SELECT encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND file_name = ? AND project = ?',
-        )
-        .get(provider, fileName, project) as Pick<FileRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
-
-      if (projectRow) {
-        return decrypt(
-          {
-            encrypted: projectRow.encrypted_value,
-            iv: projectRow.iv,
-            authTag: projectRow.auth_tag,
-          },
-          this.masterKey,
-        );
-      }
-    }
-
-    // Fall back to global
-    const row = this.db
-      .prepare(
-        'SELECT encrypted_value, iv, auth_tag FROM files WHERE provider = ? AND file_name = ? AND project = ?',
-      )
-      .get(provider, fileName, GLOBAL_PROJECT) as Pick<FileRow, 'encrypted_value' | 'iv' | 'auth_tag'> | undefined;
-
-    if (!row) {
-      return null;
-    }
-
-    return decrypt(
-      {
-        encrypted: row.encrypted_value,
-        iv: row.iv,
-        authTag: row.auth_tag,
-      },
-      this.masterKey,
-    );
+    return this.findFileDecrypted(provider, fileName, project);
   }
 
   /**
@@ -353,25 +374,7 @@ export class Vault {
    * When a project is specified, checks project-specific first, then '_global'.
    */
   hasFile(provider: string, fileName: string, project?: string): boolean {
-    if (project && project !== GLOBAL_PROJECT) {
-      const projectRow = this.db
-        .prepare(
-          'SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?',
-        )
-        .get(provider, fileName, project);
-
-      if (projectRow !== undefined) {
-        return true;
-      }
-    }
-
-    const row = this.db
-      .prepare(
-        'SELECT 1 FROM files WHERE provider = ? AND file_name = ? AND project = ?',
-      )
-      .get(provider, fileName, GLOBAL_PROJECT);
-
-    return row !== undefined;
+    return this.hasFileImpl(provider, fileName, project);
   }
 
   /**
