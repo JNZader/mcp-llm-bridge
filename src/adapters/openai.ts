@@ -20,9 +20,22 @@ export class OpenAIAdapter implements LLMProvider {
 
   constructor(private readonly vault: Vault) {}
 
+  // Client cache per apiKey to avoid recreating connections
+  private clientCache = new Map<string, OpenAI>();
+
+  /**
+   * Get or create a cached OpenAI client for the given apiKey.
+   */
+  private getClient(apiKey: string): OpenAI {
+    if (!this.clientCache.has(apiKey)) {
+      this.clientCache.set(apiKey, new OpenAI({ apiKey }));
+    }
+    return this.clientCache.get(apiKey)!;
+  }
+
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const apiKey = this.vault.getDecrypted('openai', 'default', request.project);
-    const client = new OpenAI({ apiKey });
+    const client = this.getClient(apiKey);
 
     const model = request.model ?? 'gpt-4o';
     const messages: ChatCompletionMessageParam[] = [];

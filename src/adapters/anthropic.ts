@@ -18,9 +18,22 @@ export class AnthropicAdapter implements LLMProvider {
 
   constructor(private readonly vault: Vault) {}
 
+  // Client cache per apiKey to avoid recreating connections
+  private clientCache = new Map<string, Anthropic>();
+
+  /**
+   * Get or create a cached Anthropic client for the given apiKey.
+   */
+  private getClient(apiKey: string): Anthropic {
+    if (!this.clientCache.has(apiKey)) {
+      this.clientCache.set(apiKey, new Anthropic({ apiKey }));
+    }
+    return this.clientCache.get(apiKey)!;
+  }
+
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const apiKey = this.vault.getDecrypted('anthropic', 'default', request.project);
-    const client = new Anthropic({ apiKey });
+    const client = this.getClient(apiKey);
 
     const model = request.model ?? 'claude-sonnet-4-20250514';
     const response = await client.messages.create({

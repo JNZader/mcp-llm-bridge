@@ -45,16 +45,30 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
 
   readonly type = 'api' as const;
 
+  // Client cache per apiKey to avoid recreating TLS connections
+  private clientCache = new Map<string, OpenAI>();
+
+  /**
+   * Get or create a cached OpenAI client for the given apiKey.
+   * Caching avoids TLS handshake overhead on every request.
+   */
+  private getClient(apiKey: string): OpenAI {
+    if (!this.clientCache.has(apiKey)) {
+      this.clientCache.set(apiKey, new OpenAI({
+        apiKey,
+        baseURL: this.baseURL,
+        defaultHeaders: this.defaultHeaders,
+      }));
+    }
+    return this.clientCache.get(apiKey)!;
+  }
+
   /**
    * Generate text using the OpenAI-compatible API.
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const apiKey = this.vault.getDecrypted(this.id, 'default', request.project);
-    const client = new OpenAI({
-      apiKey,
-      baseURL: this.baseURL,
-      defaultHeaders: this.defaultHeaders,
-    });
+    const client = this.getClient(apiKey);
 
     const model = request.model ?? this.defaultModel;
     const messages: ChatCompletionMessageParam[] = [];
