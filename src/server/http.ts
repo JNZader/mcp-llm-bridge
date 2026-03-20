@@ -17,6 +17,8 @@ import type { GenerateRequest, GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
+import { VERSION, MAX_BODY_SIZE } from '../core/constants.js';
+import { RateLimiter } from './rate-limit.js';
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -105,6 +107,88 @@ function buildGatewayMetadata(result: {
 }
 
 /**
+ * Extract allowed CORS origins from environment variable.
+ *
+ * Format: comma-separated list of origins, or '*' for allow all.
+ * Example: 'https://example.com,https://app.example.com'
+ */
+function getCorsOrigins(): string | string[] {
+  const envOrigins = process.env['LLM_GATEWAY_CORS_ORIGINS'];
+  if (!envOrigins) {
+    // Default: allow only GitHub Pages hosted dashboard
+    return ['https://jnzader.github.io'];
+  }
+  if (envOrigins === '*') {
+    // CORS '*' is allowed but we return it as-is
+    return '*';
+  }
+  return envOrigins.split(',').map((o) => o.trim());
+}
+
+/**
+ * Request body size limit middleware.
+ * Rejects requests with bodies larger than MAX_BODY_SIZE.
+ */
+async function bodySizeLimit(c: Context, next: Next): Promise<void> {
+  const contentLength = c.req.header('content-length');
+  if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+    c.status(413);
+    c.json({ error: 'Payload too large', code: 'PAYLOAD_TOO_LARGE' });
+    return;
+  }
+  await next();
+}
+
+/**
+ * Get the client IP address from the request.
+ * Handles X-Forwarded-For header for proxied requests.
+ */
+function getClientIp(c: Context): string {
+  const forwarded = c.req.header('x-forwarded-for');
+  if (forwarded) {
+    const firstIp = forwarded.split(',')[0];
+    return firstIp?.trim() ?? 'unknown';
+  }
+  return c.req.header('x-real-ip') ?? 'unknown';
+}
+
+/**
+ * Rate limit middleware factory.
+ * Creates a middleware that rate limits requests per IP.
+ */
+function rateLimitMiddleware(limiter: RateLimiter) {
+  return async (c: Context, next: Next): Promise<void> => {
+    // Skip rate limiting for health checks
+    if (c.req.method === 'GET' && c.req.path === '/health') {
+      return next();
+    }
+
+    const ip = getClientIp(c);
+
+    if (limiter.isRateLimited(ip)) {
+      const resetAt = limiter.getResetAt(ip);
+      const retryAfter = Math.ceil((resetAt - Date.now()) / 1000);
+      c.header('Retry-After', String(retryAfter));
+      c.header('X-RateLimit-Remaining', '0');
+      c.header('X-RateLimit-Reset', String(Math.floor(resetAt / 1000)));
+      c.status(429);
+      c.json({
+        error: 'Too many requests',
+        code: 'RATE_LIMITED',
+        retryAfter,
+      });
+      return;
+    }
+
+    // Add rate limit headers to response
+    c.header('X-RateLimit-Remaining', String(limiter.getRemaining(ip)));
+    c.header('X-RateLimit-Reset', String(Math.floor(limiter.getResetAt(ip) / 1000)));
+
+    await next();
+  };
+}
+
+/**
  * Start the HTTP server on the configured port.
  *
  * All endpoints share the same Router and Vault instances
@@ -117,9 +201,21 @@ export function startHttpServer(
 ): void {
   const app = new Hono();
 
-  // ── CORS — allow GitHub Pages dashboard and other origins ──
+  // ── Rate limiter — 100 requests per 15 minutes per IP ──
+  const rateLimiter = new RateLimiter();
+
+  // ── Security middleware ────────────────────────────────
+
+  // Rate limiting
+  app.use('*', rateLimitMiddleware(rateLimiter));
+
+  // Body size limit
+  app.use('*', bodySizeLimit);
+
+  // ── CORS — configurable via LLM_GATEWAY_CORS_ORIGINS ──
+  const corsOrigins = getCorsOrigins();
   app.use('*', cors({
-    origin: '*',
+    origin: corsOrigins === '*' ? '*' : corsOrigins,
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-Project'],
     exposeHeaders: ['Content-Length'],
@@ -136,7 +232,7 @@ export function startHttpServer(
   // ── Health ──────────────────────────────────────────────
 
   app.get('/health', (c) => {
-    return c.json({ status: 'ok', version: '0.2.0' });
+    return c.json({ status: 'ok', version: VERSION });
   });
 
   // ── Generate ───────────────────────────────────────────

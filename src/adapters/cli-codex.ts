@@ -8,11 +8,10 @@
  * Note: Codex doesn't support a system prompt flag; system is prepended to prompt.
  */
 
-import { execSync } from 'node:child_process';
-
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
+import { execCliSync, isCliAvailable } from './cli-utils.js';
 
 export class CodexCliAdapter implements LLMProvider {
   readonly id = 'codex-cli';
@@ -45,14 +44,10 @@ export class CodexCliAdapter implements LLMProvider {
       }
 
       const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
+      const args = ['exec', '--model', model, JSON.stringify(fullPrompt)];
 
-      const output = execSync(`codex exec --model ${model} ${JSON.stringify(fullPrompt)}`, {
-        timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env,
-      });
+      // Use execFileSync instead of execSync with string interpolation
+      const output = execCliSync('codex', args, { env });
 
       return { text: output.trim(), provider: this.id, model, tokensUsed: 0 };
     } catch (error) {
@@ -69,11 +64,6 @@ export class CodexCliAdapter implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync('codex --version', { timeout: 5_000, stdio: 'pipe' });
-      return true;
-    } catch {
-      return false;
-    }
+    return isCliAvailable('codex');
   }
 }

@@ -3,12 +3,29 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { GatewayConfig } from './types.js';
+import {
+  DEFAULT_DB_FILENAME,
+  DEFAULT_HTTP_PORT,
+  DEFAULT_MASTER_KEY_FILENAME,
+  MASTER_KEY_BYTES,
+  MIN_AUTH_TOKEN_LENGTH,
+} from './constants.js';
 
 const DEFAULT_DIR = join(homedir(), '.llm-gateway');
-const DEFAULT_DB_PATH = join(DEFAULT_DIR, 'vault.db');
-const DEFAULT_MASTER_KEY_PATH = join(DEFAULT_DIR, 'master.key');
-const DEFAULT_HTTP_PORT = 3456;
-const MASTER_KEY_BYTES = 32;
+const DEFAULT_DB_PATH = join(DEFAULT_DIR, DEFAULT_DB_FILENAME);
+const DEFAULT_MASTER_KEY_PATH = join(DEFAULT_DIR, DEFAULT_MASTER_KEY_FILENAME);
+
+/**
+ * Check if we're running in production mode.
+ * Looks for common production indicators in environment.
+ */
+function isProduction(): boolean {
+  const nodeEnv = process.env['NODE_ENV'];
+  const gatewayEnv = process.env['LLM_GATEWAY_ENV'];
+  const isProd = nodeEnv === 'production' || gatewayEnv === 'production';
+  // Also consider it production if auth token is required via config
+  return isProd;
+}
 
 /**
  * Ensure the gateway config directory exists with proper permissions.
@@ -63,10 +80,7 @@ function loadMasterKey(): Buffer {
   return key;
 }
 
-/**
- * Minimum length for the auth token to prevent weak secrets.
- */
-const MIN_AUTH_TOKEN_LENGTH = 32;
+
 
 /**
  * Load gateway configuration from environment variables with sensible defaults.
@@ -100,8 +114,13 @@ export function loadConfig(): GatewayConfig {
       );
     }
     authToken = rawAuthToken;
+  } else if (isProduction()) {
+    throw new Error(
+      'FATAL: LLM_GATEWAY_AUTH_TOKEN is required in production. ' +
+      'Set LLM_GATEWAY_AUTH_TOKEN environment variable or set NODE_ENV=development.',
+    );
   } else {
-    console.error('[llm-gateway] WARNING: LLM_GATEWAY_AUTH_TOKEN is not set — HTTP auth is disabled. Set it in production!');
+    console.error('[llm-gateway] ⚠️  WARNING: Auth disabled (not production)');
   }
 
   return { masterKey, dbPath, httpPort, authToken };

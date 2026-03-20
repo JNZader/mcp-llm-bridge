@@ -6,11 +6,10 @@
  * directory via HOME override before invocation.
  */
 
-import { execSync } from 'node:child_process';
-
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
+import { execCliSync, isCliAvailable } from './cli-utils.js';
 
 export class ClaudeCliAdapter implements LLMProvider {
   readonly id = 'claude-cli';
@@ -46,13 +45,8 @@ export class ClaudeCliAdapter implements LLMProvider {
       const args = ['-p', JSON.stringify(request.prompt), '--output-format', 'json', '--max-turns', '1', '--model', model];
       if (request.system) args.push('--system-prompt', JSON.stringify(request.system));
 
-      const output = execSync(`claude ${args.join(' ')}`, {
-        timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env,
-      });
+      // Use execFileSync instead of execSync with string interpolation
+      const output = execCliSync('claude', args, { env });
 
       try {
         const parsed: Record<string, unknown> = JSON.parse(output);
@@ -94,11 +88,6 @@ export class ClaudeCliAdapter implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync('claude --version', { timeout: 5_000, stdio: 'pipe' });
-      return true;
-    } catch {
-      return false;
-    }
+    return isCliAvailable('claude');
   }
 }
