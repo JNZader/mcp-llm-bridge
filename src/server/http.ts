@@ -7,7 +7,7 @@
  * Supports per-project scoping via `project` body field or `X-Project` header.
  */
 
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
@@ -142,15 +142,148 @@ export function startHttpServer(
     }
   });
 
-  // ── Models ─────────────────────────────────────────────
+  // ── OpenAI-compatible Chat Completions ──────────────────
+
+  app.post('/v1/chat/completions', async (c) => {
+    try {
+      const body = await c.req.json<{
+        model?: string;
+        messages?: Array<{
+          role: 'system' | 'user' | 'assistant';
+          content: string;
+        }>;
+        max_tokens?: number;
+        temperature?: number;
+        stream?: boolean;
+      }>();
+
+      // Reject streaming — not supported
+      if (body.stream) {
+        return c.json({
+          error: {
+            message: 'Streaming not supported',
+            type: 'invalid_request_error',
+            param: 'stream',
+            code: null,
+          },
+        }, 400);
+      }
+
+      // Validate messages
+      if (!body.messages || body.messages.length === 0) {
+        return c.json({
+          error: {
+            message: 'messages is required',
+            type: 'invalid_request_error',
+            param: 'messages',
+            code: null,
+          },
+        }, 400);
+      }
+
+      // Extract system messages → concatenate as system prompt
+      const systemMessages = body.messages
+        .filter((m) => m.role === 'system')
+        .map((m) => m.content);
+      const system = systemMessages.length > 0 ? systemMessages.join('\n') : undefined;
+
+      // Extract conversation messages → last user message is the main prompt
+      const conversationMessages = body.messages.filter((m) => m.role !== 'system');
+      const lastUserMessage = [...conversationMessages].reverse().find((m) => m.role === 'user');
+
+      if (!lastUserMessage) {
+        return c.json({
+          error: {
+            message: 'At least one user message is required',
+            type: 'invalid_request_error',
+            param: 'messages',
+            code: null,
+          },
+        }, 400);
+      }
+
+      // Build prompt: include conversation context if there are earlier messages
+      const earlierMessages = conversationMessages.slice(0, -1);
+      let prompt = lastUserMessage.content;
+      if (earlierMessages.length > 0) {
+        const context = earlierMessages
+          .map((m) => `${m.role}: ${m.content}`)
+          .join('\n');
+        prompt = `${context}\nuser: ${lastUserMessage.content}`;
+      }
+
+      const headerProject = c.req.header('X-Project') ?? undefined;
+
+      const result = await router.generate({
+        prompt,
+        system,
+        model: body.model,
+        maxTokens: body.max_tokens,
+        project: headerProject,
+      });
+
+      return c.json({
+        id: `chatcmpl-${randomUUID()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: result.model,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: result.text,
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: result.tokensUsed ?? 0,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({
+        error: {
+          message,
+          type: 'server_error',
+          param: null,
+          code: null,
+        },
+      }, 500);
+    }
+  });
+
+  // ── Models (OpenAI-compatible format) ──────────────────
 
   app.get('/v1/models', async (c) => {
     try {
       const models = await router.getAvailableModels();
-      return c.json({ models });
+      return c.json({
+        object: 'list',
+        data: models.map((m) => ({
+          id: m.id,
+          object: 'model',
+          created: 0,
+          owned_by: 'llm-gateway',
+          // Gateway-specific fields
+          name: m.name,
+          provider: m.provider,
+          max_tokens: m.maxTokens,
+        })),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+      return c.json({
+        error: {
+          message,
+          type: 'server_error',
+          param: null,
+          code: null,
+        },
+      }, 500);
     }
   });
 
