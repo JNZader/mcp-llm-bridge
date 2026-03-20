@@ -56,8 +56,7 @@ function tokenEquals(a: string, b: string): boolean {
  *
  * - If `config.authToken` is not set → all requests pass (auth disabled).
  * - Skips `GET /health` (Coolify health checks) and `OPTIONS *` (CORS preflight).
- * - The dashboard HTML at `GET /` is always served (auth is handled in-browser).
- * - All other routes require `Authorization: Bearer <token>`.
+ * - All other routes including the dashboard require `Authorization: Bearer <token>`.
  */
 function bearerAuth(config: GatewayConfig) {
   return async (c: Context, next: Next) => {
@@ -73,11 +72,6 @@ function bearerAuth(config: GatewayConfig) {
 
     // CORS preflight must pass through (handled by cors middleware)
     if (c.req.method === 'OPTIONS') {
-      return next();
-    }
-
-    // Dashboard HTML is served without auth — the JS handles auth client-side
-    if (c.req.method === 'GET' && c.req.path === '/') {
       return next();
     }
 
