@@ -36,6 +36,24 @@ export class Router {
       );
     }
 
+    if (request.strict) {
+      const provider = candidates[0];
+
+      if (!provider) {
+        throw new Error(
+          'No providers available. Store API credentials via vault_store or install a CLI tool.',
+        );
+      }
+
+      try {
+        return await provider.generate(request);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[gateway] ${provider.id} failed: ${message}`);
+        throw error;
+      }
+    }
+
     const errors: string[] = [];
 
     for (const provider of candidates) {

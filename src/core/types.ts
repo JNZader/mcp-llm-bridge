@@ -28,6 +28,7 @@ export interface GenerateRequest {
   system?: string;
   provider?: string;
   model?: string;
+  strict?: boolean;
   maxTokens?: number;
   project?: string;
 }

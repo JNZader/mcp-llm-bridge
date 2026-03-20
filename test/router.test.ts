@@ -4,7 +4,7 @@
  * Uses mock providers implementing the LLMProvider interface.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Router } from '../src/core/router.js';
@@ -160,6 +160,70 @@ describe('Router.generate()', () => {
     const result = await router.generate({ prompt: 'test' });
     assert.equal(result.text, 'from-backup');
     assert.equal(result.provider, 'backup');
+  });
+
+  it('throws immediately in strict mode when first candidate fails', async () => {
+    const router = new Router();
+    const backupGenerate = mock.fn(async () => ({
+      text: 'from-backup',
+      provider: 'backup',
+      model: 'backup-model',
+    }));
+
+    router.register(createMockProvider({
+      id: 'failing',
+      name: 'Failing',
+      type: 'api',
+      models: [{ id: 'fail-model', name: 'Fail Model', provider: 'failing', maxTokens: 4096 }],
+      shouldFail: true,
+      failMessage: 'Gemini provider failed',
+    }));
+    router.register({
+      ...createMockProvider({
+        id: 'backup',
+        name: 'Backup',
+        type: 'api',
+        models: [{ id: 'backup-model', name: 'Backup Model', provider: 'backup', maxTokens: 4096 }],
+      }),
+      generate: backupGenerate,
+    });
+
+    await assert.rejects(
+      () => router.generate({ prompt: 'test', strict: true }),
+      /Gemini provider failed/,
+    );
+    assert.equal(backupGenerate.mock.callCount(), 0);
+  });
+
+  it('tries the second provider when strict mode is disabled', async () => {
+    const router = new Router();
+    const backupGenerate = mock.fn(async () => ({
+      text: 'from-backup',
+      provider: 'backup',
+      model: 'backup-model',
+    }));
+
+    router.register(createMockProvider({
+      id: 'failing',
+      name: 'Failing',
+      type: 'api',
+      models: [{ id: 'fail-model', name: 'Fail Model', provider: 'failing', maxTokens: 4096 }],
+      shouldFail: true,
+      failMessage: 'API rate limit exceeded',
+    }));
+    router.register({
+      ...createMockProvider({
+        id: 'backup',
+        name: 'Backup',
+        type: 'api',
+        models: [{ id: 'backup-model', name: 'Backup Model', provider: 'backup', maxTokens: 4096 }],
+      }),
+      generate: backupGenerate,
+    });
+
+    const result = await router.generate({ prompt: 'test', strict: false });
+    assert.equal(result.provider, 'backup');
+    assert.equal(backupGenerate.mock.callCount(), 1);
   });
 
   it('throws when all providers fail', async () => {

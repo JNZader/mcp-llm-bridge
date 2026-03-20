@@ -448,6 +448,27 @@ export function dashboardHtml(): string {
       gap: 4px;
     }
 
+    .checkbox-group {
+      gap: 8px;
+      align-self: center;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+    }
+
+    .checkbox-row input {
+      margin: 0;
+    }
+
+    .checkbox-row label {
+      color: var(--text);
+      cursor: pointer;
+    }
+
     /* ── Spinner ──────────────────────────────────── */
     .spinner {
       display: inline-block;
@@ -830,8 +851,15 @@ export function dashboardHtml(): string {
               <label for="test-tokens">Max Tokens</label>
               <input type="number" id="test-tokens" placeholder="1024" value="1024" style="width:90px">
             </div>
+            <div class="form-group checkbox-group">
+              <div class="checkbox-row">
+                <input type="checkbox" id="test-strict">
+                <label for="test-strict">Strict (no fallback)</label>
+              </div>
+            </div>
             <button class="btn-primary" id="test-btn" onclick="runTest()">Generate</button>
           </div>
+          <p class="help-text">Strict mode is recommended for debugging provider-specific issues.</p>
           <div id="test-response" class="response-area"></div>
           <div id="test-meta" class="response-meta">
             <span id="meta-provider">\u2014</span>
@@ -1170,6 +1198,11 @@ export function dashboardHtml(): string {
       modelSel.value = filtered.some(m => m.id === current) ? current : '';
     }
 
+    function syncTestStrictDefault() {
+      const provider = document.getElementById('test-provider').value;
+      document.getElementById('test-strict').checked = !!provider;
+    }
+
     async function loadProviders() {
       try {
         const { providers } = await api('/v1/providers');
@@ -1202,6 +1235,7 @@ export function dashboardHtml(): string {
           ).join('');
         sel.value = current;
         populateTestModelDropdown();
+        syncTestStrictDefault();
       } catch (e) {
         document.getElementById('providers-grid').innerHTML =
           '<div class="empty-msg" style="color:var(--red)">Failed to load providers</div>';
@@ -1258,6 +1292,7 @@ export function dashboardHtml(): string {
       const provider  = document.getElementById('test-provider').value || undefined;
       const model     = document.getElementById('test-model').value || undefined;
       const project   = document.getElementById('test-project').value || undefined;
+      const strict    = provider ? document.getElementById('test-strict').checked : false;
       const maxTokens = parseInt(document.getElementById('test-tokens').value, 10) || undefined;
 
       const btn = document.getElementById('test-btn');
@@ -1275,6 +1310,7 @@ export function dashboardHtml(): string {
         if (provider)  body.provider  = provider;
         if (model)     body.model     = model;
         if (project)   body.project   = project;
+        if (provider)  body.strict    = strict;
         if (maxTokens) body.maxTokens = maxTokens;
 
         const result = await api('/v1/generate', {
@@ -1282,6 +1318,7 @@ export function dashboardHtml(): string {
           body: JSON.stringify(body),
         });
 
+        respEl.style.color = '';
         respEl.textContent = result.text;
 
         document.getElementById('meta-provider').textContent = '\u26A1 ' + (result.provider || '\u2014');
@@ -1346,7 +1383,10 @@ export function dashboardHtml(): string {
     }
 
     document.getElementById('file-project').addEventListener('change', toggleFileCustomProject);
-    document.getElementById('test-provider').addEventListener('change', populateTestModelDropdown);
+    document.getElementById('test-provider').addEventListener('change', function() {
+      populateTestModelDropdown();
+      syncTestStrictDefault();
+    });
     document.getElementById('file-filter-project').addEventListener('change', function() {
       toggleFileFilterCustomProject();
       refreshFiles().catch(function() {});
@@ -1389,6 +1429,7 @@ export function dashboardHtml(): string {
 
     toggleFileCustomProject();
     toggleFileFilterCustomProject();
+    syncTestStrictDefault();
 
     init();
   </script>

@@ -134,7 +134,11 @@ export function startHttpServer(
       const headerProject = c.req.header('X-Project') ?? undefined;
       const project = resolveProject(body.project, headerProject);
 
-      const result = await router.generate({ ...body, project });
+      const result = await router.generate({
+        ...body,
+        strict: body.strict,
+        project,
+      });
       return c.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
