@@ -142,15 +142,37 @@ async function bodySizeLimit(c: Context, next: Next): Promise<void> {
 
 /**
  * Get the client IP address from the request.
- * Handles X-Forwarded-For header for proxied requests.
+ * 
+ * Security: Only trusts X-Forwarded-For if TRUSTED_PROXY_IPS env var is set
+ * and the direct connection comes from a trusted proxy. Otherwise, falls
+ * back to direct connection IP to prevent IP spoofing attacks.
  */
 function getClientIp(c: Context): string {
-  const forwarded = c.req.header('x-forwarded-for');
-  if (forwarded) {
-    const firstIp = forwarded.split(',')[0];
-    return firstIp?.trim() ?? 'unknown';
+  const trustedProxies = process.env['TRUSTED_PROXY_IPS'];
+  
+  // If no trusted proxies configured, don't trust forwarded headers
+  if (!trustedProxies) {
+    return c.req.header('x-real-ip') ?? 'unknown';
   }
-  return c.req.header('x-real-ip') ?? 'unknown';
+  
+  const trustedSet = new Set(
+    trustedProxies.split(',').map(ip => ip.trim())
+  );
+  
+  // Get the direct connection IP
+  const directIp = c.req.header('x-real-ip') ?? 'unknown';
+  
+  // Only trust X-Forwarded-For if direct connection is from trusted proxy
+  if (trustedSet.has(directIp)) {
+    const forwarded = c.req.header('x-forwarded-for');
+    if (forwarded) {
+      const firstIp = forwarded.split(',')[0];
+      return firstIp?.trim() ?? directIp;
+    }
+  }
+  
+  // Return direct IP (either not from trusted proxy, or no forwarded header)
+  return directIp;
 }
 
 /**
