@@ -1419,7 +1419,7 @@
     async function loadModels() {
       try {
         var result = await api('/v1/models');
-        var models = result.models;
+        var models = result.models || result.data || [];
         var wrap = document.getElementById('models-list');
 
         if (!models || models.length === 0) {

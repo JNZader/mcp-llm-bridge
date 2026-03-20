@@ -1194,7 +1194,8 @@ export function dashboardHtml(): string {
 
     async function loadModels() {
       try {
-        const { models } = await api('/v1/models');
+        const result = await api('/v1/models');
+        const models = result.models ?? result.data ?? [];
         const wrap = document.getElementById('models-list');
 
         if (!models || models.length === 0) {
