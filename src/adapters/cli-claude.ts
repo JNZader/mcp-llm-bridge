@@ -32,7 +32,7 @@ export class ClaudeCliAdapter implements LLMProvider {
     const model = request.model ?? 'claude-sonnet-4-5';
     const providerFiles = this.vault.getProviderFiles('claude', request.project);
     const mount = providerFiles.length > 0
-      ? materializeProviderHome('claude', providerFiles)
+      ? materializeProviderHome('claude', providerFiles, request.project)
       : null;
 
     try {

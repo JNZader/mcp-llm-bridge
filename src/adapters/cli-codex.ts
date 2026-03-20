@@ -33,7 +33,7 @@ export class CodexCliAdapter implements LLMProvider {
     const model = request.model ?? 'gpt-5.4';
     const providerFiles = this.vault.getProviderFiles('codex', request.project);
     const mount = providerFiles.length > 0
-      ? materializeProviderHome('codex', providerFiles)
+      ? materializeProviderHome('codex', providerFiles, request.project)
       : null;
 
     try {

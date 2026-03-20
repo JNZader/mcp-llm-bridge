@@ -35,7 +35,7 @@ export class GeminiCliAdapter implements LLMProvider {
     const hasSettings = providerFiles.some((file) => file.fileName === 'settings.json');
     const hasOauthCreds = providerFiles.some((file) => file.fileName === 'oauth_creds.json');
     const mount = providerFiles.length > 0
-      ? materializeProviderHome('gemini', providerFiles)
+      ? materializeProviderHome('gemini', providerFiles, request.project)
       : null;
 
     try {

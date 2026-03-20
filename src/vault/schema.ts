@@ -32,6 +32,9 @@ export function initializeDb(db: Database.Database): void {
     const columns = db.pragma('table_info(credentials)') as Array<{ name: string }>;
     const hasProject = columns.some((col) => col.name === 'project');
 
+    // Check if length_hint column exists (added for lazy masking)
+    const hasLengthHint = columns.some((col) => col.name === 'length_hint');
+
     if (!hasProject) {
       // Migrate: add project column with default '_global'
       db.exec(`ALTER TABLE credentials ADD COLUMN project TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}'`);
@@ -50,13 +53,14 @@ export function initializeDb(db: Database.Database): void {
           encrypted_value BLOB NOT NULL,
           iv              BLOB NOT NULL,
           auth_tag        BLOB NOT NULL,
+          length_hint     INTEGER,
           created_at      TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
           UNIQUE(provider, key_name, project)
         );
 
-        INSERT INTO credentials_new (id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at)
-          SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at
+        INSERT INTO credentials_new (id, provider, key_name, project, encrypted_value, iv, auth_tag, length_hint, created_at, updated_at)
+          SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, NULL, created_at, updated_at
           FROM credentials;
 
         DROP TABLE credentials;
@@ -64,8 +68,13 @@ export function initializeDb(db: Database.Database): void {
         ALTER TABLE credentials_new RENAME TO credentials;
       `);
     }
+
+    // Add length_hint column if missing (for lazy masking without decryption)
+    if (!hasLengthHint) {
+      db.exec(`ALTER TABLE credentials ADD COLUMN length_hint INTEGER`);
+    }
   } else {
-    // Fresh install — create table with project column
+    // Fresh install — create table with project column and length_hint
     db.exec(`
       CREATE TABLE IF NOT EXISTS credentials (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,6 +84,7 @@ export function initializeDb(db: Database.Database): void {
         encrypted_value BLOB NOT NULL,
         iv              BLOB NOT NULL,
         auth_tag        BLOB NOT NULL,
+        length_hint     INTEGER,
         created_at      TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(provider, key_name, project)
