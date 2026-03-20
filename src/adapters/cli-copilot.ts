@@ -14,18 +14,37 @@ export class CopilotCliAdapter implements LLMProvider {
   readonly name = 'Copilot CLI';
   readonly type = 'cli' as const;
   readonly models = [
-    { id: 'copilot-cli', name: 'Copilot (CLI)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-4.1', name: 'GPT-4.1 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5-mini', name: 'GPT-5 Mini (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.1', name: 'GPT-5.1 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.2', name: 'GPT-5.2 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gpt-5.4', name: 'GPT-5.4 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro Preview (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'claude-sonnet-4', name: 'Claude Sonnet 4 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'claude-haiku-4.5', name: 'Claude Haiku 4.5 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'claude-opus-4.5', name: 'Claude Opus 4.5 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'claude-opus-4.6', name: 'Claude Opus 4.6 (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
+    { id: 'claude-opus-4.6-fast', name: 'Claude Opus 4.6 Fast (Copilot)', provider: 'copilot-cli', maxTokens: 8192 },
   ];
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const output = execSync(`copilot -p ${JSON.stringify(request.prompt)} --allow-all-tools`, {
+    const model = request.model ?? 'gpt-4.1';
+    const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
+    const output = execSync(`copilot -p ${JSON.stringify(fullPrompt)} --model ${model} --allow-all-tools`, {
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    return { text: output.trim(), provider: this.id, model: 'copilot-cli', tokensUsed: 0 };
+    return { text: output.trim(), provider: this.id, model, tokensUsed: 0 };
   }
 
   async isAvailable(): Promise<boolean> {

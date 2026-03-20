@@ -267,7 +267,31 @@ describe('CopilotCliAdapter', () => {
   });
 
   it('honestly exposes the Copilot CLI model surface', () => {
-    assert.deepEqual(adapter.models.map((model) => model.id), ['copilot-cli']);
+    assert.deepEqual(adapter.models.map((model) => model.id), [
+      'gpt-4.1',
+      'gpt-5-mini',
+      'gpt-5.1',
+      'gpt-5.1-codex',
+      'gpt-5.1-codex-max',
+      'gpt-5.1-codex-mini',
+      'gpt-5.2',
+      'gpt-5.2-codex',
+      'gpt-5.3-codex',
+      'gpt-5.4',
+      'gemini-3-pro-preview',
+      'claude-sonnet-4',
+      'claude-sonnet-4.5',
+      'claude-sonnet-4.6',
+      'claude-haiku-4.5',
+      'claude-opus-4.5',
+      'claude-opus-4.6',
+      'claude-opus-4.6-fast',
+    ]);
+  });
+
+  it('exposes multiple native Copilot models instead of a placeholder', () => {
+    assert.ok(adapter.models.length > 1);
+    assert.ok(adapter.models.every((model) => model.id !== 'copilot-cli'));
   });
 });
 
