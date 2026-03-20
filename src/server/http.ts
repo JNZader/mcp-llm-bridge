@@ -18,6 +18,7 @@ import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
 import { VERSION, MAX_BODY_SIZE } from '../core/constants.js';
+import { logger } from '../core/logger.js';
 import { RateLimiter } from './rate-limit.js';
 
 /**
@@ -531,9 +532,7 @@ export function startHttpServer(
       port: config.httpPort,
     },
     (info) => {
-      console.error(
-        `[llm-gateway] HTTP server listening on http://localhost:${String(info.port)}`,
-      );
+      logger.info({ port: info.port }, 'HTTP server started');
     },
   );
 }

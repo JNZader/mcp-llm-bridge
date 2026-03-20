@@ -10,6 +10,7 @@ import {
   MASTER_KEY_BYTES,
   MIN_AUTH_TOKEN_LENGTH,
 } from './constants.js';
+import { logger } from './logger.js';
 
 const DEFAULT_DIR = join(homedir(), '.llm-gateway');
 const DEFAULT_DB_PATH = join(DEFAULT_DIR, DEFAULT_DB_FILENAME);
@@ -76,7 +77,7 @@ function loadMasterKey(): Buffer {
     mode: 0o600,
     encoding: 'utf8',
   });
-  console.error(`[llm-gateway] Generated new master key at ${DEFAULT_MASTER_KEY_PATH}`);
+  logger.info({ path: DEFAULT_MASTER_KEY_PATH }, 'Generated new master key');
   return key;
 }
 
@@ -120,7 +121,7 @@ export function loadConfig(): GatewayConfig {
       'Set LLM_GATEWAY_AUTH_TOKEN environment variable or set NODE_ENV=development.',
     );
   } else {
-    console.error('[llm-gateway] ⚠️  WARNING: Auth disabled (not production)');
+    logger.warn('Auth disabled (not production)');
   }
 
   return { masterKey, dbPath, httpPort, authToken };

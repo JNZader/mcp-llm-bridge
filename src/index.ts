@@ -10,6 +10,7 @@
  */
 
 import { loadConfig } from './core/config.js';
+import { logger } from './core/logger.js';
 import { Router } from './core/router.js';
 import { Vault } from './vault/index.js';
 import { createAllAdapters } from './adapters/index.js';
@@ -35,7 +36,7 @@ for (const adapter of createAllAdapters(vault)) {
  */
 function setupGracefulShutdown(vault: Vault): void {
   const cleanup = (signal: string) => {
-    console.error(`[llm-gateway] Received ${signal}, shutting down...`);
+    logger.info({ signal }, 'Shutting down');
     vault.close();
     process.exit(0);
   };

@@ -15,6 +15,7 @@ import {
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { VERSION } from '../core/constants.js';
+import { logger } from '../core/logger.js';
 
 /** Tool definitions exposed via MCP. */
 const TOOLS = [
@@ -325,7 +326,7 @@ export async function startMcpServer(router: Router, vault: Vault): Promise<Serv
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error('[llm-gateway] MCP server started on stdio');
+  logger.info('MCP server started on stdio');
 
   return server;
 }

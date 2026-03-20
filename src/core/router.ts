@@ -12,6 +12,7 @@ import type {
   LLMProvider,
   ModelInfo,
 } from './types.js';
+import { logger } from './logger.js';
 
 export class Router {
   private providers: LLMProvider[] = [];
@@ -65,7 +66,7 @@ export class Router {
         return this.withResolutionMetadata(request, result, false);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`[gateway] ${provider.id} failed: ${message}`);
+        logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         throw error;
       }
     }
@@ -78,7 +79,7 @@ export class Router {
         return this.withResolutionMetadata(request, result, index > 0);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`[gateway] ${provider.id} failed: ${message}`);
+        logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         errors.push(`${provider.id}: ${message}`);
         continue;
       }

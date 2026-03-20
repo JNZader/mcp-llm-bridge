@@ -28,3 +28,6 @@ export const MASK_SUFFIX = '...***';
 
 /** Maximum request body size (1MB). */
 export const MAX_BODY_SIZE = 1_000_000;
+
+/** Default log level. */
+export const DEFAULT_LOG_LEVEL = 'info' as const;
