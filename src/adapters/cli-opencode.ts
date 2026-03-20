@@ -6,12 +6,12 @@
  * it to a temp directory via XDG_DATA_HOME before invocation.
  */
 
-import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { execCliSync, isCliAvailable } from './cli-utils.js';
 
 /**
  * Parse OpenCode's newline-delimited JSON output into text + token usage.
@@ -152,20 +152,13 @@ export class CliOpenCodeAdapter implements LLMProvider {
         ? `${request.system}\n\n---\n\n${request.prompt}`
         : request.prompt;
 
-      const output = execSync(`opencode ${args.join(' ')}`, {
+      // Use execFileSync instead of execSync with string interpolation
+      const output = execCliSync('opencode', args, {
         input: fullPrompt,
-        timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
         env,
       });
 
       const parsed = parseOpenCodeOutput(output);
-      if (parsed.tokens) {
-        console.log('[llm-gateway] OpenCode tokens raw:', JSON.stringify(parsed.tokens));
-        console.log('[llm-gateway] OpenCode output preview:', output.slice(0, 300));
-      }
       const totalTokens = parsed.tokens
         ? (parsed.tokens.input ?? 0) + (parsed.tokens.output ?? 0)
         : 0;
@@ -202,11 +195,6 @@ export class CliOpenCodeAdapter implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync('opencode --version', { timeout: 5_000, stdio: 'pipe' });
-      return true;
-    } catch {
-      return false;
-    }
+    return isCliAvailable('opencode');
   }
 }

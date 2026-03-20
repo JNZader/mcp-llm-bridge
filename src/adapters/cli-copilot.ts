@@ -5,10 +5,9 @@
  * Note: Copilot doesn't support system prompt or JSON output.
  */
 
-import { execSync } from 'node:child_process';
-
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { execCliSync, isCliAvailable } from './cli-utils.js';
 
 export class CopilotCliAdapter implements LLMProvider {
   readonly id = 'copilot-cli';
@@ -55,23 +54,13 @@ export class CopilotCliAdapter implements LLMProvider {
       // Fall back to any local environment auth already present.
     }
 
-    const output = execSync(`copilot -p ${JSON.stringify(fullPrompt)} --model ${model} --allow-all-tools`, {
-      timeout: 120_000,
-      maxBuffer: 10 * 1024 * 1024,
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env,
-    });
+    // Use execFileSync instead of execSync with string interpolation
+    const output = execCliSync('copilot', ['-p', JSON.stringify(fullPrompt), '--model', model, '--allow-all-tools'], { env });
 
     return { text: output.trim(), provider: this.id, model, tokensUsed: 0 };
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync('copilot --version', { timeout: 5_000, stdio: 'pipe' });
-      return true;
-    } catch {
-      return false;
-    }
+    return isCliAvailable('copilot');
   }
 }

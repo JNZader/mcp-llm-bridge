@@ -17,6 +17,7 @@ import type { GenerateRequest, GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
+import { VERSION, MAX_BODY_SIZE } from '../core/constants.js';
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -105,6 +106,39 @@ function buildGatewayMetadata(result: {
 }
 
 /**
+ * Extract allowed CORS origins from environment variable.
+ *
+ * Format: comma-separated list of origins, or '*' for allow all.
+ * Example: 'https://example.com,https://app.example.com'
+ */
+function getCorsOrigins(): string | string[] {
+  const envOrigins = process.env['LLM_GATEWAY_CORS_ORIGINS'];
+  if (!envOrigins) {
+    // Default: allow only GitHub Pages hosted dashboard
+    return ['https://jnzader.github.io'];
+  }
+  if (envOrigins === '*') {
+    // CORS '*' is allowed but we return it as-is
+    return '*';
+  }
+  return envOrigins.split(',').map((o) => o.trim());
+}
+
+/**
+ * Request body size limit middleware.
+ * Rejects requests with bodies larger than MAX_BODY_SIZE.
+ */
+async function bodySizeLimit(c: Context, next: Next): Promise<void> {
+  const contentLength = c.req.header('content-length');
+  if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+    c.status(413);
+    c.json({ error: 'Payload too large', code: 'PAYLOAD_TOO_LARGE' });
+    return;
+  }
+  await next();
+}
+
+/**
  * Start the HTTP server on the configured port.
  *
  * All endpoints share the same Router and Vault instances
@@ -117,9 +151,15 @@ export function startHttpServer(
 ): void {
   const app = new Hono();
 
-  // ── CORS — allow GitHub Pages dashboard and other origins ──
+  // ── Security middleware ────────────────────────────────
+
+  // Body size limit
+  app.use('*', bodySizeLimit);
+
+  // ── CORS — configurable via LLM_GATEWAY_CORS_ORIGINS ──
+  const corsOrigins = getCorsOrigins();
   app.use('*', cors({
-    origin: '*',
+    origin: corsOrigins === '*' ? '*' : corsOrigins,
     allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-Project'],
     exposeHeaders: ['Content-Length'],
@@ -136,7 +176,7 @@ export function startHttpServer(
   // ── Health ──────────────────────────────────────────────
 
   app.get('/health', (c) => {
-    return c.json({ status: 'ok', version: '0.2.0' });
+    return c.json({ status: 'ok', version: VERSION });
   });
 
   // ── Generate ───────────────────────────────────────────

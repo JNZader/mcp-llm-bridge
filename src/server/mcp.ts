@@ -14,6 +14,7 @@ import {
 
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
+import { VERSION } from '../core/constants.js';
 
 /** Tool definitions exposed via MCP. */
 const TOOLS = [
@@ -305,7 +306,7 @@ export async function startMcpServer(router: Router, vault: Vault): Promise<Serv
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
-      version: '0.2.0',
+      version: VERSION,
     },
     {
       capabilities: { tools: {} },

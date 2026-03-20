@@ -15,11 +15,12 @@ import { dirname } from 'node:path';
 
 import type { GatewayConfig, MaskedCredential, StoredFile } from '../core/types.js';
 import { encrypt, decrypt } from './crypto.js';
-import { GLOBAL_PROJECT, initializeDb } from './schema.js';
-
-/** Minimum characters to show unmasked in masked output. */
-const MASK_VISIBLE_CHARS = 7;
-const MASK_SUFFIX = '...***';
+import { initializeDb } from './schema.js';
+import {
+  GLOBAL_PROJECT,
+  MASK_VISIBLE_CHARS,
+  MASK_SUFFIX,
+} from '../core/constants.js';
 
 /** Row shape returned by SELECT queries on the credentials table. */
 interface CredentialRow {

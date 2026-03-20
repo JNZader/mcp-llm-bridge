@@ -9,8 +9,9 @@
 
 import type Database from 'better-sqlite3';
 
-/** The default project scope — shared by all projects. */
-export const GLOBAL_PROJECT = '_global';
+// Re-export for backward compatibility
+export { GLOBAL_PROJECT } from '../core/constants.js';
+import { GLOBAL_PROJECT } from '../core/constants.js';
 
 /**
  * Create the credentials table if it does not already exist,

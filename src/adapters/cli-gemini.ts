@@ -8,11 +8,10 @@
  * Note: Gemini CLI doesn't support --system-prompt, so system is prepended to prompt.
  */
 
-import { execSync } from 'node:child_process';
-
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
+import { execCliSync, isCliAvailable } from './cli-utils.js';
 
 export class GeminiCliAdapter implements LLMProvider {
   readonly id = 'gemini-cli';
@@ -53,13 +52,8 @@ export class GeminiCliAdapter implements LLMProvider {
       const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
       const args = ['-p', JSON.stringify(fullPrompt), '--output-format', 'json', '--model', model];
 
-      const output = execSync(`gemini ${args.join(' ')}`, {
-        timeout: 120_000,
-        maxBuffer: 10 * 1024 * 1024,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env,
-      });
+      // Use execFileSync instead of execSync with string interpolation
+      const output = execCliSync('gemini', args, { env });
 
       try {
         const parsed: Record<string, unknown> = JSON.parse(output);
@@ -92,11 +86,6 @@ export class GeminiCliAdapter implements LLMProvider {
   }
 
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync('gemini --version', { timeout: 5_000, stdio: 'pipe' });
-      return true;
-    } catch {
-      return false;
-    }
+    return isCliAvailable('gemini');
   }
 }

@@ -29,6 +29,24 @@ for (const adapter of createAllAdapters(vault)) {
   router.register(adapter);
 }
 
+/**
+ * Graceful shutdown handler.
+ * Closes the vault database connection on exit.
+ */
+function setupGracefulShutdown(vault: Vault): void {
+  const cleanup = (signal: string) => {
+    console.error(`[llm-gateway] Received ${signal}, shutting down...`);
+    vault.close();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', () => cleanup('SIGINT'));
+  process.on('SIGTERM', () => cleanup('SIGTERM'));
+}
+
+// Setup graceful shutdown
+setupGracefulShutdown(vault);
+
 if (mode === 'serve') {
   // HTTP only
   startHttpServer(router, vault, config);
