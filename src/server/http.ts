@@ -24,7 +24,7 @@ import type { GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { dashboardHtml } from './dashboard.js';
-import { VERSION, MAX_BODY_SIZE } from '../core/constants.js';
+import { VERSION, MAX_BODY_SIZE, VALID_PROVIDERS } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 import { RateLimiter } from './rate-limit.js';
 import {
