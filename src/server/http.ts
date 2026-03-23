@@ -189,15 +189,21 @@ function getClientIp(c: Context): string {
  * Request timeout middleware.
  * Aborts requests that take too long.
  */
-async function requestTimeout(c: Context, next: Next): Promise<void> {
+async function requestTimeout(c: Context, next: Next): Promise<Response | void> {
+  let timedOut = false;
+
   const timeoutId = setTimeout(() => {
-    c.abort(408);
+    timedOut = true;
   }, REQUEST_TIMEOUT_MS);
 
   try {
     await next();
   } finally {
     clearTimeout(timeoutId);
+  }
+
+  if (timedOut) {
+    return c.json({ error: 'Request timeout', code: 'REQUEST_TIMEOUT' }, 408);
   }
 }
 
