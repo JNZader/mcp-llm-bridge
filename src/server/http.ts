@@ -142,12 +142,10 @@ function getCorsOrigins(): string | string[] {
  * Request body size limit middleware.
  * Rejects requests with bodies larger than MAX_BODY_SIZE.
  */
-async function bodySizeLimit(c: Context, next: Next): Promise<void> {
+async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
   const contentLength = c.req.header('content-length');
   if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
-    c.status(413);
-    c.json({ error: 'Payload too large', code: 'PAYLOAD_TOO_LARGE' });
-    return;
+    return c.json({ error: 'Payload too large', code: 'PAYLOAD_TOO_LARGE' }, 413);
   }
   await next();
 }
