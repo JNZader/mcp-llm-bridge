@@ -14,6 +14,8 @@ import {
 
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
+import type { GroupStore } from '../core/groups.js';
+import { CreateGroupSchema } from '../core/groups.js';
 import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 
@@ -170,6 +172,68 @@ const TOOLS = [
       required: ['id'],
     },
   },
+  {
+    name: 'list_groups',
+    description: 'List all provider groups for load balancing.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'create_group',
+    description: 'Create a new provider group for load balancing.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Group name (e.g. "anthropic-keys", "fast-models")',
+        },
+        modelPattern: {
+          type: 'string',
+          description: 'Glob pattern to match model names (e.g. "claude-*", "gpt-*,claude-*")',
+        },
+        members: {
+          type: 'array',
+          description: 'Array of provider members: [{ provider, keyName?, weight?, priority? }]',
+          items: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string' },
+              keyName: { type: 'string' },
+              weight: { type: 'number' },
+              priority: { type: 'number' },
+            },
+            required: ['provider'],
+          },
+        },
+        strategy: {
+          type: 'string',
+          description: 'Balancing strategy: "round-robin", "random", "failover", "weighted"',
+        },
+        stickyTTL: {
+          type: 'number',
+          description: 'Session stickiness TTL in seconds (optional)',
+        },
+      },
+      required: ['name', 'members', 'strategy'],
+    },
+  },
+  {
+    name: 'delete_group',
+    description: 'Delete a provider group by its ID.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Group ID to delete',
+        },
+      },
+      required: ['id'],
+    },
+  },
 ] as const;
 
 /**
@@ -180,6 +244,7 @@ async function handleToolCall(
   args: Record<string, unknown>,
   router: Router,
   vault: Vault,
+  groupStore?: GroupStore,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (toolName) {
@@ -280,6 +345,52 @@ async function handleToolCall(
         };
       }
 
+      case 'list_groups': {
+        if (!groupStore) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Group store not configured' }) }],
+            isError: true,
+          };
+        }
+        const groups = groupStore.list();
+        return {
+          content: [{ type: 'text', text: JSON.stringify(groups) }],
+        };
+      }
+
+      case 'create_group': {
+        if (!groupStore) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Group store not configured' }) }],
+            isError: true,
+          };
+        }
+        const validated = CreateGroupSchema.parse(args);
+        const group = groupStore.create(validated);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(group) }],
+        };
+      }
+
+      case 'delete_group': {
+        if (!groupStore) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Group store not configured' }) }],
+            isError: true,
+          };
+        }
+        const deleted = groupStore.delete(args['id'] as string);
+        if (!deleted) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: `Group not found: ${args['id']}` }) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
+        };
+      }
+
       default:
         return {
           content: [
@@ -303,7 +414,7 @@ async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -320,7 +431,7 @@ export async function startMcpServer(router: Router, vault: Vault): Promise<Serv
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault);
+    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore);
   });
 
   const transport = new StdioServerTransport();
