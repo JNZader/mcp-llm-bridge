@@ -31,6 +31,7 @@ import { anthropicInbound } from './inbound/anthropic.js';
 import { openaiOutbound } from './outbound/openai.js';
 import { anthropicOutbound } from './outbound/anthropic.js';
 import { googleOutbound } from './outbound/google.js';
+import { cliOutbound } from './outbound/cli.js';
 
 // ── Register inbound transformers ───────────────────────────
 // Order matters for detection: more specific formats first.
@@ -51,6 +52,13 @@ registry.registerOutbound('google', googleOutbound);
 registry.registerOutbound('groq', openaiOutbound);
 registry.registerOutbound('openrouter', openaiOutbound);
 
+// CLI adapters use a flattened prompt format
+registry.registerOutbound('cli', cliOutbound);
+registry.registerOutbound('claude-cli', cliOutbound);
+registry.registerOutbound('codex-cli', cliOutbound);
+registry.registerOutbound('gemini-cli', cliOutbound);
+registry.registerOutbound('copilot-cli', cliOutbound);
+
 // ── Re-exports ──────────────────────────────────────────────
 
 export { registry } from '../core/transformer.js';
@@ -60,3 +68,4 @@ export { anthropicInbound } from './inbound/anthropic.js';
 export { openaiOutbound } from './outbound/openai.js';
 export { anthropicOutbound } from './outbound/anthropic.js';
 export { googleOutbound } from './outbound/google.js';
+export { cliOutbound } from './outbound/cli.js';
