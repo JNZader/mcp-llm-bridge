@@ -11,6 +11,7 @@ import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { compress } from 'hono/compress';
+import { streamSSE } from 'hono/streaming';
 import { serve, type ServerType } from '@hono/node-server';
 import type { Context, Next } from 'hono';
 
@@ -43,6 +44,7 @@ import {
   validateFileStore,
 } from '../core/schemas.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
+import type { InternalLLMRequest } from '../core/internal-model.js';
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -300,12 +302,221 @@ function detectAnthropicSubscription(vault: Vault): 'pro' | 'max' | 'api' | 'non
   }
 }
 
+/** Provider-specific base URLs for OpenAI-compatible streaming. */
+const PROVIDER_BASE_URLS: Record<string, string> = {
+  google: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  groq: 'https://api.groq.com/openai/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+};
+
+/**
+ * Handle a streaming chat completion request via SSE.
+ *
+ * Resolves the best provider with a streaming transformer, opens an SSE
+ * stream, and forwards transformed chunks in OpenAI-compatible SSE format.
+ * Records cost after the stream completes.
+ */
+function handleStreamingRequest(
+  c: Context,
+  validated: ReturnType<typeof validateChatCompletions>,
+  router: Router,
+  costTracker?: CostTracker,
+  vault?: Vault,
+): Response {
+  const chatId = `chatcmpl-${randomUUID()}`;
+  const model = validated.model ?? '';
+  const project = c.req.header('X-Project') ?? undefined;
+
+  // Build InternalLLMRequest from validated body
+  const internalMessages = validated.messages.map((m) => ({
+    role: m.role as 'system' | 'user' | 'assistant',
+    content: m.content,
+  }));
+
+  const internalRequest: InternalLLMRequest = {
+    messages: internalMessages,
+    model: validated.model,
+    maxTokens: validated.max_tokens,
+  };
+
+  return streamSSE(c, async (stream) => {
+    const resolved = await router.resolveStreamingProvider(internalRequest);
+
+    if (!resolved) {
+      // No streaming transformer — fallback: run non-streaming and send as single SSE event
+      const result = await router.generate({
+        prompt: validated.messages
+          .filter((m) => m.role !== 'system')
+          .map((m) => m.content)
+          .join('\n'),
+        system: validated.messages
+          .filter((m) => m.role === 'system')
+          .map((m) => m.content)
+          .join('\n') || undefined,
+        model: validated.model,
+        maxTokens: validated.max_tokens,
+        project,
+      });
+
+      await stream.writeSSE({
+        data: JSON.stringify({
+          id: chatId,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: result.model,
+          choices: [{
+            index: 0,
+            delta: { content: result.text },
+            finish_reason: 'stop',
+          }],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: result.tokensUsed ?? 0,
+          },
+        }),
+      });
+
+      await stream.writeSSE({ data: '[DONE]' });
+      return;
+    }
+
+    const { provider, streamTransformer } = resolved;
+    const streamRecorder = costTracker?.recordStream(provider.id, model || 'unknown', project);
+
+    try {
+      // Build providerCall using the vault for credentials
+      const providerCall = buildProviderStreamCall(provider.id, vault, project);
+      const chunks = streamTransformer.transformStream(internalRequest, providerCall);
+
+      for await (const chunk of chunks) {
+        streamRecorder?.addChunk(
+          { tokensIn: chunk.tokensIn, tokensOut: chunk.tokensOut },
+          chunk.content.length,
+        );
+
+        await stream.writeSSE({
+          data: JSON.stringify({
+            id: chatId,
+            object: 'chat.completion.chunk',
+            created: Math.floor(Date.now() / 1000),
+            model: chunk.model || model,
+            choices: [{
+              index: 0,
+              delta: chunk.content ? { content: chunk.content } : {},
+              finish_reason: chunk.done ? (chunk.finishReason ?? 'stop') : null,
+            }],
+            ...(chunk.done && (chunk.tokensIn !== undefined || chunk.tokensOut !== undefined) ? {
+              usage: {
+                prompt_tokens: chunk.tokensIn ?? 0,
+                completion_tokens: chunk.tokensOut ?? 0,
+                total_tokens: (chunk.tokensIn ?? 0) + (chunk.tokensOut ?? 0),
+              },
+            } : {}),
+          }),
+        });
+      }
+
+      await stream.writeSSE({ data: '[DONE]' });
+      getCircuitBreakerRegistry().recordSuccess(provider.id);
+      streamRecorder?.finish();
+
+    } catch (error) {
+      getCircuitBreakerRegistry().recordFailure(provider.id);
+      const message = error instanceof Error ? error.message : String(error);
+      streamRecorder?.finish(message);
+
+      try {
+        await stream.writeSSE({
+          data: JSON.stringify({
+            error: { message, type: 'server_error', code: null },
+          }),
+        });
+        await stream.writeSSE({ data: '[DONE]' });
+      } catch {
+        // Stream may already be closed
+      }
+    }
+  });
+}
+
+/**
+ * Build a providerCall function that creates a streaming SDK call
+ * using credentials from the Vault.
+ */
+function buildProviderStreamCall(
+  providerId: string,
+  vault?: Vault,
+  project?: string,
+): (request: unknown) => AsyncIterable<unknown> {
+  return async function* streamCall(request: unknown): AsyncIterable<unknown> {
+    const body = request as Record<string, unknown>;
+
+    if (providerId === 'anthropic') {
+      const Anthropic = (await import('@anthropic-ai/sdk')).default;
+      let client: InstanceType<typeof Anthropic>;
+
+      // Try OAuth first, then API key
+      if (vault) {
+        const oauthToken = await vault.getClaudeOAuthToken(project);
+        if (oauthToken?.accessToken) {
+          client = new Anthropic({ authToken: oauthToken.accessToken });
+        } else {
+          const apiKey = vault.getDecrypted('anthropic', 'default', project);
+          client = new Anthropic({ apiKey });
+        }
+      } else {
+        client = new Anthropic();
+      }
+
+      const { stream: _stream, ...restBody } = body;
+
+      // Use Anthropic SDK's streaming API
+      const messageStream = client.messages.stream(restBody as unknown as Parameters<typeof client.messages.stream>[0]);
+      for await (const event of messageStream) {
+        yield event;
+      }
+    } else {
+      // OpenAI-compatible providers
+      const OpenAI = (await import('openai')).default;
+      let apiKey = '';
+
+      if (vault) {
+        try {
+          apiKey = vault.getDecrypted(providerId, 'default', project);
+        } catch {
+          // Vault may not have credentials for this provider
+        }
+      }
+
+      const baseURL = PROVIDER_BASE_URLS[providerId];
+      const client = new OpenAI({
+        apiKey,
+        ...(baseURL ? { baseURL } : {}),
+      });
+
+      const { stream: _stream, stream_options: _so, ...restBody } = body;
+
+      const streamResponse = await client.chat.completions.create({
+        ...(restBody as unknown as Parameters<typeof client.chat.completions.create>[0]),
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+
+      for await (const chunk of streamResponse) {
+        yield chunk;
+      }
+    }
+  };
+}
+
+
 /**
  * Start the HTTP server on the configured port.
  *
  * All endpoints share the same Router and Vault instances
  * as the MCP server.
- * 
+ *
  * @returns The HTTP server instance
  */
 export function startHttpServer(
@@ -474,16 +685,9 @@ export function startHttpServer(
         throw error;
       }
 
-      // Reject streaming — not supported
+      // ── Streaming path ──────────────────────────────────────
       if (validated.stream) {
-        return c.json({
-          error: {
-            message: 'Streaming not supported',
-            type: 'invalid_request_error',
-            param: 'stream',
-            code: null,
-          },
-        }, 400);
+        return handleStreamingRequest(c, validated, router, costTracker, vault);
       }
 
       // Extract system messages → concatenate as system prompt

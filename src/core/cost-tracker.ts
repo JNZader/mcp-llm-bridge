@@ -318,6 +318,22 @@ export class CostTracker {
   }
 
   /**
+   * Create a StreamRecorder for accumulating streaming usage.
+   *
+   * Usage:
+   *   const recorder = costTracker.recordStream('openai', 'gpt-4o');
+   *   // ... for each chunk: recorder.addChunk({ tokensOut: n }) ...
+   *   recorder.finish(); // writes final record to buffer
+   */
+  recordStream(
+    provider: string,
+    model: string,
+    project?: string,
+  ): StreamRecorder {
+    return new StreamRecorder(this, provider, model, project);
+  }
+
+  /**
    * Clean up: flush remaining buffer, stop interval, close DB.
    */
   destroy(): void {
@@ -395,5 +411,81 @@ export class CostTracker {
       errorMessage: row.error_message,
       createdAt: row.created_at,
     };
+  }
+}
+
+// ── StreamRecorder ─────────────────────────────────────────
+
+/**
+ * Accumulates token usage from streaming chunks and writes a final
+ * UsageEntry to the CostTracker when the stream completes.
+ */
+export class StreamRecorder {
+  private _tokensIn = 0;
+  private _tokensOut = 0;
+  private _charCount = 0;
+  private _finished = false;
+  private readonly _startTime: number;
+
+  constructor(
+    private readonly tracker: CostTracker,
+    private readonly provider: string,
+    private readonly model: string,
+    private readonly project?: string,
+  ) {
+    this._startTime = Date.now();
+  }
+
+  /**
+   * Accumulate token counts from a streaming chunk.
+   * Call this for every chunk that reports partial usage.
+   */
+  addChunk(tokens?: { tokensIn?: number; tokensOut?: number }, contentLength = 0): void {
+    if (this._finished) return;
+    if (tokens?.tokensIn !== undefined) this._tokensIn = tokens.tokensIn;
+    if (tokens?.tokensOut !== undefined) this._tokensOut = tokens.tokensOut;
+    this._charCount += contentLength;
+  }
+
+  /**
+   * Finalize the stream and write the usage record.
+   *
+   * If the provider didn't report per-chunk tokens, estimates
+   * output tokens from accumulated character count (~4 chars/token).
+   */
+  finish(errorMessage?: string): void {
+    if (this._finished) return;
+    this._finished = true;
+
+    const latencyMs = Date.now() - this._startTime;
+    const tokensOut = this._tokensOut > 0
+      ? this._tokensOut
+      : Math.ceil(this._charCount / 4);
+
+    this.tracker.record({
+      provider: this.provider,
+      model: this.model,
+      project: this.project,
+      tokensIn: this._tokensIn,
+      tokensOut,
+      latencyMs,
+      success: !errorMessage,
+      errorMessage,
+    });
+  }
+
+  /** Whether finish() has been called. */
+  get finished(): boolean {
+    return this._finished;
+  }
+
+  /** Current accumulated input tokens. */
+  get tokensIn(): number {
+    return this._tokensIn;
+  }
+
+  /** Current accumulated output tokens (0 if not yet reported by provider). */
+  get tokensOut(): number {
+    return this._tokensOut;
   }
 }

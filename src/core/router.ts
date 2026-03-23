@@ -23,6 +23,7 @@ import type {
 } from './types.js';
 import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.js';
 import type { TransformerRegistry } from './transformer.js';
+import type { StreamingOutboundTransformer } from '../transformers/streaming.js';
 import type { GroupStore, ProviderGroup } from './groups.js';
 import type { SessionStore } from './session.js';
 import type { CostTracker } from './cost-tracker.js';
@@ -296,6 +297,58 @@ export class Router {
     throw new Error(
       `All providers failed. Store credentials via vault_store or install a CLI tool.\n${errors.join('\n')}`,
     );
+  }
+
+  /**
+   * Resolve the best available provider and its streaming transformer.
+   *
+   * Uses the same resolution logic as generateFromInternal (groups, balancer,
+   * circuit breaker) but returns the resolved provider info so the HTTP layer
+   * can drive the SSE streaming loop.
+   *
+   * Returns null if no provider has a streaming transformer registered.
+   */
+  async resolveStreamingProvider(
+    request: InternalLLMRequest,
+  ): Promise<{ provider: LLMProvider; streamTransformer: StreamingOutboundTransformer } | null> {
+    if (!this._transformerRegistry) {
+      throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
+    }
+
+    const registry = this._transformerRegistry;
+    const model = request.model ?? '';
+
+    // Resolve ordered candidates (same logic as generateFromInternal)
+    let orderedCandidates: LLMProvider[] | null = null;
+
+    if (this._groupStore && model) {
+      const matchedGroup = this._groupStore.findByModel(model);
+      if (matchedGroup) {
+        orderedCandidates = this.resolveGroupCandidates(matchedGroup);
+      }
+    }
+
+    if (!orderedCandidates) {
+      const resolveRequest: GenerateRequest = {
+        prompt: '',
+        model: request.model,
+        provider: request.metadata?.['provider'] as string | undefined,
+      };
+      orderedCandidates = await this.resolveCandidates(resolveRequest);
+    }
+
+    const circuitBreaker = getCircuitBreakerRegistry();
+    const availableCandidates = orderedCandidates.filter((p) => circuitBreaker.canRequest(p.id));
+
+    // Find the first provider that has a streaming transformer
+    for (const provider of availableCandidates) {
+      const streamTransformer = registry.getStreamOutbound(provider.id);
+      if (streamTransformer) {
+        return { provider, streamTransformer };
+      }
+    }
+
+    return null;
   }
 
   /**
