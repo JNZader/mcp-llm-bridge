@@ -277,12 +277,13 @@ describe('POST /v1/chat/completions', () => {
     assert.equal(res.status, 400);
   });
 
-  it('rejects streaming (not supported)', async () => {
+  it('accepts streaming requests (returns SSE)', async () => {
     const res = await request('POST', '/v1/chat/completions', {
       messages: [{ role: 'user', content: 'Hello' }],
       stream: true,
     });
-    assert.equal(res.status, 400);
+    // SSE starts with 200 even if provider fails later
+    assert.equal(res.status, 200);
   });
 
   it('rejects messages without user role', async () => {
