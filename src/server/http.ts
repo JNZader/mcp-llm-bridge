@@ -23,6 +23,8 @@ export const CORRELATION_ID_HEADER = 'X-Correlation-ID';
 import type { GatewayConfig } from '../core/types.js';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
+import type { GroupStore } from '../core/groups.js';
+import { CreateGroupSchema, UpdateGroupSchema } from '../core/groups.js';
 import { dashboardHtml } from './dashboard.js';
 import { VERSION, MAX_BODY_SIZE, VALID_PROVIDERS } from '../core/constants.js';
 import { logger } from '../core/logger.js';
@@ -302,6 +304,7 @@ export function startHttpServer(
   router: Router,
   vault: Vault,
   config: GatewayConfig,
+  groupStore?: GroupStore,
 ): ServerType {
   // Reset start time on server creation
   serverStartTime = Date.now();
@@ -732,6 +735,94 @@ export function startHttpServer(
       return c.json({ error: message }, 500);
     }
   });
+
+  // ── Groups CRUD ──────────────────────────────────────────
+
+  if (groupStore) {
+    app.get('/v1/groups', (c) => {
+      try {
+        const groups = groupStore.list();
+        return c.json({ groups });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return c.json({ error: message }, 500);
+      }
+    });
+
+    app.post('/v1/groups', async (c) => {
+      try {
+        const body = await c.req.json();
+
+        let validated;
+        try {
+          validated = CreateGroupSchema.parse(body);
+        } catch (error) {
+          if (error && typeof error === 'object' && 'issues' in error) {
+            const issues = (error as { issues: Array<{ message: string; path: string[] }> }).issues;
+            const firstIssue = issues[0];
+            return c.json({
+              error: firstIssue?.message ?? 'Validation error',
+              code: 'VALIDATION_ERROR',
+              field: firstIssue?.path?.join('.') ?? '',
+            }, 400);
+          }
+          throw error;
+        }
+
+        const group = groupStore.create(validated);
+        return c.json(group, 201);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return c.json({ error: message }, 500);
+      }
+    });
+
+    app.put('/v1/groups/:id', async (c) => {
+      try {
+        const id = c.req.param('id');
+        const body = await c.req.json();
+
+        let validated;
+        try {
+          validated = UpdateGroupSchema.parse(body);
+        } catch (error) {
+          if (error && typeof error === 'object' && 'issues' in error) {
+            const issues = (error as { issues: Array<{ message: string; path: string[] }> }).issues;
+            const firstIssue = issues[0];
+            return c.json({
+              error: firstIssue?.message ?? 'Validation error',
+              code: 'VALIDATION_ERROR',
+              field: firstIssue?.path?.join('.') ?? '',
+            }, 400);
+          }
+          throw error;
+        }
+
+        const updated = groupStore.update(id, validated);
+        if (!updated) {
+          return c.json({ error: `Group not found: ${id}`, code: 'NOT_FOUND' }, 404);
+        }
+        return c.json(updated);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return c.json({ error: message }, 500);
+      }
+    });
+
+    app.delete('/v1/groups/:id', (c) => {
+      try {
+        const id = c.req.param('id');
+        const deleted = groupStore.delete(id);
+        if (!deleted) {
+          return c.json({ error: `Group not found: ${id}`, code: 'NOT_FOUND' }, 404);
+        }
+        return c.json({ ok: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return c.json({ error: message }, 500);
+      }
+    });
+  }
 
   // ── Start ──────────────────────────────────────────────
 
