@@ -27,6 +27,7 @@ export interface RateLimitConfig {
 export class RateLimiter {
   private readonly entries = new Map<string, RateLimitEntry>();
   private readonly config: Required<RateLimitConfig>;
+  private readonly cleanupInterval: ReturnType<typeof setInterval>;
 
   constructor(config: RateLimitConfig = { max: 100, windowMs: 15 * 60 * 1000 }) {
     this.config = {
@@ -35,7 +36,19 @@ export class RateLimiter {
     };
 
     // Periodic cleanup of expired entries (every 5 minutes)
-    setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    // Allow the process to exit even if the interval is still active
+    if (this.cleanupInterval.unref) {
+      this.cleanupInterval.unref();
+    }
+  }
+
+  /**
+   * Stop the cleanup interval and release resources.
+   */
+  destroy(): void {
+    clearInterval(this.cleanupInterval);
+    this.entries.clear();
   }
 
   /**
@@ -107,6 +120,14 @@ export class RateLimiter {
 }
 
 /**
- * Default rate limiter instance.
+ * Lazily-created default rate limiter instance.
+ * Avoids creating a setInterval at module import time.
  */
-export const defaultRateLimiter = new RateLimiter();
+let _defaultRateLimiter: RateLimiter | null = null;
+
+export function getDefaultRateLimiter(): RateLimiter {
+  if (!_defaultRateLimiter) {
+    _defaultRateLimiter = new RateLimiter();
+  }
+  return _defaultRateLimiter;
+}
