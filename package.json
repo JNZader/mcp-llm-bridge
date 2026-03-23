@@ -1,6 +1,6 @@
 {
   "name": "mcp-llm-bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MCP server that routes LLM calls through CLI subscriptions (Claude, Gemini, Codex, Copilot)",
   "type": "module",
   "main": "dist/index.js",

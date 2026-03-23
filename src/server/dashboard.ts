@@ -659,7 +659,7 @@ export function dashboardHtml(): string {
     <header>
       <h1>
         <span class="icon">\u26A1</span> LLM Gateway
-        <span class="version">v0.3.0</span>
+        <span class="version">v0.3.1</span>
       </h1>
       <div style="display:flex;align-items:center;gap:10px">
         <span id="health" class="health-badge">checking\u2026</span>
