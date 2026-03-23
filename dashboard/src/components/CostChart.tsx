@@ -6,9 +6,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  type TooltipProps,
 } from "recharts";
-import type { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent";
 
 interface CostDataPoint {
   date: string;
@@ -31,12 +29,16 @@ function formatTokens(value: number): string {
   return String(value);
 }
 
-function ChartTooltip({ active, payload, label }: TooltipProps<ValueType, NameType>) {
+function ChartTooltip({ active, payload, label }: {
+  active?: boolean;
+  payload?: Array<{ value?: number; dataKey?: string }>;
+  label?: string;
+}) {
   if (!active || !payload?.length) return null;
 
   const entry = payload[0];
-  const value = entry.value as number;
-  const dataKey = entry.dataKey as string;
+  const value = (entry.value ?? 0) as number;
+  const dataKey = (entry.dataKey ?? "cost") as string;
   const formatted = dataKey === "cost" ? formatCost(value) : formatTokens(value);
 
   return (
