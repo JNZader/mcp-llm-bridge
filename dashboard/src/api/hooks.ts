@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { CreateGroupInput, UpdateGroupInput } from "./types.ts";
 import { ApiClient } from "./client.ts";
 import { useAuth } from "../context/AuthContext.tsx";
 
@@ -81,5 +82,67 @@ export function useModels() {
     queryKey: ["models"],
     queryFn: () => client!.getModels(),
     enabled: !!client,
+  });
+}
+
+export function useUsageRecords(params?: {
+  provider?: string;
+  model?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["usage-records", params],
+    queryFn: () => client!.getUsageRecords(params),
+    enabled: !!client,
+  });
+}
+
+// ── Mutations ────────────────────────────────────────
+
+export function useCreateGroup() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateGroupInput) => client!.createGroup(input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["groups"] });
+    },
+  });
+}
+
+export function useUpdateGroup() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateGroupInput }) =>
+      client!.updateGroup(id, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["groups"] });
+    },
+  });
+}
+
+export function useDeleteGroup() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => client!.deleteGroup(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["groups"] });
+    },
+  });
+}
+
+export function useResetCircuitBreaker() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (provider: string) => client!.resetCircuitBreaker(provider),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["cb-stats"] });
+    },
   });
 }
