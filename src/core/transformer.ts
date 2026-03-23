@@ -10,6 +10,7 @@
  */
 
 import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.js';
+import type { StreamingOutboundTransformer } from '../transformers/streaming.js';
 
 // ── Inbound Transformer ─────────────────────────────────────
 
@@ -66,6 +67,7 @@ export class TransformError extends Error {
 export class TransformerRegistry {
   private readonly _inbound: InboundTransformer[] = [];
   private readonly _outbound = new Map<string, OutboundTransformer>();
+  private readonly _streamOutbound = new Map<string, StreamingOutboundTransformer>();
 
   /** Register an inbound (format-detection) transformer. */
   registerInbound(transformer: InboundTransformer): void {
@@ -75,6 +77,11 @@ export class TransformerRegistry {
   /** Register an outbound transformer keyed by provider name. */
   registerOutbound(name: string, transformer: OutboundTransformer): void {
     this._outbound.set(name, transformer);
+  }
+
+  /** Register a streaming outbound transformer keyed by provider name. */
+  registerStreamOutbound(name: string, transformer: StreamingOutboundTransformer): void {
+    this._streamOutbound.set(name, transformer);
   }
 
   /**
@@ -94,6 +101,14 @@ export class TransformerRegistry {
    */
   getOutbound(providerName: string): OutboundTransformer | null {
     return this._outbound.get(providerName) ?? null;
+  }
+
+  /**
+   * Get a streaming outbound transformer by provider name.
+   * Returns null if no streaming transformer is registered for that provider.
+   */
+  getStreamOutbound(providerName: string): StreamingOutboundTransformer | null {
+    return this._streamOutbound.get(providerName) ?? null;
   }
 
   /** List all registered inbound format names. */

@@ -33,6 +33,16 @@ import { anthropicOutbound } from './outbound/anthropic.js';
 import { googleOutbound } from './outbound/google.js';
 import { cliOutbound } from './outbound/cli.js';
 
+// ── Streaming outbound transformers ─────────────────────────
+
+import {
+  openaiStreamTransformer,
+  groqStreamTransformer,
+  openrouterStreamTransformer,
+  googleStreamTransformer,
+} from './outbound/openai-stream.js';
+import { anthropicStreamTransformer } from './outbound/anthropic-stream.js';
+
 // ── Register inbound transformers ───────────────────────────
 // Order matters for detection: more specific formats first.
 // Anthropic is checked before OpenAI Chat because both have `messages`,
@@ -59,6 +69,14 @@ registry.registerOutbound('codex-cli', cliOutbound);
 registry.registerOutbound('gemini-cli', cliOutbound);
 registry.registerOutbound('copilot-cli', cliOutbound);
 
+// ── Register streaming outbound transformers ────────────────
+
+registry.registerStreamOutbound('openai', openaiStreamTransformer);
+registry.registerStreamOutbound('anthropic', anthropicStreamTransformer);
+registry.registerStreamOutbound('google', googleStreamTransformer);
+registry.registerStreamOutbound('groq', groqStreamTransformer);
+registry.registerStreamOutbound('openrouter', openrouterStreamTransformer);
+
 // ── Re-exports ──────────────────────────────────────────────
 
 export { registry } from '../core/transformer.js';
@@ -71,3 +89,10 @@ export { googleOutbound } from './outbound/google.js';
 export { cliOutbound } from './outbound/cli.js';
 export type { InternalLLMChunk, StreamingOutboundTransformer } from './streaming.js';
 export { serializeSSEChunk, SSE_DONE, StreamTokenAccumulator } from './streaming.js';
+export {
+  openaiStreamTransformer,
+  groqStreamTransformer,
+  openrouterStreamTransformer,
+  googleStreamTransformer,
+} from './outbound/openai-stream.js';
+export { anthropicStreamTransformer } from './outbound/anthropic-stream.js';
