@@ -11,7 +11,7 @@ import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { compress } from 'hono/compress';
-import { serve } from '@hono/node-server';
+import { serve, type ServerType } from '@hono/node-server';
 import type { Context, Next } from 'hono';
 
 /** Request timeout in milliseconds (2 minutes). */
@@ -302,7 +302,7 @@ export function startHttpServer(
   router: Router,
   vault: Vault,
   config: GatewayConfig,
-): http.Server {
+): ServerType {
   // Reset start time on server creation
   serverStartTime = Date.now();
   
