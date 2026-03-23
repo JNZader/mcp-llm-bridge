@@ -38,9 +38,9 @@ function tokenEquals(a: string, b: string): boolean {
  * - If neither is set, auth is disabled (local dev).
  */
 export function adminAuth(config: GatewayConfig) {
-  const adminToken = process.env['ADMIN_TOKEN'];
-
   return async (c: Context, next: Next) => {
+    // Read ADMIN_TOKEN at request time (not at init) so it can be changed dynamically
+    const adminToken = process.env['ADMIN_TOKEN'];
     const requiredToken = adminToken ?? config.authToken;
 
     // No token configured → auth disabled (local dev)

@@ -75,6 +75,11 @@ function bearerAuth(config: GatewayConfig) {
       return next();
     }
 
+    // Skip admin routes — they have their own auth middleware
+    if (c.req.path.startsWith('/v1/admin/')) {
+      return next();
+    }
+
     // CORS preflight must pass through (handled by cors middleware)
     if (c.req.method === 'OPTIONS') {
       return next();
