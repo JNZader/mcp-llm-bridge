@@ -119,7 +119,9 @@ export function calculateCost(
   inputTokens: number,
   outputTokens: number,
 ): number {
-  const price = findPrice(model);
+  // Strip provider prefix (e.g., "gemini-cli/gemini-2.5-flash" → "gemini-2.5-flash")
+  const strippedModel = model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model;
+  const price = findPrice(strippedModel);
 
   if (!price) {
     logger.warn({ model }, 'Unknown model for pricing — cost defaulting to $0');
