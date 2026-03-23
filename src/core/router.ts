@@ -527,6 +527,13 @@ export class Router {
       .flatMap((r) => r.provider.models);
   }
 
+  /** Return model IDs for a specific provider. */
+  getProviderModels(providerId: string): string[] {
+    const provider = this.providers.find((p) => p.id === providerId);
+    if (!provider) return [];
+    return provider.models.map((m) => m.id);
+  }
+
   /** Return status information for each registered provider. */
   async getProviderStatuses(): Promise<
     Array<{ id: string; name: string; type: string; available: boolean }>

@@ -27,6 +27,7 @@ import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
 import { CreateGroupSchema, UpdateGroupSchema } from '../core/groups.js';
 import { dashboardHtml } from './dashboard.js';
+import { registerAdminRoutes } from './admin.js';
 import { VERSION, MAX_BODY_SIZE, VALID_PROVIDERS } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 import { RateLimiter } from './rate-limit.js';
@@ -951,6 +952,17 @@ export function startHttpServer(
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);
     }
+  });
+
+  // ── Admin Dashboard API ────────────────────────────────
+
+  registerAdminRoutes(app, {
+    router,
+    vault,
+    config,
+    groupStore,
+    costTracker,
+    serverStartTime,
   });
 
   // ── Start ──────────────────────────────────────────────
