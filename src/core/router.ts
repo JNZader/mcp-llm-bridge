@@ -25,6 +25,7 @@ import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.j
 import type { TransformerRegistry } from './transformer.js';
 import type { GroupStore, ProviderGroup } from './groups.js';
 import type { SessionStore } from './session.js';
+import type { CostTracker } from './cost-tracker.js';
 import { createBalancer, memberKey } from './balancer.js';
 import { logger } from './logger.js';
 import { getCircuitBreakerRegistry } from './circuit-breaker.js';
@@ -42,6 +43,17 @@ export class Router {
   private _transformerRegistry: TransformerRegistry | null = null;
   private _groupStore: GroupStore | null = null;
   private _sessionStore: SessionStore | null = null;
+  private _costTracker: CostTracker | null = null;
+
+  /** Set the cost tracker for usage recording. */
+  setCostTracker(tracker: CostTracker): void {
+    this._costTracker = tracker;
+  }
+
+  /** Get the cost tracker (null if not set). */
+  get costTracker(): CostTracker | null {
+    return this._costTracker;
+  }
 
   /** Set the transformer registry for the new pipeline. */
   setTransformerRegistry(registry: TransformerRegistry): void {
@@ -138,10 +150,13 @@ export class Router {
         const result = await provider.generate(request);
         circuitBreaker.recordSuccess(provider.id);
         const latencyMs = Date.now() - startTime;
+        this.recordUsage(provider.id, request.model ?? 'unknown', result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
         return this.withResolutionMetadata(request, result, false, latencyMs);
       } catch (error) {
         circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
+        const latencyMs = Date.now() - startTime;
+        this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, request.project, message);
         logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         throw error;
       }
@@ -154,10 +169,13 @@ export class Router {
         const result = await provider.generate(request);
         circuitBreaker.recordSuccess(provider.id);
         const latencyMs = Date.now() - startTime;
+        this.recordUsage(provider.id, result.model ?? request.model ?? 'unknown', result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
         return this.withResolutionMetadata(request, result, index > 0, latencyMs);
       } catch (error) {
         circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
+        const latencyMs = Date.now() - startTime;
+        this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, request.project, message);
         logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         errors.push(`${provider.id}: ${message}`);
         continue;
@@ -311,10 +329,15 @@ export class Router {
           });
 
           circuitBreaker.recordSuccess(provider.id);
-          return cliOutbound.transformResponse(result);
+          const response = cliOutbound.transformResponse(result);
+          const latencyMs = Date.now() - startTime;
+          this.recordUsage(provider.id, response.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
+          return response;
         } catch (error) {
           circuitBreaker.recordFailure(provider.id);
           const message = error instanceof Error ? error.message : String(error);
+          const latencyMs = Date.now() - startTime;
+          this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, undefined, message);
           logger.warn({ provider: provider.id, error: message }, 'Provider failed (CLI transformer)');
           throw error;
         }
@@ -341,7 +364,7 @@ export class Router {
 
       const latencyMs = Date.now() - startTime;
 
-      return {
+      const response: InternalLLMResponse = {
         content: result.text,
         model: result.model,
         finishReason: 'stop',
@@ -358,9 +381,14 @@ export class Router {
           resolvedModel: result.model,
         },
       };
+
+      this.recordUsage(provider.id, result.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
+      return response;
     } catch (error) {
       circuitBreaker.recordFailure(provider.id);
       const message = error instanceof Error ? error.message : String(error);
+      const latencyMs = Date.now() - startTime;
+      this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, undefined, message);
       logger.warn({ provider: provider.id, error: message }, 'Provider failed');
       throw error;
     }
@@ -407,6 +435,38 @@ export class Router {
     }
 
     return ordered;
+  }
+
+  /**
+   * Record usage via the cost tracker (if configured).
+   * Non-blocking — failures are logged, not thrown.
+   */
+  private recordUsage(
+    provider: string,
+    model: string,
+    tokensIn: number,
+    tokensOut: number,
+    latencyMs: number,
+    success: boolean,
+    project?: string,
+    errorMessage?: string,
+  ): void {
+    if (!this._costTracker) return;
+
+    try {
+      this._costTracker.record({
+        provider,
+        model,
+        tokensIn,
+        tokensOut,
+        latencyMs,
+        success,
+        project,
+        errorMessage,
+      });
+    } catch (error) {
+      logger.warn({ error }, 'Failed to record usage');
+    }
   }
 
   /**

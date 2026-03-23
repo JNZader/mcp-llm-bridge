@@ -15,6 +15,7 @@ import {
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
+import type { CostTracker } from '../core/cost-tracker.js';
 import { CreateGroupSchema } from '../core/groups.js';
 import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
@@ -274,6 +275,74 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: 'usage_summary',
+    description:
+      'Get cost/usage summary. Returns total requests, tokens, cost, with optional breakdown by provider, model, project, hour, or day.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        provider: {
+          type: 'string',
+          description: 'Filter by provider',
+        },
+        model: {
+          type: 'string',
+          description: 'Filter by model',
+        },
+        project: {
+          type: 'string',
+          description: 'Filter by project',
+        },
+        from: {
+          type: 'string',
+          description: 'Start date (ISO format, e.g. "2026-03-01")',
+        },
+        to: {
+          type: 'string',
+          description: 'End date (ISO format, e.g. "2026-03-23")',
+        },
+        groupBy: {
+          type: 'string',
+          description: 'Group breakdown by: "provider", "model", "project", "hour", "day"',
+        },
+      },
+    },
+  },
+  {
+    name: 'usage_query',
+    description:
+      'Query individual usage records with filters. Returns raw usage log entries.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        provider: {
+          type: 'string',
+          description: 'Filter by provider',
+        },
+        model: {
+          type: 'string',
+          description: 'Filter by model',
+        },
+        project: {
+          type: 'string',
+          description: 'Filter by project',
+        },
+        from: {
+          type: 'string',
+          description: 'Start date (ISO format)',
+        },
+        to: {
+          type: 'string',
+          description: 'End date (ISO format)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum records to return (default: 100)',
+        },
+      },
+    },
+  },
 ] as const;
 
 /**
@@ -285,6 +354,7 @@ async function handleToolCall(
   router: Router,
   vault: Vault,
   groupStore?: GroupStore,
+  costTracker?: CostTracker,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (toolName) {
@@ -455,6 +525,46 @@ async function handleToolCall(
         };
       }
 
+      case 'usage_summary': {
+        if (!costTracker) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Cost tracker not configured' }) }],
+            isError: true,
+          };
+        }
+        const summary = costTracker.summary({
+          provider: args['provider'] as string | undefined,
+          model: args['model'] as string | undefined,
+          project: args['project'] as string | undefined,
+          from: args['from'] as string | undefined,
+          to: args['to'] as string | undefined,
+          groupBy: args['groupBy'] as 'provider' | 'model' | 'project' | 'hour' | 'day' | undefined,
+        });
+        return {
+          content: [{ type: 'text', text: JSON.stringify(summary) }],
+        };
+      }
+
+      case 'usage_query': {
+        if (!costTracker) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Cost tracker not configured' }) }],
+            isError: true,
+          };
+        }
+        const records = costTracker.query({
+          provider: args['provider'] as string | undefined,
+          model: args['model'] as string | undefined,
+          project: args['project'] as string | undefined,
+          from: args['from'] as string | undefined,
+          to: args['to'] as string | undefined,
+          limit: (args['limit'] as number | undefined) ?? 100,
+        });
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ records, count: records.length }) }],
+        };
+      }
+
       default:
         return {
           content: [
@@ -478,7 +588,7 @@ async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -495,7 +605,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore);
+    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker);
   });
 
   const transport = new StdioServerTransport();

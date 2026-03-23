@@ -107,4 +107,39 @@ export function initializeDb(db: Database.Database): void {
       UNIQUE(provider, file_name, project)
     );
   `);
+
+  // ── Usage logs table (Phase 4: Cost Tracking) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS usage_logs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider    TEXT NOT NULL,
+      key_name    TEXT NOT NULL DEFAULT 'default',
+      model       TEXT NOT NULL,
+      project     TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
+      tokens_in   INTEGER NOT NULL DEFAULT 0,
+      tokens_out  INTEGER NOT NULL DEFAULT 0,
+      cost_usd    REAL NOT NULL DEFAULT 0.0,
+      latency_ms  INTEGER NOT NULL DEFAULT 0,
+      success     INTEGER NOT NULL DEFAULT 1,
+      error_message TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usage_provider_time ON usage_logs(provider, created_at);
+    CREATE INDEX IF NOT EXISTS idx_usage_model_time ON usage_logs(model, created_at);
+    CREATE INDEX IF NOT EXISTS idx_usage_project_time ON usage_logs(project, created_at);
+  `);
+
+  // ── Price config table (Phase 4: Cost Tracking) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS price_config (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider        TEXT NOT NULL,
+      model           TEXT NOT NULL,
+      input_per_mtok  REAL NOT NULL,
+      output_per_mtok REAL NOT NULL,
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(provider, model)
+    );
+  `);
 }
