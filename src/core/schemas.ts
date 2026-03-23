@@ -5,7 +5,7 @@
  */
 
 import { z } from 'zod';
-import { MAX_PROMPT_LENGTH, VALID_PROVIDERS } from './constants.js';
+import { MAX_PROMPT_LENGTH } from './constants.js';
 
 /** Generate request schema. */
 export const generateRequestSchema = z.object({
