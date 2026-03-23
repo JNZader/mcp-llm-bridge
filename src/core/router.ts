@@ -8,6 +8,11 @@
  * When USE_TRANSFORMERS=true, the router can also accept
  * InternalLLMRequest payloads and use the transformer pipeline
  * for outbound conversion and response normalization.
+ *
+ * When a GroupStore is configured, the router checks for group-based
+ * routing first: if a group matches the requested model (via modelPattern),
+ * it uses the group's balancer strategy to order providers. Session
+ * stickiness is checked before balancing when enabled.
  */
 
 import type {
@@ -18,8 +23,11 @@ import type {
 } from './types.js';
 import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.js';
 import type { TransformerRegistry } from './transformer.js';
+import type { GroupStore, ProviderGroup } from './groups.js';
+import type { SessionStore } from './session.js';
+import { createBalancer, memberKey } from './balancer.js';
 import { logger } from './logger.js';
-import { getCircuitBreakerRegistry, CircuitBreakerOpenError } from './circuit-breaker.js';
+import { getCircuitBreakerRegistry } from './circuit-breaker.js';
 
 /**
  * Check if the transformer pipeline is enabled via env flag.
@@ -32,6 +40,8 @@ export function useTransformers(): boolean {
 export class Router {
   private providers: LLMProvider[] = [];
   private _transformerRegistry: TransformerRegistry | null = null;
+  private _groupStore: GroupStore | null = null;
+  private _sessionStore: SessionStore | null = null;
 
   /** Set the transformer registry for the new pipeline. */
   setTransformerRegistry(registry: TransformerRegistry): void {
@@ -41,6 +51,26 @@ export class Router {
   /** Get the transformer registry (null if not set). */
   get transformerRegistry(): TransformerRegistry | null {
     return this._transformerRegistry;
+  }
+
+  /** Set the group store for group-based routing. */
+  setGroupStore(store: GroupStore): void {
+    this._groupStore = store;
+  }
+
+  /** Get the group store (null if not set). */
+  get groupStore(): GroupStore | null {
+    return this._groupStore;
+  }
+
+  /** Set the session store for stickiness. */
+  setSessionStore(store: SessionStore): void {
+    this._sessionStore = store;
+  }
+
+  /** Get the session store (null if not set). */
+  get sessionStore(): SessionStore | null {
+    return this._sessionStore;
   }
 
   private withResolutionMetadata(
@@ -143,13 +173,14 @@ export class Router {
    * Generate using the transformer pipeline (InternalLLMRequest → InternalLLMResponse).
    *
    * This is the new pipeline path, used when USE_TRANSFORMERS=true.
-   * For each candidate provider:
-   * 1. Look up the outbound transformer by provider ID
-   * 2. Transform InternalLLMRequest → provider-native format
-   * 3. Call the provider adapter (which uses the native format internally)
-   * 4. Transform the response → InternalLLMResponse
    *
-   * Falls back through candidates on failure, same as generate().
+   * Routing priority:
+   * 1. Check session stickiness (if pinned, use that provider)
+   * 2. Check if a Group matches the requested model (via modelPattern)
+   *    → If group found, use group's balancer strategy to order providers
+   * 3. Fallback to current behavior (sequential through all providers)
+   *
+   * After successful response: pin session if stickiness is enabled.
    */
   async generateFromInternal(request: InternalLLMRequest): Promise<InternalLLMResponse> {
     if (!this._transformerRegistry) {
@@ -159,26 +190,61 @@ export class Router {
     const registry = this._transformerRegistry;
     const startTime = Date.now();
 
-    // Build a GenerateRequest-compatible object for candidate resolution
-    const resolveRequest: GenerateRequest = {
-      prompt: '', // not used for resolution, just for type compat
-      model: request.model,
-      provider: request.metadata?.['provider'] as string | undefined,
-    };
+    const model = request.model ?? '';
+    const clientId = request.metadata?.['clientId'] as string | undefined;
 
-    const candidates = await this.resolveCandidates(resolveRequest);
+    // 1. Check session stickiness
+    if (this._sessionStore && clientId && model) {
+      const pinned = this._sessionStore.get(clientId, model);
+      if (pinned) {
+        const stickyProvider = this.providers.find((p) => p.id === pinned.provider);
+        if (stickyProvider) {
+          const circuitBreaker = getCircuitBreakerRegistry();
+          if (circuitBreaker.canRequest(stickyProvider.id)) {
+            try {
+              const result = await this.tryProvider(stickyProvider, request, registry, startTime);
+              return result;
+            } catch {
+              // Sticky provider failed — fall through to normal routing
+              logger.warn({ provider: stickyProvider.id, clientId, model }, 'Sticky provider failed, falling through');
+            }
+          }
+        }
+      }
+    }
 
-    if (candidates.length === 0) {
+    // 2. Check group-based routing
+    let matchedGroup: ProviderGroup | null = null;
+    let orderedCandidates: LLMProvider[] | null = null;
+
+    if (this._groupStore && model) {
+      matchedGroup = this._groupStore.findByModel(model);
+      if (matchedGroup) {
+        orderedCandidates = this.resolveGroupCandidates(matchedGroup);
+      }
+    }
+
+    // 3. Fallback to standard resolution if no group matched
+    if (!orderedCandidates) {
+      const resolveRequest: GenerateRequest = {
+        prompt: '',
+        model: request.model,
+        provider: request.metadata?.['provider'] as string | undefined,
+      };
+      orderedCandidates = await this.resolveCandidates(resolveRequest);
+    }
+
+    if (orderedCandidates.length === 0) {
       throw new Error(
         'No providers available. Store API credentials via vault_store or install a CLI tool.',
       );
     }
 
     const circuitBreaker = getCircuitBreakerRegistry();
-    const availableCandidates = candidates.filter((p) => circuitBreaker.canRequest(p.id));
+    const availableCandidates = orderedCandidates.filter((p) => circuitBreaker.canRequest(p.id));
 
     if (availableCandidates.length === 0) {
-      const openProviders = candidates.map((p) => p.id).join(', ');
+      const openProviders = orderedCandidates.map((p) => p.id).join(', ');
       throw new Error(
         `All providers have circuit breakers open: ${openProviders}. Wait for recovery or check provider status.`,
       );
@@ -187,88 +253,23 @@ export class Router {
     const errors: string[] = [];
 
     for (const provider of availableCandidates) {
-      // Look up outbound transformer for this provider
-      const outbound = registry.getOutbound(provider.id);
+      try {
+        const result = await this.tryProvider(provider, request, registry, startTime);
 
-      if (!outbound) {
-        // No transformer for this provider — use the generic CLI transformer
-        // or skip to next candidate
-        const cliOutbound = registry.getOutbound('cli');
-        if (provider.type === 'cli' && cliOutbound) {
-          // Use CLI transformer for CLI providers without a specific transformer
-          try {
-            const nativeRequest = cliOutbound.transformRequest(request);
-            const prompt = (nativeRequest as Record<string, unknown>)['prompt'] as string;
-            const system = (nativeRequest as Record<string, unknown>)['system'] as string | undefined;
-
-            const result = await provider.generate({
-              prompt,
-              system,
-              model: request.model,
-              maxTokens: request.maxTokens,
-            });
-
-            circuitBreaker.recordSuccess(provider.id);
-
-            return cliOutbound.transformResponse(result);
-          } catch (error) {
-            circuitBreaker.recordFailure(provider.id);
-            const message = error instanceof Error ? error.message : String(error);
-            logger.warn({ provider: provider.id, error: message }, 'Provider failed (CLI transformer)');
-            errors.push(`${provider.id}: ${message}`);
-            continue;
-          }
+        // Pin session on success if stickiness is enabled
+        if (this._sessionStore && clientId && model && matchedGroup?.stickyTTL) {
+          this._sessionStore.pin(
+            clientId,
+            model,
+            provider.id,
+            'default',
+            matchedGroup.stickyTTL * 1000, // stickyTTL is in seconds, pin expects ms
+          );
         }
 
-        logger.warn({ provider: provider.id }, 'No outbound transformer registered, skipping');
-        errors.push(`${provider.id}: no outbound transformer`);
-        continue;
-      }
-
-      try {
-        // Transform internal → provider native format
-        const nativeRequest = outbound.transformRequest(request);
-
-        // For API providers, we still call the adapter's generate()
-        // The adapter handles the actual HTTP call
-        // We construct a GenerateRequest from the internal request
-        const adapterRequest: GenerateRequest = {
-          prompt: this.extractPromptFromInternal(request),
-          system: this.extractSystemFromInternal(request),
-          model: request.model,
-          maxTokens: request.maxTokens,
-          provider: provider.id,
-        };
-
-        const result = await provider.generate(adapterRequest);
-        circuitBreaker.recordSuccess(provider.id);
-
-        // Transform the adapter result to InternalLLMResponse
-        // For now, we wrap the GenerateResponse into something the outbound
-        // response transformer can handle
-        const latencyMs = Date.now() - startTime;
-
-        return {
-          content: result.text,
-          model: result.model,
-          finishReason: 'stop',
-          usage: {
-            inputTokens: 0,
-            outputTokens: 0,
-            totalTokens: result.tokensUsed ?? 0,
-          },
-          metadata: {
-            provider: result.provider,
-            fallbackUsed: false,
-            latencyMs,
-            resolvedProvider: result.provider,
-            resolvedModel: result.model,
-          },
-        };
+        return result;
       } catch (error) {
-        circuitBreaker.recordFailure(provider.id);
         const message = error instanceof Error ? error.message : String(error);
-        logger.warn({ provider: provider.id, error: message }, 'Provider failed');
         errors.push(`${provider.id}: ${message}`);
         continue;
       }
@@ -277,6 +278,135 @@ export class Router {
     throw new Error(
       `All providers failed. Store credentials via vault_store or install a CLI tool.\n${errors.join('\n')}`,
     );
+  }
+
+  /**
+   * Try a single provider through the transformer pipeline.
+   * Handles both API providers (with outbound transformer) and CLI providers.
+   * Records circuit breaker success/failure.
+   */
+  private async tryProvider(
+    provider: LLMProvider,
+    request: InternalLLMRequest,
+    registry: TransformerRegistry,
+    startTime: number,
+  ): Promise<InternalLLMResponse> {
+    const circuitBreaker = getCircuitBreakerRegistry();
+    const outbound = registry.getOutbound(provider.id);
+
+    if (!outbound) {
+      // No transformer — try CLI fallback
+      const cliOutbound = registry.getOutbound('cli');
+      if (provider.type === 'cli' && cliOutbound) {
+        try {
+          const nativeRequest = cliOutbound.transformRequest(request);
+          const prompt = (nativeRequest as Record<string, unknown>)['prompt'] as string;
+          const system = (nativeRequest as Record<string, unknown>)['system'] as string | undefined;
+
+          const result = await provider.generate({
+            prompt,
+            system,
+            model: request.model,
+            maxTokens: request.maxTokens,
+          });
+
+          circuitBreaker.recordSuccess(provider.id);
+          return cliOutbound.transformResponse(result);
+        } catch (error) {
+          circuitBreaker.recordFailure(provider.id);
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn({ provider: provider.id, error: message }, 'Provider failed (CLI transformer)');
+          throw error;
+        }
+      }
+
+      logger.warn({ provider: provider.id }, 'No outbound transformer registered, skipping');
+      throw new Error(`no outbound transformer for ${provider.id}`);
+    }
+
+    try {
+      // Transform internal → provider native format (validates compatibility)
+      outbound.transformRequest(request);
+
+      const adapterRequest: GenerateRequest = {
+        prompt: this.extractPromptFromInternal(request),
+        system: this.extractSystemFromInternal(request),
+        model: request.model,
+        maxTokens: request.maxTokens,
+        provider: provider.id,
+      };
+
+      const result = await provider.generate(adapterRequest);
+      circuitBreaker.recordSuccess(provider.id);
+
+      const latencyMs = Date.now() - startTime;
+
+      return {
+        content: result.text,
+        model: result.model,
+        finishReason: 'stop',
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: result.tokensUsed ?? 0,
+        },
+        metadata: {
+          provider: result.provider,
+          fallbackUsed: false,
+          latencyMs,
+          resolvedProvider: result.provider,
+          resolvedModel: result.model,
+        },
+      };
+    } catch (error) {
+      circuitBreaker.recordFailure(provider.id);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn({ provider: provider.id, error: message }, 'Provider failed');
+      throw error;
+    }
+  }
+
+  /**
+   * Resolve candidates from a provider group using its balancer strategy.
+   * Returns providers ordered by the balancer, filtered by circuit breakers.
+   */
+  private resolveGroupCandidates(group: ProviderGroup): LLMProvider[] {
+    const balancer = createBalancer(group.strategy);
+    const circuitBreaker = getCircuitBreakerRegistry();
+
+    // Build excluded set from circuit breakers
+    const excluded = new Set<string>();
+    for (const member of group.members) {
+      const key = memberKey(member);
+      if (!circuitBreaker.canRequest(member.provider)) {
+        excluded.add(key);
+      }
+    }
+
+    // Get ordered list from balancer
+    const ordered: LLMProvider[] = [];
+    const used = new Set<string>();
+
+    // Keep selecting from balancer until all members are consumed or returned null
+    for (let i = 0; i < group.members.length; i++) {
+      const member = balancer.next(group.members, excluded);
+      if (!member) break;
+
+      const key = memberKey(member);
+      if (used.has(key)) continue;
+      used.add(key);
+
+      // Find matching registered provider
+      const provider = this.providers.find((p) => p.id === member.provider);
+      if (provider) {
+        ordered.push(provider);
+      }
+
+      // Add to excluded so next iteration picks a different member
+      excluded.add(key);
+    }
+
+    return ordered;
   }
 
   /**
