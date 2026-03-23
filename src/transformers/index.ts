@@ -69,3 +69,5 @@ export { openaiOutbound } from './outbound/openai.js';
 export { anthropicOutbound } from './outbound/anthropic.js';
 export { googleOutbound } from './outbound/google.js';
 export { cliOutbound } from './outbound/cli.js';
+export type { InternalLLMChunk, StreamingOutboundTransformer } from './streaming.js';
+export { serializeSSEChunk, SSE_DONE, StreamTokenAccumulator } from './streaming.js';
