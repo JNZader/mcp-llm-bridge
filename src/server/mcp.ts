@@ -16,6 +16,7 @@ import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
+import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 
 /** Tool definitions exposed via MCP. */
 const TOOLS = [
@@ -170,6 +171,45 @@ const TOOLS = [
       required: ['id'],
     },
   },
+  {
+    name: 'configure_circuit_breaker',
+    description:
+      'Configure circuit breaker settings. Updates thresholds and backoff for all breakers.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        failureThreshold: {
+          type: 'number',
+          description: 'Number of failures before opening (default: 5)',
+        },
+        backoffBaseMs: {
+          type: 'number',
+          description: 'Exponential backoff base in ms (default: 5000). Set to enable backoff.',
+        },
+        backoffMultiplier: {
+          type: 'number',
+          description: 'Exponential backoff multiplier (default: 2)',
+        },
+        backoffMaxMs: {
+          type: 'number',
+          description: 'Maximum backoff cap in ms (default: 300000 = 5 min)',
+        },
+        resetTimeoutMs: {
+          type: 'number',
+          description: 'Fixed timeout before half-open in ms (default: 30000)',
+        },
+      },
+    },
+  },
+  {
+    name: 'circuit_breaker_stats',
+    description:
+      'Get circuit breaker stats for all providers. Shows state, failures, successes, cooldown.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
 ] as const;
 
 /**
@@ -277,6 +317,30 @@ async function handleToolCall(
         vault.deleteFile(args['id'] as number);
         return {
           content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
+        };
+      }
+
+      case 'configure_circuit_breaker': {
+        const cbRegistry = getCircuitBreakerRegistry();
+        const update: Record<string, unknown> = {};
+        if (typeof args['failureThreshold'] === 'number') update['failureThreshold'] = args['failureThreshold'];
+        if (typeof args['backoffBaseMs'] === 'number') update['backoffBaseMs'] = args['backoffBaseMs'];
+        if (typeof args['backoffMultiplier'] === 'number') update['backoffMultiplier'] = args['backoffMultiplier'];
+        if (typeof args['backoffMaxMs'] === 'number') update['backoffMaxMs'] = args['backoffMaxMs'];
+        if (typeof args['resetTimeoutMs'] === 'number') update['resetTimeoutMs'] = args['resetTimeoutMs'];
+
+        cbRegistry.updateDefaultConfig(update as Record<string, number>);
+        const newConfig = cbRegistry.getDefaultConfig();
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ updated: true, config: newConfig }) }],
+        };
+      }
+
+      case 'circuit_breaker_stats': {
+        const cbRegistry = getCircuitBreakerRegistry();
+        const stats = cbRegistry.getAllStats();
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ enabled: cbRegistry.isEnabled(), breakers: stats }) }],
         };
       }
 
