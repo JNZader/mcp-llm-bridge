@@ -89,6 +89,9 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
       provider: this.id,
       model,
       tokensUsed: response.usage?.total_tokens ?? undefined,
+      resolvedProvider: this.id,
+      resolvedModel: model,
+      fallbackUsed: false,
     };
   }
 

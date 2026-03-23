@@ -57,7 +57,7 @@ export class CopilotCliAdapter implements LLMProvider {
     // Use execFileSync instead of execSync with string interpolation
     const output = execCliSync('copilot', ['-p', JSON.stringify(fullPrompt), '--model', model, '--allow-all-tools'], { env });
 
-    return { text: output.trim(), provider: this.id, model, tokensUsed: 0 };
+    return { text: output.trim(), provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
   }
 
   async isAvailable(): Promise<boolean> {

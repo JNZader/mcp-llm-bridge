@@ -168,6 +168,9 @@ export class CliOpenCodeAdapter implements LLMProvider {
         provider: this.id,
         model,
         tokensUsed: totalTokens,
+        resolvedProvider: this.id,
+        resolvedModel: model,
+        fallbackUsed: false,
       };
     } catch (error) {
       // If it's an exec error with stdout, try to parse partial output
@@ -180,6 +183,9 @@ export class CliOpenCodeAdapter implements LLMProvider {
             provider: this.id,
             model,
             tokensUsed: 0,
+            resolvedProvider: this.id,
+            resolvedModel: model,
+            fallbackUsed: false,
           };
         }
       }

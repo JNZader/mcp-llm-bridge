@@ -41,6 +41,9 @@ function createMockProvider(opts: {
         text: `Response from ${opts.id}`,
         provider: opts.id,
         model: opts.models[0]?.id ?? 'unknown',
+        resolvedProvider: opts.id,
+        resolvedModel: opts.models[0]?.id ?? 'unknown',
+        fallbackUsed: false,
       };
     },
 
@@ -80,14 +83,14 @@ describe('Router.generate()', () => {
       name: 'First',
       type: 'api',
       models: [{ id: 'model-a', name: 'Model A', provider: 'first', maxTokens: 4096 }],
-      response: { text: 'from-first', provider: 'first', model: 'model-a' },
+      response: { text: 'from-first', provider: 'first', model: 'model-a', resolvedProvider: 'first', resolvedModel: 'model-a', fallbackUsed: false },
     }));
     router.register(createMockProvider({
       id: 'second',
       name: 'Second',
       type: 'api',
       models: [{ id: 'model-b', name: 'Model B', provider: 'second', maxTokens: 4096 }],
-      response: { text: 'from-second', provider: 'second', model: 'model-b' },
+      response: { text: 'from-second', provider: 'second', model: 'model-b', resolvedProvider: 'second', resolvedModel: 'model-b', fallbackUsed: false },
     }));
 
     const result = await router.generate({ prompt: 'test' });
@@ -107,14 +110,14 @@ describe('Router.generate()', () => {
       name: 'Provider A',
       type: 'api',
       models: [{ id: 'model-a', name: 'Model A', provider: 'provider-a', maxTokens: 4096 }],
-      response: { text: 'from-a', provider: 'provider-a', model: 'model-a' },
+      response: { text: 'from-a', provider: 'provider-a', model: 'model-a', resolvedProvider: 'provider-a', resolvedModel: 'model-a', fallbackUsed: false },
     }));
     router.register(createMockProvider({
       id: 'provider-b',
       name: 'Provider B',
       type: 'api',
       models: [{ id: 'model-b', name: 'Model B', provider: 'provider-b', maxTokens: 4096 }],
-      response: { text: 'from-b', provider: 'provider-b', model: 'model-b' },
+      response: { text: 'from-b', provider: 'provider-b', model: 'model-b', resolvedProvider: 'provider-b', resolvedModel: 'model-b', fallbackUsed: false },
     }));
 
     const result = await router.generate({ prompt: 'test', model: 'model-b' });
@@ -132,14 +135,14 @@ describe('Router.generate()', () => {
       name: 'Alpha',
       type: 'api',
       models: [{ id: 'alpha-model', name: 'Alpha Model', provider: 'alpha', maxTokens: 4096 }],
-      response: { text: 'from-alpha', provider: 'alpha', model: 'alpha-model' },
+      response: { text: 'from-alpha', provider: 'alpha', model: 'alpha-model', resolvedProvider: 'alpha', resolvedModel: 'alpha-model', fallbackUsed: false },
     }));
     router.register(createMockProvider({
       id: 'beta',
       name: 'Beta',
       type: 'api',
       models: [{ id: 'beta-model', name: 'Beta Model', provider: 'beta', maxTokens: 4096 }],
-      response: { text: 'from-beta', provider: 'beta', model: 'beta-model' },
+      response: { text: 'from-beta', provider: 'beta', model: 'beta-model', resolvedProvider: 'beta', resolvedModel: 'beta-model', fallbackUsed: false },
     }));
 
     const result = await router.generate({ prompt: 'test', provider: 'beta' });
@@ -165,7 +168,7 @@ describe('Router.generate()', () => {
       name: 'Backup',
       type: 'api',
       models: [{ id: 'backup-model', name: 'Backup Model', provider: 'backup', maxTokens: 4096 }],
-      response: { text: 'from-backup', provider: 'backup', model: 'backup-model' },
+      response: { text: 'from-backup', provider: 'backup', model: 'backup-model', resolvedProvider: 'backup', resolvedModel: 'backup-model', fallbackUsed: false },
     }));
 
     const result = await router.generate({ prompt: 'test' });
@@ -182,6 +185,9 @@ describe('Router.generate()', () => {
       text: 'from-backup',
       provider: 'backup',
       model: 'backup-model',
+      resolvedProvider: 'backup',
+      resolvedModel: 'backup-model',
+      fallbackUsed: false,
     }));
 
     router.register(createMockProvider({
@@ -215,6 +221,9 @@ describe('Router.generate()', () => {
       text: 'from-backup',
       provider: 'backup',
       model: 'backup-model',
+      resolvedProvider: 'backup',
+      resolvedModel: 'backup-model',
+      fallbackUsed: false,
     }));
 
     router.register(createMockProvider({
@@ -331,14 +340,14 @@ describe('Router provider ordering', () => {
       name: 'CLI First',
       type: 'cli',
       models: [{ id: 'cli-m', name: 'CLI M', provider: 'cli-first', maxTokens: 4096 }],
-      response: { text: 'from-cli', provider: 'cli-first', model: 'cli-m' },
+      response: { text: 'from-cli', provider: 'cli-first', model: 'cli-m', resolvedProvider: 'cli-first', resolvedModel: 'cli-m', fallbackUsed: false },
     }));
     router.register(createMockProvider({
       id: 'api-second',
       name: 'API Second',
       type: 'api',
       models: [{ id: 'api-m', name: 'API M', provider: 'api-second', maxTokens: 4096 }],
-      response: { text: 'from-api', provider: 'api-second', model: 'api-m' },
+      response: { text: 'from-api', provider: 'api-second', model: 'api-m', resolvedProvider: 'api-second', resolvedModel: 'api-m', fallbackUsed: false },
     }));
 
     // Without specifying provider/model, API should be tried first
