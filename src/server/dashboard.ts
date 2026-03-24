@@ -648,10 +648,10 @@ export function dashboardHtml(): string {
       color: var(--text-dim);
     ">
       \uD83D\uDCF1 This dashboard is also available at
-      <a href="https://jnzader.github.io/mcp-llm-bridge/"
+      <a href="https://gateway.javierzader.com/"
          target="_blank" rel="noopener"
          style="color: var(--accent); text-decoration: none; font-weight: 500;">
-        jnzader.github.io/mcp-llm-bridge/
+        gateway.javierzader.com
       </a>
     </div>
 

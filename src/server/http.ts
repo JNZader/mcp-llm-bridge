@@ -140,8 +140,8 @@ function buildGatewayMetadata(result: {
 function getCorsOrigins(): string | string[] {
   const envOrigins = process.env['LLM_GATEWAY_CORS_ORIGINS'];
   if (!envOrigins) {
-    // Default: allow only GitHub Pages hosted dashboard
-    return ['https://jnzader.github.io'];
+    // Default: allow only Cloudflare hosted dashboard
+    return ['https://gateway.javierzader.com'];
   }
   if (envOrigins === '*') {
     // CORS '*' is allowed but we return it as-is

@@ -214,7 +214,7 @@ describe('CORS middleware', () => {
     const res = await req({
       method: 'GET',
       path: '/health',
-      headers: { 'Origin': 'https://jnzader.github.io' },
+      headers: { 'Origin': 'https://gateway.javierzader.com' },
     });
 
     assert.ok(
@@ -228,7 +228,7 @@ describe('CORS middleware', () => {
       method: 'OPTIONS',
       path: '/v1/models',
       headers: {
-        'Origin': 'https://jnzader.github.io',
+        'Origin': 'https://gateway.javierzader.com',
         'Access-Control-Request-Method': 'POST',
       },
     });
