@@ -7,8 +7,9 @@
  * TDD Approach: RED phase first - write failing tests, then implement
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { AnalyticsAggregator } from '../../src/analytics/index';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert';
+import { AnalyticsAggregator } from '../../src/analytics/index.js';
 
 // Mock database interface for flush tests
 interface MockDatabase {
@@ -37,16 +38,16 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
   describe('Constructor', () => {
     it('should initialize with empty dimensions', () => {
       const total = aggregator.query({ dimension: 'total' });
-      expect(total).toHaveLength(1);
-      expect(total[0].requests).toBe(0);
-      expect(total[0].inputTokens).toBe(0);
-      expect(total[0].outputTokens).toBe(0);
-      expect(total[0].cost).toBe(0);
+      assert.strictEqual(total.length, (1));
+      assert.strictEqual(total[0].requests, (0));
+      assert.strictEqual(total[0].inputTokens, (0));
+      assert.strictEqual(total[0].outputTokens, (0));
+      assert.strictEqual(total[0].cost, (0));
     });
 
     it('should accept custom max latency window', () => {
       const customAgg = new AnalyticsAggregator({ maxLatencyWindow: 500 });
-      expect(customAgg).toBeDefined();
+      assert.ok(customAgg);
     });
   });
 
@@ -61,12 +62,12 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total).toHaveLength(1);
-      expect(total[0].requests).toBe(1);
-      expect(total[0].inputTokens).toBe(100);
-      expect(total[0].outputTokens).toBe(50);
-      expect(total[0].cost).toBe(0.0025);
-      expect(total[0].avgLatency).toBe(1200);
+      assert.strictEqual(total.length, (1));
+      assert.strictEqual(total[0].requests, (1));
+      assert.strictEqual(total[0].inputTokens, (100));
+      assert.strictEqual(total[0].outputTokens, (50));
+      assert.strictEqual(total[0].cost, (0.0025));
+      assert.strictEqual(total[0].avgLatency, (1200));
     });
 
     it('should record a request to hourly dimension', () => {
@@ -79,8 +80,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const hourly = aggregator.query({ dimension: 'hourly' });
-      expect(hourly.length).toBeGreaterThan(0);
-      expect(hourly[0].requests).toBe(1);
+      assert.ok(hourly.length > (0));
+      assert.strictEqual(hourly[0].requests, (1));
     });
 
     it('should record a request to daily dimension', () => {
@@ -93,8 +94,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const daily = aggregator.query({ dimension: 'daily' });
-      expect(daily.length).toBeGreaterThan(0);
-      expect(daily[0].requests).toBe(1);
+      assert.ok(daily.length > (0));
+      assert.strictEqual(daily[0].requests, (1));
     });
 
     it('should record a request to channel dimension', () => {
@@ -107,8 +108,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const channel = aggregator.query({ dimension: 'channel' });
-      expect(channel).toHaveLength(1);
-      expect(channel[0].requests).toBe(1);
+      assert.strictEqual(channel.length, (1));
+      assert.strictEqual(channel[0].requests, (1));
     });
 
     it('should record a request to model dimension', () => {
@@ -121,8 +122,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const model = aggregator.query({ dimension: 'model' });
-      expect(model).toHaveLength(1);
-      expect(model[0].requests).toBe(1);
+      assert.strictEqual(model.length, (1));
+      assert.strictEqual(model[0].requests, (1));
     });
   });
 
@@ -149,10 +150,10 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(2);
-      expect(total[0].inputTokens).toBe(300);
-      expect(total[0].outputTokens).toBe(150);
-      expect(total[0].cost).toBe(0.0075);
+      assert.strictEqual(total[0].requests, (2));
+      assert.strictEqual(total[0].inputTokens, (300));
+      assert.strictEqual(total[0].outputTokens, (150));
+      assert.strictEqual(total[0].cost, (0.0075));
     });
 
     it('should aggregate requests from same provider but different models', () => {
@@ -173,10 +174,10 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(2);
+      assert.strictEqual(total[0].requests, (2));
 
       const model = aggregator.query({ dimension: 'model' });
-      expect(model).toHaveLength(2);
+      assert.strictEqual(model.length, (2));
     });
 
     it('should track different channels separately', () => {
@@ -197,7 +198,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const channel = aggregator.query({ dimension: 'channel' });
-      expect(channel).toHaveLength(2);
+      assert.strictEqual(channel.length, (2));
     });
   });
 
@@ -220,7 +221,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].avgLatency).toBe(1500);
+      assert.strictEqual(total[0].avgLatency, (1500));
     });
 
     it('should calculate p95 latency', () => {
@@ -236,9 +237,9 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       }
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].p95Latency).toBeDefined();
+      assert.ok(total[0].p95Latency);
       // p95 of 20 samples should be around the 19th value (1900ms)
-      expect(total[0].p95Latency).toBeGreaterThanOrEqual(1800);
+      assert.ok(total[0].p95Latency >= (1800));
     });
 
     it('should calculate p99 latency', () => {
@@ -254,9 +255,9 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       }
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].p99Latency).toBeDefined();
+      assert.ok(total[0].p99Latency);
       // p99 of 100 samples should be around 990ms
-      expect(total[0].p99Latency).toBeGreaterThanOrEqual(900);
+      assert.ok(total[0].p99Latency >= (900));
     });
 
     it('should not include percentiles when not enough samples', () => {
@@ -270,7 +271,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       const total = aggregator.query({ dimension: 'total' });
       // With only 1 sample, percentiles might not be calculated
-      expect(total[0].avgLatency).toBe(1000);
+      assert.strictEqual(total[0].avgLatency, (1000));
     });
   });
 
@@ -304,7 +305,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       // Should only include the recent request
-      expect(hourly.length).toBeGreaterThanOrEqual(1);
+      assert.ok(hourly.length >= (1));
     });
 
     it('should filter by to timestamp', () => {
@@ -336,7 +337,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       // Should only include the old request
-      expect(hourly.length).toBeGreaterThanOrEqual(1);
+      assert.ok(hourly.length >= (1));
     });
 
     it('should filter by from and to range', () => {
@@ -387,8 +388,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       // Should include only the middle request's hour
-      expect(hourly.length).toBe(1);
-      expect(hourly[0].inputTokens).toBe(200);
+      assert.strictEqual(hourly.length, (1));
+      assert.strictEqual(hourly[0].inputTokens, (200));
     });
   });
 
@@ -415,9 +416,9 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
         channelId: 'fast',
       });
 
-      expect(fastChannel).toHaveLength(1);
-      expect(fastChannel[0].requests).toBe(1);
-      expect(fastChannel[0].inputTokens).toBe(100);
+      assert.strictEqual(fastChannel.length, (1));
+      assert.strictEqual(fastChannel[0].requests, (1));
+      assert.strictEqual(fastChannel[0].inputTokens, (100));
     });
 
     it('should filter by model', () => {
@@ -442,8 +443,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
         model: 'gpt-4o',
       });
 
-      expect(modelQuery).toHaveLength(1);
-      expect(modelQuery[0].requests).toBe(1);
+      assert.strictEqual(modelQuery.length, (1));
+      assert.strictEqual(modelQuery[0].requests, (1));
     });
 
     it('should return empty array for non-existent channel', () => {
@@ -452,7 +453,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
         channelId: 'non-existent',
       });
 
-      expect(result).toHaveLength(0);
+      assert.strictEqual(result.length, (0));
     });
 
     it('should return empty array for non-existent model', () => {
@@ -461,7 +462,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
         model: 'non-existent',
       });
 
-      expect(result).toHaveLength(0);
+      assert.strictEqual(result.length, (0));
     });
   });
 
@@ -483,7 +484,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       await aggregator.flush(mockDb as unknown as import('../../src/analytics/types').Database);
 
-      expect(insertedData).not.toBeNull();
+      assert.notStrictEqual(insertedData, null);
     });
 
     it('should clear in-memory data after flush', async () => {
@@ -499,7 +500,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       await aggregator.flush(mockDb as unknown as import('../../src/analytics/types').Database);
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(0);
+      assert.strictEqual(total[0].requests, (0));
     });
   });
 
@@ -516,14 +517,14 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       aggregator.clear();
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(0);
-      expect(total[0].inputTokens).toBe(0);
+      assert.strictEqual(total[0].requests, (0));
+      assert.strictEqual(total[0].inputTokens, (0));
 
       const hourly = aggregator.query({ dimension: 'hourly' });
-      expect(hourly).toHaveLength(0);
+      assert.strictEqual(hourly.length, (0));
 
       const channel = aggregator.query({ dimension: 'channel' });
-      expect(channel).toHaveLength(0);
+      assert.strictEqual(channel.length, (0));
     });
   });
 
@@ -545,8 +546,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       // Percentiles should be calculated from last 10 latencies (600-1500)
       const total = smallAgg.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(15);
-      expect(total[0].avgLatency).toBeGreaterThan(0);
+      assert.strictEqual(total[0].requests, (15));
+      assert.ok(total[0].avgLatency > (0));
     });
   });
 
@@ -561,10 +562,10 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(1);
-      expect(total[0].inputTokens).toBe(0);
-      expect(total[0].cost).toBe(0);
-      expect(total[0].avgLatency).toBe(0);
+      assert.strictEqual(total[0].requests, (1));
+      assert.strictEqual(total[0].inputTokens, (0));
+      assert.strictEqual(total[0].cost, (0));
+      assert.strictEqual(total[0].avgLatency, (0));
     });
 
     it('should handle very large numbers', () => {
@@ -577,9 +578,9 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].inputTokens).toBe(1000000);
-      expect(total[0].cost).toBe(1000.50);
-      expect(total[0].avgLatency).toBe(60000);
+      assert.strictEqual(total[0].inputTokens, (1000000));
+      assert.strictEqual(total[0].cost, (1000.50));
+      assert.strictEqual(total[0].avgLatency, (60000));
     });
 
     it('should handle multiple providers', () => {
@@ -608,15 +609,15 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(3);
+      assert.strictEqual(total[0].requests, (3));
     });
 
     it('should handle empty query results gracefully', () => {
       const hourly = aggregator.query({ dimension: 'hourly' });
-      expect(hourly).toEqual([]);
+      assert.deepStrictEqual(hourly, ([]));
 
       const daily = aggregator.query({ dimension: 'daily' });
-      expect(daily).toEqual([]);
+      assert.deepStrictEqual(daily, ([]));
     });
 
     it('should handle query with only to timestamp (no from)', () => {
@@ -637,7 +638,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
         to: now,
       });
 
-      expect(hourly.length).toBeGreaterThanOrEqual(1);
+      assert.ok(hourly.length >= (1));
     });
 
     it('should handle concurrent requests simulation', () => {
@@ -653,8 +654,8 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       }
 
       const total = aggregator.query({ dimension: 'total' });
-      expect(total[0].requests).toBe(50);
-      expect(total[0].inputTokens).toBe(5000);
+      assert.strictEqual(total[0].requests, (50));
+      assert.strictEqual(total[0].inputTokens, (5000));
     });
   });
 });
@@ -679,9 +680,9 @@ describe('AnalyticsAggregator - Performance', () => {
     const duration = end - start;
 
     // Should complete in reasonable time (less than 1 second for 1000 records)
-    expect(duration).toBeLessThan(1000);
+    assert.ok(duration < (1000));
 
     const total = perfAggregator.query({ dimension: 'total' });
-    expect(total[0].requests).toBe(1000);
+    assert.strictEqual(total[0].requests, (1000));
   });
 });
