@@ -29,7 +29,30 @@ import type { SessionStore } from './session.js';
 import type { CostTracker } from './cost-tracker.js';
 import { createBalancer, memberKey } from './balancer.js';
 import { logger } from './logger.js';
-import { getCircuitBreakerRegistry } from './circuit-breaker.js';
+import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
+
+/**
+ * Global Circuit Breaker V2 instance for per-(provider,key,model) granularity.
+ * Used alongside the legacy registry for octopus-style circuit breaking.
+ */
+let circuitBreakerV2: CircuitBreakerV2 | null = null;
+
+/**
+ * Get the global Circuit Breaker V2 instance.
+ */
+export function getCircuitBreakerV2(): CircuitBreakerV2 {
+  if (!circuitBreakerV2) {
+    circuitBreakerV2 = new CircuitBreakerV2();
+  }
+  return circuitBreakerV2;
+}
+
+/**
+ * Reset the global Circuit Breaker V2 instance (for testing).
+ */
+export function resetCircuitBreakerV2(): void {
+  circuitBreakerV2 = null;
+}
 
 /**
  * Check if the transformer pipeline is enabled via env flag.
@@ -126,9 +149,12 @@ export class Router {
       );
     }
 
-    // Filter out providers with open circuit breakers
-    const circuitBreaker = getCircuitBreakerRegistry();
-    const availableCandidates = candidates.filter((p) => circuitBreaker.canRequest(p.id));
+    // Filter out providers with open circuit breakers (V2 with per-model granularity)
+    const circuitBreaker = getCircuitBreakerV2();
+    const model = request.model ?? 'unknown';
+    const availableCandidates = candidates.filter((p) =>
+      circuitBreaker.canExecute(p.id, 'default', model).allowed
+    );
 
     if (availableCandidates.length === 0) {
       // All candidates have open circuit breakers
@@ -149,16 +175,16 @@ export class Router {
 
       try {
         const result = await provider.generate(request);
-        circuitBreaker.recordSuccess(provider.id);
+        circuitBreaker.recordSuccess(provider.id, 'default', model);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, request.model ?? 'unknown', result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
+        this.recordUsage(provider.id, model, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
         return this.withResolutionMetadata(request, result, false, latencyMs);
       } catch (error) {
-        circuitBreaker.recordFailure(provider.id);
+        circuitBreaker.recordFailure(provider.id, 'default', model);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, request.project, message);
-        logger.warn({ provider: provider.id, error: message }, 'Provider failed');
+        this.recordUsage(provider.id, model, 0, 0, latencyMs, false, request.project, message);
+        logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
         throw error;
       }
     }
@@ -168,16 +194,16 @@ export class Router {
     for (const [index, provider] of availableCandidates.entries()) {
       try {
         const result = await provider.generate(request);
-        circuitBreaker.recordSuccess(provider.id);
+        circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, result.model ?? request.model ?? 'unknown', result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
+        this.recordUsage(provider.id, result.model ?? model, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
         return this.withResolutionMetadata(request, result, index > 0, latencyMs);
       } catch (error) {
-        circuitBreaker.recordFailure(provider.id);
+        circuitBreaker.recordFailure(provider.id, 'default', model);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, request.project, message);
-        logger.warn({ provider: provider.id, error: message }, 'Provider failed');
+        this.recordUsage(provider.id, model, 0, 0, latencyMs, false, request.project, message);
+        logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
         errors.push(`${provider.id}: ${message}`);
         continue;
       }
@@ -218,10 +244,10 @@ export class Router {
       if (pinned) {
         const stickyProvider = this.providers.find((p) => p.id === pinned.provider);
         if (stickyProvider) {
-          const circuitBreaker = getCircuitBreakerRegistry();
-          if (circuitBreaker.canRequest(stickyProvider.id)) {
+          const circuitBreaker = getCircuitBreakerV2();
+          if (circuitBreaker.canExecute(stickyProvider.id, 'default', model).allowed) {
             try {
-              const result = await this.tryProvider(stickyProvider, request, registry, startTime);
+              const result = await this.tryProvider(stickyProvider, request, registry, startTime, model);
               return result;
             } catch {
               // Sticky provider failed — fall through to normal routing
@@ -239,7 +265,7 @@ export class Router {
     if (this._groupStore && model) {
       matchedGroup = this._groupStore.findByModel(model);
       if (matchedGroup) {
-        orderedCandidates = this.resolveGroupCandidates(matchedGroup);
+        orderedCandidates = this.resolveGroupCandidates(matchedGroup, model);
       }
     }
 
@@ -259,8 +285,10 @@ export class Router {
       );
     }
 
-    const circuitBreaker = getCircuitBreakerRegistry();
-    const availableCandidates = orderedCandidates.filter((p) => circuitBreaker.canRequest(p.id));
+    const circuitBreaker = getCircuitBreakerV2();
+    const availableCandidates = orderedCandidates.filter((p) =>
+      circuitBreaker.canExecute(p.id, 'default', model).allowed
+    );
 
     if (availableCandidates.length === 0) {
       const openProviders = orderedCandidates.map((p) => p.id).join(', ');
@@ -324,7 +352,7 @@ export class Router {
     if (this._groupStore && model) {
       const matchedGroup = this._groupStore.findByModel(model);
       if (matchedGroup) {
-        orderedCandidates = this.resolveGroupCandidates(matchedGroup);
+        orderedCandidates = this.resolveGroupCandidates(matchedGroup, model);
       }
     }
 
@@ -337,8 +365,10 @@ export class Router {
       orderedCandidates = await this.resolveCandidates(resolveRequest);
     }
 
-    const circuitBreaker = getCircuitBreakerRegistry();
-    const availableCandidates = orderedCandidates.filter((p) => circuitBreaker.canRequest(p.id));
+    const circuitBreaker = getCircuitBreakerV2();
+    const availableCandidates = orderedCandidates.filter((p) =>
+      circuitBreaker.canExecute(p.id, 'default', model).allowed
+    );
 
     // Find the first provider that has a streaming transformer
     for (const provider of availableCandidates) {
@@ -361,8 +391,9 @@ export class Router {
     request: InternalLLMRequest,
     registry: TransformerRegistry,
     startTime: number,
+    model: string = 'unknown',
   ): Promise<InternalLLMResponse> {
-    const circuitBreaker = getCircuitBreakerRegistry();
+    const circuitBreaker = getCircuitBreakerV2();
     const outbound = registry.getOutbound(provider.id);
 
     if (!outbound) {
@@ -381,17 +412,17 @@ export class Router {
             maxTokens: request.maxTokens,
           });
 
-          circuitBreaker.recordSuccess(provider.id);
+          circuitBreaker.recordSuccess(provider.id, 'default', model);
           const response = cliOutbound.transformResponse(result);
           const latencyMs = Date.now() - startTime;
           this.recordUsage(provider.id, response.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
           return response;
         } catch (error) {
-          circuitBreaker.recordFailure(provider.id);
+          circuitBreaker.recordFailure(provider.id, 'default', model);
           const message = error instanceof Error ? error.message : String(error);
           const latencyMs = Date.now() - startTime;
-          this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, undefined, message);
-          logger.warn({ provider: provider.id, error: message }, 'Provider failed (CLI transformer)');
+          this.recordUsage(provider.id, model, 0, 0, latencyMs, false, undefined, message);
+          logger.warn({ provider: provider.id, model, error: message }, 'Provider failed (CLI transformer)');
           throw error;
         }
       }
@@ -413,7 +444,7 @@ export class Router {
       };
 
       const result = await provider.generate(adapterRequest);
-      circuitBreaker.recordSuccess(provider.id);
+      circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
 
       const latencyMs = Date.now() - startTime;
 
@@ -438,11 +469,11 @@ export class Router {
       this.recordUsage(provider.id, result.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
       return response;
     } catch (error) {
-      circuitBreaker.recordFailure(provider.id);
+      circuitBreaker.recordFailure(provider.id, 'default', model);
       const message = error instanceof Error ? error.message : String(error);
       const latencyMs = Date.now() - startTime;
-      this.recordUsage(provider.id, request.model ?? 'unknown', 0, 0, latencyMs, false, undefined, message);
-      logger.warn({ provider: provider.id, error: message }, 'Provider failed');
+      this.recordUsage(provider.id, model, 0, 0, latencyMs, false, undefined, message);
+      logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
       throw error;
     }
   }
@@ -451,15 +482,15 @@ export class Router {
    * Resolve candidates from a provider group using its balancer strategy.
    * Returns providers ordered by the balancer, filtered by circuit breakers.
    */
-  private resolveGroupCandidates(group: ProviderGroup): LLMProvider[] {
+  private resolveGroupCandidates(group: ProviderGroup, model: string = 'unknown'): LLMProvider[] {
     const balancer = createBalancer(group.strategy);
-    const circuitBreaker = getCircuitBreakerRegistry();
+    const circuitBreaker = getCircuitBreakerV2();
 
-    // Build excluded set from circuit breakers
+    // Build excluded set from circuit breakers (V2 with per-model granularity)
     const excluded = new Set<string>();
     for (const member of group.members) {
       const key = memberKey(member);
-      if (!circuitBreaker.canRequest(member.provider)) {
+      if (!circuitBreaker.canExecute(member.provider, 'default', model).allowed) {
         excluded.add(key);
       }
     }
