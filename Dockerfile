@@ -53,7 +53,7 @@ RUN pnpm install --frozen-lockfile --prod=false
 COPY . .
 
 # Copy built dashboard into docs/ (overrides source-committed docs/)
-COPY --from=dashboard-build /dashboard/docs /app/docs
+COPY --from=dashboard-build /docs /app/docs
 
 EXPOSE 3456
 ENV LLM_GATEWAY_PORT=3456

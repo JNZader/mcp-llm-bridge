@@ -26,9 +26,6 @@ import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
-import type { RequestLogger } from '../logging/request-logger.js';
-import { LogQuerySchema } from '../logging/schemas.js';
-import type { AnalyticsAggregator } from '../analytics/index.js';
 import { CreateGroupSchema, UpdateGroupSchema } from '../core/groups.js';
 import { dashboardHtml } from './dashboard.js';
 import { registerAdminRoutes } from './admin.js';
@@ -47,6 +44,7 @@ import {
   validateFileStore,
 } from '../core/schemas.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
+import type { LatencyMeasurer } from '../latency/index.js';
 import type { InternalLLMRequest } from '../core/internal-model.js';
 
 /**
@@ -528,8 +526,7 @@ export function startHttpServer(
   config: GatewayConfig,
   groupStore?: GroupStore,
   costTracker?: CostTracker,
-  requestLogger?: RequestLogger,
-  analyticsAggregator?: AnalyticsAggregator,
+  latencyMeasurer?: LatencyMeasurer,
 ): ServerType {
   // Reset start time on server creation
   serverStartTime = Date.now();
@@ -808,6 +805,37 @@ export function startHttpServer(
     try {
       const providers = await router.getProviderStatuses();
       return c.json({ providers });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── Latency Measurements ────────────────────────────────
+
+  app.get('/v1/latency', (c) => {
+    try {
+      if (!latencyMeasurer) {
+        return c.json({
+          error: 'Latency measurement not enabled',
+          code: 'NOT_ENABLED',
+        }, 503);
+      }
+
+      const measurements = latencyMeasurer.getAll();
+      const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      return c.json({
+        providers: measurements.map((m) => ({
+          provider: m.provider,
+          latencyMs: m.latencyMs,
+          measuredAt: m.measuredAt,
+          stale: now - m.measuredAt > TWO_HOURS_MS,
+        })),
+        count: measurements.length,
+        timestamp: new Date().toISOString(),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);
@@ -1167,212 +1195,6 @@ export function startHttpServer(
       return c.json({ error: message }, 500);
     }
   });
-
-  // ── Request Logs ─────────────────────────────────────
-
-  if (requestLogger) {
-    app.get('/v1/logs', async (c) => {
-      try {
-        // Parse query parameters
-        const query = c.req.query();
-
-        // Build raw query object
-        const rawQuery: Record<string, unknown> = {};
-
-        if (query.from !== undefined) {
-          const from = parseInt(query.from, 10);
-          if (isNaN(from)) {
-            return c.json({
-              error: 'INVALID_PARAMS',
-              message: 'Invalid from timestamp',
-            }, 400);
-          }
-          rawQuery.from = from;
-        }
-
-        if (query.to !== undefined) {
-          const to = parseInt(query.to, 10);
-          if (isNaN(to)) {
-            return c.json({
-              error: 'INVALID_PARAMS',
-              message: 'Invalid to timestamp',
-            }, 400);
-          }
-          rawQuery.to = to;
-        }
-
-        if (query.provider !== undefined) {
-          rawQuery.provider = query.provider;
-        }
-
-        if (query.model !== undefined) {
-          rawQuery.model = query.model;
-        }
-
-        if (query.limit !== undefined) {
-          const limit = parseInt(query.limit, 10);
-          if (isNaN(limit)) {
-            return c.json({
-              error: 'INVALID_PARAMS',
-              message: 'Invalid limit',
-            }, 400);
-          }
-          rawQuery.limit = limit;
-        }
-
-        if (query.offset !== undefined) {
-          const offset = parseInt(query.offset, 10);
-          if (isNaN(offset)) {
-            return c.json({
-              error: 'INVALID_PARAMS',
-              message: 'Invalid offset',
-            }, 400);
-          }
-          rawQuery.offset = offset;
-        }
-
-        // Validate using Zod schema
-        const validatedQuery = LogQuerySchema.safeParse(rawQuery);
-
-        if (!validatedQuery.success) {
-          // Format Zod errors
-          const issues = validatedQuery.error.issues;
-          const firstIssue = issues[0];
-          return c.json({
-            error: 'INVALID_PARAMS',
-            message: firstIssue?.message || 'Invalid query parameters',
-            details: issues,
-          }, 400);
-        }
-
-        // Query logs
-        const result = await requestLogger.getLogs(validatedQuery.data);
-
-        return c.json(result);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error({ error: message }, 'Failed to query logs');
-        return c.json({
-          error: 'QUERY_FAILED',
-          message: 'Failed to query logs',
-        }, 500);
-      }
-    });
-  }
-
-  // ── Analytics ──────────────────────────────────────────
-
-  if (analyticsAggregator) {
-    // Helper function to calculate summary from data points
-    function calculateSummary(data: Array<{
-      requests: number;
-      inputTokens: number;
-      outputTokens: number;
-      cost: number;
-      avgLatency: number;
-    }>): {
-      totalRequests: number;
-      totalTokens: number;
-      totalCost: number;
-      avgLatency: number;
-    } {
-      const totalRequests = data.reduce((sum, d) => sum + d.requests, 0);
-      const totalTokens = data.reduce((sum, d) => sum + d.inputTokens + d.outputTokens, 0);
-      const totalCost = data.reduce((sum, d) => sum + d.cost, 0);
-      const avgLatency = data.length > 0
-        ? Math.round(data.reduce((sum, d) => sum + d.avgLatency, 0) / data.length)
-        : 0;
-
-      return {
-        totalRequests,
-        totalTokens,
-        totalCost: Math.round(totalCost * 1000000) / 1000000,
-        avgLatency,
-      };
-    }
-
-    app.get('/v1/analytics', async (c) => {
-      try {
-        const query = c.req.query();
-
-        // Validate dimension parameter
-        const validDimensions = ['total', 'hourly', 'daily', 'channel', 'model'] as const;
-        const dimension = query.dimension as typeof validDimensions[number] ?? 'hourly';
-
-        if (!validDimensions.includes(dimension)) {
-          return c.json({
-            error: 'INVALID_PARAMS',
-            message: 'Invalid dimension. Must be one of: total, hourly, daily, channel, model',
-          }, 400);
-        }
-
-        // Parse time range filters
-        let from: number | undefined;
-        let to: number | undefined;
-
-        if (query.from !== undefined) {
-          const fromVal = parseInt(query.from, 10);
-          if (isNaN(fromVal)) {
-            return c.json({
-              error: 'INVALID_PARAMS',
-              message: 'Invalid from timestamp',
-            }, 400);
-          }
-          from = fromVal;
-        }
-
-        if (query.to !== undefined) {
-          const toVal = parseInt(query.to, 10);
-          if (isNaN(toVal)) {
-            return c.json({
-              error: 'INVALID_PARAMS',
-              message: 'Invalid to timestamp',
-            }, 400);
-          }
-          to = toVal;
-        }
-
-        // Validate time range
-        if (from !== undefined && to !== undefined && from > to) {
-          return c.json({
-            error: 'INVALID_PARAMS',
-            message: 'from must be before or equal to to',
-          }, 400);
-        }
-
-        // Build query
-        const analyticsQuery: {
-          dimension: typeof validDimensions[number];
-          from?: number;
-          to?: number;
-          channelId?: string;
-          model?: string;
-        } = {
-          dimension,
-          ...(from !== undefined && { from }),
-          ...(to !== undefined && { to }),
-          ...(query.channel !== undefined && { channelId: query.channel }),
-          ...(query.model !== undefined && { model: query.model }),
-        };
-
-        // Execute query
-        const result = analyticsAggregator.query(analyticsQuery);
-
-        // Build response
-        return c.json({
-          data: result,
-          summary: calculateSummary(result),
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error({ error: message }, 'Failed to query analytics');
-        return c.json({
-          error: 'QUERY_FAILED',
-          message: 'Failed to query analytics',
-        }, 500);
-      }
-    });
-  }
 
   // ── Admin Dashboard API ────────────────────────────────
 
