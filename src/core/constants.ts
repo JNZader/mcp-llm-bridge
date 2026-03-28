@@ -2,7 +2,7 @@
  * Gateway constants.
  */
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.1';
 
 /** Project scope for global (non-scoped) credentials. */
 export const GLOBAL_PROJECT = '_global';

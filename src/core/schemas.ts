@@ -5,24 +5,7 @@
  */
 
 import { z } from 'zod';
-
-/** Maximum prompt length (100KB). */
-export const MAX_PROMPT_LENGTH = 102_400;
-
-/** Valid provider IDs. */
-export const VALID_PROVIDERS = new Set([
-  'anthropic',
-  'openai',
-  'google',
-  'groq',
-  'openrouter',
-  'opencode-cli',
-  'claude-cli',
-  'gemini-cli',
-  'codex-cli',
-  'qwen-cli',
-  'copilot-cli',
-]);
+import { MAX_PROMPT_LENGTH } from './constants.js';
 
 /** Generate request schema. */
 export const generateRequestSchema = z.object({

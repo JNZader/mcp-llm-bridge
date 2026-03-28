@@ -102,6 +102,9 @@ export class AnthropicAdapter implements LLMProvider {
       provider: this.id,
       model,
       tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
+      resolvedProvider: this.id,
+      resolvedModel: model,
+      fallbackUsed: false,
     };
   }
 

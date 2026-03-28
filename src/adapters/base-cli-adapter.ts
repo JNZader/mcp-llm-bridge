@@ -111,6 +111,9 @@ export abstract class BaseCliAdapter implements LLMProvider {
         provider: this.id,
         model,
         tokensUsed: 0,
+        resolvedProvider: this.id,
+        resolvedModel: model,
+        fallbackUsed: false,
       };
     } catch (error) {
       const execError = error as { stdout?: string; message?: string };
@@ -118,7 +121,7 @@ export abstract class BaseCliAdapter implements LLMProvider {
         try {
           const text = this.parseResponse(execError.stdout);
           if (text) {
-            return { text, provider: this.id, model, tokensUsed: 0 };
+            return { text, provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
           }
         } catch { /* ignore parse errors */ }
       }

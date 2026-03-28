@@ -108,7 +108,7 @@ describe('GET /health', () => {
     assert.equal(res.status, 200);
     const data = res.data as { status: string; version: string };
     assert.equal(data.status, 'ok');
-    assert.equal(data.version, '0.2.0');
+    assert.equal(data.version, '0.3.1');
   });
 
   it('returns enhanced health info with required fields', async () => {
@@ -127,7 +127,7 @@ describe('GET /health', () => {
     
     // Verify all required fields are present
     assert.equal(data.status, 'ok');
-    assert.equal(data.version, '0.2.0');
+    assert.equal(data.version, '0.3.1');
     assert.ok(typeof data.timestamp === 'string');
     assert.ok(data.timestamp.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/));
     assert.ok(typeof data.uptime === 'number');
@@ -277,12 +277,13 @@ describe('POST /v1/chat/completions', () => {
     assert.equal(res.status, 400);
   });
 
-  it('rejects streaming (not supported)', async () => {
+  it('accepts streaming requests (returns SSE)', async () => {
     const res = await request('POST', '/v1/chat/completions', {
       messages: [{ role: 'user', content: 'Hello' }],
       stream: true,
     });
-    assert.equal(res.status, 400);
+    // SSE starts with 200 even if provider fails later
+    assert.equal(res.status, 200);
   });
 
   it('rejects messages without user role', async () => {

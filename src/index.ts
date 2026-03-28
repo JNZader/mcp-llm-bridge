@@ -22,6 +22,13 @@ import { createAllAdapters } from './adapters/index.js';
 import { startMcpServer } from './server/mcp.js';
 import { startHttpServer } from './server/http.js';
 import { cleanupAllProviderHomes } from './adapters/cli-home.js';
+import { CostTracker } from './core/cost-tracker.js';
+import { GroupStore } from './core/groups.js';
+import { SessionStore } from './core/session.js';
+import { registry } from './core/transformer.js';
+
+// Populate the transformer registry with all inbound/outbound transformers
+import './transformers/index.js';
 
 // Initialize metrics
 initMetrics();
@@ -39,6 +46,21 @@ for (const adapter of createAllAdapters(vault)) {
   router.register(adapter);
 }
 
+// Initialize cost tracker (uses same DB path as vault)
+const costTracker = new CostTracker({ dbPath: config.dbPath });
+router.setCostTracker(costTracker);
+
+// Wire up transformer registry for the new pipeline
+router.setTransformerRegistry(registry);
+
+// Initialize group store (uses same DB path as vault)
+const groupStore = new GroupStore(config.dbPath);
+router.setGroupStore(groupStore);
+
+// Initialize session store (in-memory with TTL sweep)
+const sessionStore = new SessionStore();
+router.setSessionStore(sessionStore);
+
 /**
  * Graceful shutdown handler.
  * Closes the vault database connection, provider homes, and tracing on exit.
@@ -46,6 +68,9 @@ for (const adapter of createAllAdapters(vault)) {
 async function setupGracefulShutdown(vault: Vault): Promise<void> {
   const cleanup = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
+    costTracker.destroy();
+    groupStore.close();
+    sessionStore.destroy();
     cleanupAllProviderHomes();
     vault.close();
     await shutdownTracing();
@@ -61,11 +86,11 @@ await setupGracefulShutdown(vault);
 
 if (mode === 'serve') {
   // HTTP only
-  startHttpServer(router, vault, config);
+  startHttpServer(router, vault, config, groupStore, costTracker);
 } else {
   // MCP stdio (default — backward compatible)
-  await startMcpServer(router, vault);
+  await startMcpServer(router, vault, undefined, costTracker);
   if (mode === '--http') {
-    startHttpServer(router, vault, config);
+    startHttpServer(router, vault, config, groupStore, costTracker);
   }
 }

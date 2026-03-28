@@ -67,7 +67,7 @@ curl -X POST http://localhost:3456/v1/generate \
 
 The gateway includes a full admin dashboard for managing credentials, providers, models, and testing generation.
 
-**Hosted version:** [https://jnzader.github.io/mcp-llm-bridge/](https://jnzader.github.io/mcp-llm-bridge/)
+**Hosted version:** [https://gateway.javierzader.com/](https://gateway.javierzader.com/)
 
 **Self-hosted:** Available at `http://localhost:3456` when the gateway is running.
 
@@ -875,7 +875,7 @@ LLM APIs                        Local CLI tools
 - **Bearer token authentication** with constant-time comparison (`timingSafeEqual`) to prevent timing attacks
 - **Master key file** stored with mode `0600` (owner read/write only)
 - **Config directory** created with mode `0700` (owner access only)
-- **CORS enabled** with `origin: '*'` for dashboard access from GitHub Pages
+- **CORS enabled** with configurable origins for dashboard access
 - **Credentials never logged** — masked output only
 - **Temp files cleaned up** in `finally` blocks after CLI invocations
 - **Minimum token length** enforced (32 characters) to prevent weak secrets

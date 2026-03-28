@@ -1,3 +1,16 @@
+# ── Stage 1: Build dashboard ─────────────────────────────
+FROM node:22-slim AS dashboard-build
+
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+WORKDIR /dashboard
+COPY dashboard/package.json dashboard/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY dashboard/ .
+RUN pnpm run build
+
+# ── Stage 2: Runtime ─────────────────────────────────────
 FROM node:22-slim
 
 # Force cache invalidation on each build
@@ -38,6 +51,9 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false
 
 COPY . .
+
+# Copy built dashboard into docs/ (overrides source-committed docs/)
+COPY --from=dashboard-build /dashboard/docs /app/docs
 
 EXPOSE 3456
 ENV LLM_GATEWAY_PORT=3456

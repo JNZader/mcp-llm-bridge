@@ -1,9 +1,10 @@
 {
   "name": "mcp-llm-bridge",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "MCP server that routes LLM calls through CLI subscriptions (Claude, Gemini, Codex, Copilot)",
   "type": "module",
   "main": "dist/index.js",
+  "files": ["dist", "README.md"],
   "bin": {
     "mcp-llm-bridge": "dist/index.js"
   },
@@ -11,7 +12,7 @@
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "serve": "tsx src/index.ts serve",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --test test/*.test.ts test/**/*.test.ts",
     "build": "tsup src/index.ts --format esm --dts",
     "typecheck": "tsc --noEmit"
   },
@@ -53,7 +54,7 @@
     ]
   },
   "devDependencies": {
-    "@types/better-sqlite3": "latest",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
