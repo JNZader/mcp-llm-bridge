@@ -5,7 +5,8 @@
  * Following Red → Green → Refactor cycle
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert';
 import Database from 'better-sqlite3';
 import { GroupManager, createGroupManager } from '../../src/groups/index.js';
 import { GROUP_MODE } from '../../src/groups/types.js';
@@ -89,13 +90,13 @@ describe('GroupManager', () => {
         mode: GROUP_MODE.ROUND_ROBIN,
       });
 
-      expect(group.id).toBeGreaterThan(0);
-      expect(group.name).toBe('gpt-4o');
-      expect(group.description).toBe('Unified GPT-4o access');
-      expect(group.mode).toBe('round_robin');
-      expect(group.channels).toEqual([]);
-      expect(group.createdAt).toBeGreaterThan(0);
-      expect(group.updatedAt).toBeGreaterThan(0);
+      assert.ok(group.id > 0);
+      assert.strictEqual(group.name, 'gpt-4o');
+      assert.strictEqual(group.description, 'Unified GPT-4o access');
+      assert.strictEqual(group.mode, 'round_robin');
+      assert.deepStrictEqual(group.channels, []);
+      assert.ok(group.createdAt > 0);
+      assert.ok(group.updatedAt > 0);
     });
 
     it('should create a group with default mode', () => {
@@ -103,54 +104,55 @@ describe('GroupManager', () => {
         name: 'claude-3-opus',
       });
 
-      expect(group.mode).toBe('round_robin');
+      assert.strictEqual(group.mode, 'round_robin');
     });
 
     it('should reject empty group name', () => {
-      expect(() => manager.createGroup({ name: '' })).toThrow('Group name is required');
-      expect(() => manager.createGroup({ name: '   ' })).toThrow('Group name is required');
+      assert.throws(() => manager.createGroup({ name: '' }), /Group name is required/);
+      assert.throws(() => manager.createGroup({ name: '   ' }), /Group name is required/);
     });
 
     it('should reject duplicate group names', () => {
       manager.createGroup({ name: 'gpt-4o' });
 
-      expect(() => manager.createGroup({ name: 'gpt-4o' })).toThrow('already exists');
+      assert.throws(() => manager.createGroup({ name: 'gpt-4o' }), /already exists/);
       // Note: SQLite UNIQUE is case-sensitive, so 'GPT-4O' is different from 'gpt-4o'
       // If you want case-insensitive uniqueness, normalize before saving
-      expect(() => manager.createGroup({ name: 'GPT-4O' })).not.toThrow();
+      assert.doesNotThrow(() => manager.createGroup({ name: 'GPT-4O' }));
     });
 
     it('should reject invalid mode', () => {
-      expect(() =>
-        manager.createGroup({ name: 'test', mode: 'invalid' as any })
-      ).toThrow('Invalid group mode');
+      assert.throws(() =>
+        manager.createGroup({ name: 'test', mode: 'invalid' as any }),
+        /Invalid group mode/
+      );
     });
 
     it('should get a group by id', () => {
       const created = manager.createGroup({ name: 'gpt-4o' });
       const fetched = manager.getGroup(created.id);
 
-      expect(fetched).not.toBeNull();
-      expect(fetched?.id).toBe(created.id);
-      expect(fetched?.name).toBe('gpt-4o');
+      assert.notStrictEqual(fetched, null);
+      assert.strictEqual(fetched?.id, created.id);
+      assert.strictEqual(fetched?.name, 'gpt-4o');
     });
 
     it('should return null for non-existent group id', () => {
       const fetched = manager.getGroup(999);
-      expect(fetched).toBeNull();
+      assert.strictEqual(fetched, null);
     });
 
     it('should get a group by name', () => {
       manager.createGroup({ name: 'gpt-4o' });
       const fetched = manager.getGroupByName('gpt-4o');
 
-      expect(fetched).not.toBeNull();
-      expect(fetched?.name).toBe('gpt-4o');
+      assert.notStrictEqual(fetched, null);
+      assert.strictEqual(fetched?.name, 'gpt-4o');
     });
 
     it('should return null for non-existent group name', () => {
       const fetched = manager.getGroupByName('non-existent');
-      expect(fetched).toBeNull();
+      assert.strictEqual(fetched, null);
     });
 
     it('should update a group', () => {
@@ -161,8 +163,8 @@ describe('GroupManager', () => {
         mode: GROUP_MODE.WEIGHTED,
       });
 
-      expect(updated.description).toBe('Updated description');
-      expect(updated.mode).toBe('weighted');
+      assert.strictEqual(updated.description, 'Updated description');
+      assert.strictEqual(updated.mode, 'weighted');
     });
 
     it('should update group name', () => {
@@ -172,36 +174,38 @@ describe('GroupManager', () => {
         name: 'gpt-4o-latest',
       });
 
-      expect(updated.name).toBe('gpt-4o-latest');
-      expect(manager.getGroupByName('gpt-4o')).toBeNull();
-      expect(manager.getGroupByName('gpt-4o-latest')).not.toBeNull();
+      assert.strictEqual(updated.name, 'gpt-4o-latest');
+      assert.strictEqual(manager.getGroupByName('gpt-4o'), null);
+      assert.notStrictEqual(manager.getGroupByName('gpt-4o-latest'), null);
     });
 
     it('should reject update with duplicate name', () => {
       manager.createGroup({ name: 'gpt-4o' });
       const group2 = manager.createGroup({ name: 'claude-3' });
 
-      expect(() =>
-        manager.updateGroup(group2.id, { name: 'gpt-4o' })
-      ).toThrow('already exists');
+      assert.throws(() =>
+        manager.updateGroup(group2.id, { name: 'gpt-4o' }),
+        /already exists/
+      );
     });
 
     it('should reject update for non-existent group', () => {
-      expect(() =>
-        manager.updateGroup(999, { description: 'Test' })
-      ).toThrow('not found');
+      assert.throws(() =>
+        manager.updateGroup(999, { description: 'Test' }),
+        /not found/
+      );
     });
 
     it('should delete a group', () => {
       const created = manager.createGroup({ name: 'gpt-4o' });
       manager.deleteGroup(created.id);
 
-      expect(manager.getGroup(created.id)).toBeNull();
-      expect(manager.getGroupByName('gpt-4o')).toBeNull();
+      assert.strictEqual(manager.getGroup(created.id), null);
+      assert.strictEqual(manager.getGroupByName('gpt-4o'), null);
     });
 
     it('should reject delete for non-existent group', () => {
-      expect(() => manager.deleteGroup(999)).toThrow('not found');
+      assert.throws(() => manager.deleteGroup(999), /not found/);
     });
 
     it('should list all groups', () => {
@@ -211,8 +215,8 @@ describe('GroupManager', () => {
 
       const groups = manager.listGroups();
 
-      expect(groups).toHaveLength(3);
-      expect(groups.map(g => g.name).sort()).toEqual(['claude-3', 'gpt-4o', 'llama-3']);
+      assert.strictEqual(groups.length, 3);
+      assert.deepStrictEqual(groups.map(g => g.name).sort(), ['claude-3', 'gpt-4o', 'llama-3'])
     });
 
     it('should filter groups by name', () => {
@@ -222,8 +226,8 @@ describe('GroupManager', () => {
 
       const filtered = manager.listGroups({ name: 'gpt' });
 
-      expect(filtered).toHaveLength(2);
-      expect(filtered.every(g => g.name.includes('gpt'))).toBe(true);
+      assert.strictEqual(filtered.length, 2);
+assert.strictEqual(filtered.every(g => g.name.includes("gpt")), true);
     });
 
     it('should filter groups by mode', () => {
@@ -233,8 +237,8 @@ describe('GroupManager', () => {
 
       const filtered = manager.listGroups({ mode: GROUP_MODE.ROUND_ROBIN });
 
-      expect(filtered).toHaveLength(2);
-      expect(filtered.every(g => g.mode === 'round_robin')).toBe(true);
+      assert.strictEqual(filtered.length, 2);
+assert.strictEqual(filtered.every(g => g.mode === "round_robin"), true);
     });
   });
 
@@ -251,13 +255,13 @@ describe('GroupManager', () => {
         weight: 3,
       });
 
-      expect(channel1.id).toBeGreaterThan(0);
-      expect(channel1.groupId).toBe(group.id);
-      expect(channel1.channelId).toBe(creds.openaiId);
-      expect(channel1.provider).toBe('openai');
-      expect(channel1.priority).toBe(1);
-      expect(channel1.weight).toBe(3);
-      expect(channel1.isActive).toBe(true);
+      assert.ok(channel1.id > 0);
+      assert.strictEqual(channel1.groupId, group.id);
+      assert.strictEqual(channel1.channelId, creds.openaiId);
+      assert.strictEqual(channel1.provider, 'openai');
+      assert.strictEqual(channel1.priority, 1);
+      assert.strictEqual(channel1.weight, 3);
+      assert.strictEqual(channel1.isActive, true);
 
       // Add Groq channel
       const channel2 = manager.addChannel({
@@ -269,22 +273,23 @@ describe('GroupManager', () => {
         weight: 1,
       });
 
-      expect(channel2.provider).toBe('groq');
-      expect(channel2.modelOverride).toBe('llama-3.1-70b');
+      assert.strictEqual(channel2.provider, 'groq');
+      assert.strictEqual(channel2.modelOverride, 'llama-3.1-70b');
 
       // Verify channels are loaded with group
       const updated = manager.getGroup(group.id)!;
-      expect(updated.channels).toHaveLength(2);
+      assert.strictEqual(updated.channels.length, 2);
     });
 
     it('should reject adding channel to non-existent group', () => {
-      expect(() =>
+      assert.throws(() =>
         manager.addChannel({
           groupId: 999,
           channelId: creds.openaiId,
           provider: 'openai',
-        })
-      ).toThrow('not found');
+        }),
+        /not found/
+      );
     });
 
     it('should reject duplicate channel in group', () => {
@@ -296,13 +301,14 @@ describe('GroupManager', () => {
         provider: 'openai',
       });
 
-      expect(() =>
+      assert.throws(() =>
         manager.addChannel({
           groupId: group.id,
           channelId: creds.openaiId,
           provider: 'openai',
-        })
-      ).toThrow('already in group');
+        }),
+        /already in group/
+      );
     });
 
     it('should use default values for channel', () => {
@@ -314,9 +320,9 @@ describe('GroupManager', () => {
         provider: 'openai',
       });
 
-      expect(channel.priority).toBe(0);
-      expect(channel.weight).toBe(1);
-      expect(channel.isActive).toBe(true);
+      assert.strictEqual(channel.priority, 0);
+      assert.strictEqual(channel.weight, 1);
+      assert.strictEqual(channel.isActive, true);
     });
 
     it('should remove channel from group', () => {
@@ -331,11 +337,11 @@ describe('GroupManager', () => {
       manager.removeChannel(group.id, creds.openaiId);
 
       const updated = manager.getGroup(group.id)!;
-      expect(updated.channels).toHaveLength(0);
+      assert.strictEqual(updated.channels.length, 0);
     });
 
     it('should reject removing channel from non-existent group', () => {
-      expect(() => manager.removeChannel(999, creds.openaiId)).toThrow('not found');
+assert.throws(() => manager.removeChannel(999, creds.openaiId), /not found/);
     });
 
     it('should update channel configuration', () => {
@@ -356,18 +362,19 @@ describe('GroupManager', () => {
         isActive: false,
       });
 
-      expect(updated.modelOverride).toBe('gpt-4o-2024-08-06');
-      expect(updated.priority).toBe(2);
-      expect(updated.weight).toBe(5);
-      expect(updated.isActive).toBe(false);
+      assert.strictEqual(updated.modelOverride, 'gpt-4o-2024-08-06');
+      assert.strictEqual(updated.priority, 2);
+      assert.strictEqual(updated.weight, 5);
+      assert.strictEqual(updated.isActive, false);
     });
 
     it('should reject updating non-existent channel', () => {
       const group = manager.createGroup({ name: 'gpt-4o' });
 
-      expect(() =>
-        manager.updateChannel(group.id, 999, { priority: 1 })
-      ).toThrow('not found');
+      assert.throws(() =>
+        manager.updateChannel(group.id, 999, { priority: 1 }),
+        /not found/
+      );
     });
   });
 
@@ -381,13 +388,13 @@ describe('GroupManager', () => {
       });
 
       const group = manager.resolveGroup('gpt-4o');
-      expect(group).not.toBeNull();
-      expect(group?.name).toBe('gpt-4o');
+      assert.notStrictEqual(group, null);
+      assert.strictEqual(group?.name, 'gpt-4o');
     });
 
     it('should return null for non-existent group', () => {
       const group = manager.resolveGroup('non-existent');
-      expect(group).toBeNull();
+      assert.strictEqual(group, null);
     });
 
     it('should select channel using round robin', () => {
@@ -413,14 +420,14 @@ describe('GroupManager', () => {
 
       // First call
       const decision1 = manager.selectChannel(updatedGroup);
-      expect(decision1).not.toBeNull();
+      assert.notStrictEqual(decision1, null);
 
       // Second call should rotate
       const decision2 = manager.selectChannel(updatedGroup);
-      expect(decision2).not.toBeNull();
+      assert.notStrictEqual(decision2, null);
 
       // Should alternate between providers
-      expect(decision1?.selectedProvider).not.toBe(decision2?.selectedProvider);
+      assert.notStrictEqual(decision1?.selectedProvider, decision2?.selectedProvider);
     });
 
     it('should select by priority in failover mode', () => {
@@ -447,7 +454,7 @@ describe('GroupManager', () => {
       const updatedGroup = manager.getGroup(group.id)!;
 
       const decision = manager.selectChannel(updatedGroup);
-      expect(decision?.selectedProvider).toBe('openai');
+      assert.strictEqual(decision?.selectedProvider, 'openai');
     });
 
     it('should return null when no active channels', () => {
@@ -464,7 +471,7 @@ describe('GroupManager', () => {
       const updatedGroup = manager.getGroup(group.id)!;
 
       const decision = manager.selectChannel(updatedGroup);
-      expect(decision).toBeNull();
+      assert.strictEqual(decision, null);
     });
 
     it('should skip inactive channels', () => {
@@ -488,7 +495,7 @@ describe('GroupManager', () => {
       const updatedGroup = manager.getGroup(group.id)!;
 
       const decision = manager.selectChannel(updatedGroup);
-      expect(decision?.selectedProvider).toBe('groq');
+      assert.strictEqual(decision?.selectedProvider, 'groq');
     });
 
     it('should use sticky session if available', () => {
@@ -516,8 +523,8 @@ describe('GroupManager', () => {
         sessionId: sessionId,
       });
 
-      expect(decision?.routingMode).toBe('sticky');
-      expect(decision?.selectedProvider).toBe('openai');
+      assert.strictEqual(decision?.routingMode, 'sticky');
+      assert.strictEqual(decision?.selectedProvider, 'openai');
     });
 
     it('should use model override if configured', () => {
@@ -534,7 +541,7 @@ describe('GroupManager', () => {
       const updatedGroup = manager.getGroup(group.id)!;
 
       const decision = manager.selectChannel(updatedGroup);
-      expect(decision?.actualModel).toBe('llama-3.1-70b-versatile');
+      assert.strictEqual(decision?.actualModel, 'llama-3.1-70b-versatile');
     });
 
     it('should use group name when no model override', () => {
@@ -550,7 +557,7 @@ describe('GroupManager', () => {
       const updatedGroup = manager.getGroup(group.id)!;
 
       const decision = manager.selectChannel(updatedGroup);
-      expect(decision?.actualModel).toBe('gpt-4o');
+      assert.strictEqual(decision?.actualModel, 'gpt-4o');
     });
 
     it('should include routing metadata in decision', () => {
@@ -570,11 +577,11 @@ describe('GroupManager', () => {
 
       const decision = manager.selectChannel(updatedGroup);
 
-      expect(decision?.groupName).toBe('gpt-4o');
-      expect(decision?.selectedProvider).toBe('openai');
-      expect(decision?.selectedChannelId).toBe(creds.openaiId);
-      expect(decision?.routingMode).toBe('random');
-      expect(decision?.attempt).toBe(1);
+      assert.strictEqual(decision?.groupName, 'gpt-4o');
+      assert.strictEqual(decision?.selectedProvider, 'openai');
+      assert.strictEqual(decision?.selectedChannelId, creds.openaiId);
+      assert.strictEqual(decision?.routingMode, 'random');
+      assert.strictEqual(decision?.attempt, 1);
     });
   });
 
@@ -587,32 +594,32 @@ describe('GroupManager', () => {
 
       // Check cache stats
       const stats = manager.getCacheStats();
-      expect(stats.size).toBeGreaterThan(0);
-      expect(stats.keys).toContain('gpt-4o');
+      assert.ok(stats.size > 0);
+      assert.ok(stats.keys.includes('gpt-4o'));
     });
 
     it('should invalidate cache on update', () => {
       const group = manager.createGroup({ name: 'gpt-4o' });
       manager.resolveGroup('gpt-4o'); // Populate cache
 
-      expect(manager.getCacheStats().size).toBe(1);
+assert.strictEqual(manager.getCacheStats().size, 1);
 
       manager.updateGroup(group.id, { description: 'Updated' });
 
       // Cache should be invalidated
-      expect(manager.getCacheStats().size).toBe(0);
+assert.strictEqual(manager.getCacheStats().size, 0);
     });
 
     it('should invalidate cache on delete', () => {
       const group = manager.createGroup({ name: 'gpt-4o' });
       manager.resolveGroup('gpt-4o'); // Populate cache
 
-      expect(manager.getCacheStats().size).toBe(1);
+assert.strictEqual(manager.getCacheStats().size, 1);
 
       manager.deleteGroup(group.id);
 
       // Cache should be invalidated
-      expect(manager.getCacheStats().size).toBe(0);
+assert.strictEqual(manager.getCacheStats().size, 0);
     });
 
     it('should manually refresh cache', () => {
@@ -622,11 +629,11 @@ describe('GroupManager', () => {
 
       // Clear cache
       manager.invalidateCache();
-      expect(manager.getCacheStats().size).toBe(0);
+assert.strictEqual(manager.getCacheStats().size, 0);
 
       // Refresh
       manager.refreshCache();
-      expect(manager.getCacheStats().size).toBe(2);
+assert.strictEqual(manager.getCacheStats().size, 2);
     });
 
     it('should manually invalidate specific group cache', () => {
@@ -634,13 +641,13 @@ describe('GroupManager', () => {
       manager.createGroup({ name: 'claude-3' });
 
       manager.refreshCache();
-      expect(manager.getCacheStats().size).toBe(2);
+assert.strictEqual(manager.getCacheStats().size, 2);
 
       manager.invalidateCache('gpt-4o');
       const stats = manager.getCacheStats();
-      expect(stats.size).toBe(1);
-      expect(stats.keys).not.toContain('gpt-4o');
-      expect(stats.keys).toContain('claude-3');
+      assert.strictEqual(stats.size, 1);
+assert.ok(!stats.keys.includes("gpt-4o"));
+      assert.ok(stats.keys.includes('claude-3'));
     });
   });
 
@@ -656,8 +663,8 @@ describe('GroupManager', () => {
 
       const stats = manager.getGroupStats(group.id);
 
-      expect(stats.totalRequests).toBe(0);
-      expect(stats.channelDistribution).toHaveProperty('openai');
+      assert.strictEqual(stats.totalRequests, 0);
+assert.ok("openai" in stats.channelDistribution);
     });
 
     it('should update stats on selection', () => {
@@ -678,11 +685,11 @@ describe('GroupManager', () => {
       manager.selectChannel(updatedGroup);
 
       const stats = manager.getGroupStats(group.id);
-      expect(stats.totalRequests).toBe(3);
+      assert.strictEqual(stats.totalRequests, 3);
     });
 
     it('should reject stats for non-existent group', () => {
-      expect(() => manager.getGroupStats(999)).toThrow('not found');
+assert.throws(() => manager.getGroupStats(999), /not found/);
     });
 
     it('should reset stats', () => {
@@ -698,10 +705,10 @@ describe('GroupManager', () => {
       const updatedGroup = manager.getGroup(group.id)!;
 
       manager.selectChannel(updatedGroup);
-      expect(manager.getGroupStats(group.id).totalRequests).toBe(1);
+assert.strictEqual(manager.getGroupStats(group.id).totalRequests, 1);
 
       manager.resetStats(group.id);
-      expect(manager.getGroupStats(group.id).totalRequests).toBe(0);
+assert.strictEqual(manager.getGroupStats(group.id).totalRequests, 0);
     });
 
     it('should reset all stats when no group specified', () => {
@@ -720,8 +727,8 @@ describe('GroupManager', () => {
 
       manager.resetStats();
 
-      expect(manager.getGroupStats(group1.id).totalRequests).toBe(0);
-      expect(manager.getGroupStats(group2.id).totalRequests).toBe(0);
+assert.strictEqual(manager.getGroupStats(group1.id).totalRequests, 0);
+assert.strictEqual(manager.getGroupStats(group2.id).totalRequests, 0);
     });
   });
 
@@ -729,46 +736,46 @@ describe('GroupManager', () => {
     it('should validate group mode', async () => {
       const { isGroupMode } = await import('../../src/groups/types.js');
 
-      expect(isGroupMode('round_robin')).toBe(true);
-      expect(isGroupMode('random')).toBe(true);
-      expect(isGroupMode('failover')).toBe(true);
-      expect(isGroupMode('weighted')).toBe(true);
-      expect(isGroupMode('invalid')).toBe(false);
-      expect(isGroupMode(null)).toBe(false);
-      expect(isGroupMode(undefined)).toBe(false);
+assert.strictEqual(isGroupMode("round_robin"), true);
+assert.strictEqual(isGroupMode("random"), true);
+assert.strictEqual(isGroupMode("failover"), true);
+assert.strictEqual(isGroupMode("weighted"), true);
+assert.strictEqual(isGroupMode("invalid"), false);
+assert.strictEqual(isGroupMode(null), false);
+assert.strictEqual(isGroupMode(undefined), false);
     });
 
     it('should validate create group input', async () => {
       const { isCreateGroupInput } = await import('../../src/groups/types.js');
 
-      expect(isCreateGroupInput({ name: 'gpt-4o' })).toBe(true);
-      expect(isCreateGroupInput({ name: 'gpt-4o', mode: 'round_robin' })).toBe(true);
-      expect(isCreateGroupInput({ name: 'gpt-4o', description: 'Test' })).toBe(true);
-      expect(isCreateGroupInput({})).toBe(false);
-      expect(isCreateGroupInput({ name: 123 })).toBe(false);
-      expect(isCreateGroupInput(null)).toBe(false);
+assert.strictEqual(isCreateGroupInput({ name: "gpt-4o" }), true);
+assert.strictEqual(isCreateGroupInput({ name: "gpt-4o", mode: "round_robin" }), true);
+assert.strictEqual(isCreateGroupInput({ name: "gpt-4o", description: "Test" }), true);
+assert.strictEqual(isCreateGroupInput({}), false);
+assert.strictEqual(isCreateGroupInput({ name: 123 }), false);
+assert.strictEqual(isCreateGroupInput(null), false);
     });
 
     it('should validate add channel input', async () => {
       const { isAddChannelToGroupInput } = await import('../../src/groups/types.js');
 
-      expect(isAddChannelToGroupInput({
+      assert.strictEqual(isAddChannelToGroupInput({
         groupId: 1,
         channelId: 2,
         provider: 'openai',
-      })).toBe(true);
+      }), true);
 
-      expect(isAddChannelToGroupInput({
+      assert.strictEqual(isAddChannelToGroupInput({
         groupId: 1,
         channelId: 2,
         provider: 'openai',
         modelOverride: 'gpt-4',
         priority: 1,
         weight: 2,
-      })).toBe(true);
+      }), true);
 
-      expect(isAddChannelToGroupInput({})).toBe(false);
-      expect(isAddChannelToGroupInput({ groupId: '1', channelId: 2, provider: 'openai' })).toBe(false);
+assert.strictEqual(isAddChannelToGroupInput({}), false);
+assert.strictEqual(isAddChannelToGroupInput({ groupId: "1", channelId: 2, provider: "openai" }), false);
     });
   });
 });
