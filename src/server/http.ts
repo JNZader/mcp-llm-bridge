@@ -26,6 +26,8 @@ import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
+import type { RequestLogger } from '../logging/request-logger.js';
+import { LogQuerySchema } from '../logging/schemas.js';
 import { CreateGroupSchema, UpdateGroupSchema } from '../core/groups.js';
 import { dashboardHtml } from './dashboard.js';
 import { registerAdminRoutes } from './admin.js';
@@ -525,6 +527,7 @@ export function startHttpServer(
   config: GatewayConfig,
   groupStore?: GroupStore,
   costTracker?: CostTracker,
+  requestLogger?: RequestLogger,
 ): ServerType {
   // Reset start time on server creation
   serverStartTime = Date.now();
@@ -1162,6 +1165,98 @@ export function startHttpServer(
       return c.json({ error: message }, 500);
     }
   });
+
+  // ── Request Logs ─────────────────────────────────────
+
+  if (requestLogger) {
+    app.get('/v1/logs', async (c) => {
+      try {
+        // Parse query parameters
+        const query = c.req.query();
+
+        // Build raw query object
+        const rawQuery: Record<string, unknown> = {};
+
+        if (query.from !== undefined) {
+          const from = parseInt(query.from, 10);
+          if (isNaN(from)) {
+            return c.json({
+              error: 'INVALID_PARAMS',
+              message: 'Invalid from timestamp',
+            }, 400);
+          }
+          rawQuery.from = from;
+        }
+
+        if (query.to !== undefined) {
+          const to = parseInt(query.to, 10);
+          if (isNaN(to)) {
+            return c.json({
+              error: 'INVALID_PARAMS',
+              message: 'Invalid to timestamp',
+            }, 400);
+          }
+          rawQuery.to = to;
+        }
+
+        if (query.provider !== undefined) {
+          rawQuery.provider = query.provider;
+        }
+
+        if (query.model !== undefined) {
+          rawQuery.model = query.model;
+        }
+
+        if (query.limit !== undefined) {
+          const limit = parseInt(query.limit, 10);
+          if (isNaN(limit)) {
+            return c.json({
+              error: 'INVALID_PARAMS',
+              message: 'Invalid limit',
+            }, 400);
+          }
+          rawQuery.limit = limit;
+        }
+
+        if (query.offset !== undefined) {
+          const offset = parseInt(query.offset, 10);
+          if (isNaN(offset)) {
+            return c.json({
+              error: 'INVALID_PARAMS',
+              message: 'Invalid offset',
+            }, 400);
+          }
+          rawQuery.offset = offset;
+        }
+
+        // Validate using Zod schema
+        const validatedQuery = LogQuerySchema.safeParse(rawQuery);
+
+        if (!validatedQuery.success) {
+          // Format Zod errors
+          const issues = validatedQuery.error.issues;
+          const firstIssue = issues[0];
+          return c.json({
+            error: 'INVALID_PARAMS',
+            message: firstIssue?.message || 'Invalid query parameters',
+            details: issues,
+          }, 400);
+        }
+
+        // Query logs
+        const result = await requestLogger.getLogs(validatedQuery.data);
+
+        return c.json(result);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error({ error: message }, 'Failed to query logs');
+        return c.json({
+          error: 'QUERY_FAILED',
+          message: 'Failed to query logs',
+        }, 500);
+      }
+    });
+  }
 
   // ── Admin Dashboard API ────────────────────────────────
 
