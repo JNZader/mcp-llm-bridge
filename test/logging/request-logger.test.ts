@@ -12,6 +12,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import Database from 'better-sqlite3';
+import { RequestLogger } from '../../src/logging/request-logger.js';
 
 // Mock crypto.randomUUID for deterministic tests
 let mockUuidCounter = 0;
@@ -72,7 +73,6 @@ function mockDateNow(): number {
 
 describe('RequestLogger', () => {
   let db: Database.Database;
-  let RequestLogger: any;
   let logger: any;
 
   beforeEach(() => {
@@ -88,16 +88,8 @@ describe('RequestLogger', () => {
     // Create test database
     db = createTestDatabase();
     
-    // Import RequestLogger (will fail in RED phase)
-    try {
-      const module = require('../../src/logging/request-logger.js');
-      RequestLogger = module.RequestLogger;
-      logger = new RequestLogger(db);
-    } catch (e) {
-      // Expected in RED phase - RequestLogger doesn't exist yet
-      RequestLogger = null;
-      logger = null;
-    }
+    // Create logger instance
+    logger = new RequestLogger(db);
   });
 
   afterEach(() => {
@@ -203,14 +195,19 @@ describe('RequestLogger', () => {
       assert.ok(logger.captureStart, 'captureStart method should exist');
       assert.ok(logger.captureEnd, 'captureEnd method should exist');
       
-      const startTime = Date.now();
+      const startTime = mockTimeCounter; // Use current counter value
       const context = logger.captureStart({
         provider: 'openai',
         model: 'gpt-4',
+        startTime,
       });
       
-      // Simulate 150ms of processing time
-      mockTimeCounter += 150;
+      // Simulate 150ms of processing time (don't call Date.now to avoid mock advancing)
+      const endTime = mockTimeCounter + 150;
+      
+      // Temporarily override Date.now for captureEnd to return our calculated endTime
+      const originalMock = Date.now;
+      Date.now = () => endTime;
       
       // ACT
       await logger.captureEnd(context, {
@@ -218,6 +215,9 @@ describe('RequestLogger', () => {
         outputTokens: 50,
         cost: 0.0025,
       });
+      
+      // Restore mock
+      Date.now = originalMock;
 
       // ASSERT
       const row = db.prepare('SELECT * FROM request_logs WHERE provider = ?').get('openai') as Record<string, unknown>;
