@@ -1,14 +1,2534 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>dashboard</title>
-    <script type="module" crossorigin src="/assets/index-CUthDRMA.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-B4BCwxko.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Gateway Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── CSS Variables (Dark Theme) ───────────────── */
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --bg-hover: #1c2128;
+      --text-primary: #e6edf3;
+      --text-secondary: #8b949e;
+      --text-muted: #6e7681;
+      --accent: #a855f7;
+      --accent-dim: #7c3aed;
+      --accent-glow: rgba(168, 85, 247, 0.3);
+      --success: #3fb950;
+      --success-dim: rgba(63, 185, 80, 0.15);
+      --danger: #f85149;
+      --danger-dim: rgba(248, 81, 73, 0.15);
+      --warning: #d29922;
+      --warning-dim: rgba(210, 153, 34, 0.15);
+      --info: #58a6ff;
+      --border: #30363d;
+      --border-hl: #484f58;
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --transition: all 0.2s ease;
+    }
+
+    /* ── Reset & Base ──────────────────────────────── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Layout Grid ──────────────────────────────── */
+    .app {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      grid-template-rows: 64px 1fr;
+      grid-template-areas:
+        "sidebar header"
+        "sidebar main";
+      min-height: 100vh;
+    }
+
+    @media (max-width: 768px) {
+      .app {
+        grid-template-columns: 1fr;
+        grid-template-rows: 64px auto 1fr;
+        grid-template-areas:
+          "header"
+          "sidebar"
+          "main";
+      }
+    }
+
+    /* ── Header ───────────────────────────────────── */
+    .header {
+      grid-area: header;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .header-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header-title .icon {
+      font-size: 1.4rem;
+    }
+
+    .version-badge {
+      font-size: 0.75rem;
+      color: var(--accent);
+      background: rgba(168, 85, 247, 0.12);
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-family: var(--font-mono);
+      font-weight: 500;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .health-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.875rem;
+      padding: 6px 12px;
+      border-radius: var(--radius-md);
+      font-weight: 500;
+    }
+
+    .health-status.ok {
+      color: var(--success);
+      background: var(--success-dim);
+    }
+
+    .health-status.error {
+      color: var(--danger);
+      background: var(--danger-dim);
+    }
+
+    .health-status.warning {
+      color: var(--warning);
+      background: var(--warning-dim);
+    }
+
+    .health-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .health-status.ok .health-dot {
+      background: var(--success);
+    }
+
+    .health-status.error .health-dot {
+      background: var(--danger);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* ── Sidebar ──────────────────────────────────── */
+    .sidebar {
+      grid-area: sidebar;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 0;
+      overflow-y: auto;
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        flex-direction: row;
+        overflow-x: auto;
+        padding: 8px;
+        gap: 4px;
+      }
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 20px;
+      margin: 2px 12px;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: var(--transition);
+      font-size: 0.9375rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      border: none;
+      background: transparent;
+      width: calc(100% - 24px);
+      text-align: left;
+    }
+
+    @media (max-width: 768px) {
+      .nav-item {
+        width: auto;
+        white-space: nowrap;
+        margin: 0;
+        padding: 10px 16px;
+      }
+    }
+
+    .nav-item:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .nav-item.active {
+      background: rgba(168, 85, 247, 0.12);
+      color: var(--accent);
+    }
+
+    .nav-item .icon {
+      font-size: 1.25rem;
+      width: 24px;
+      text-align: center;
+    }
+
+    .sidebar-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 16px 20px;
+    }
+
+    @media (max-width: 768px) {
+      .sidebar-divider {
+        display: none;
+      }
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 16px 20px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 768px) {
+      .sidebar-footer {
+        display: none;
+      }
+    }
+
+    /* ── Main Content ─────────────────────────────── */
+    .main {
+      grid-area: main;
+      padding: 24px;
+      overflow-y: auto;
+      background: var(--bg-primary);
+    }
+
+    @media (max-width: 768px) {
+      .main {
+        padding: 16px;
+      }
+    }
+
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Cards ────────────────────────────────────── */
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-subtitle {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* ── Stats Grid ──────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      transition: var(--transition);
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-hl);
+      transform: translateY(-2px);
+    }
+
+    .stat-label {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+    }
+
+    .stat-delta {
+      font-size: 0.75rem;
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .stat-delta.positive {
+      color: var(--success);
+    }
+
+    .stat-delta.negative {
+      color: var(--danger);
+    }
+
+    .stat-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      margin-bottom: 12px;
+    }
+
+    .stat-icon.primary {
+      background: rgba(168, 85, 247, 0.12);
+      color: var(--accent);
+    }
+
+    .stat-icon.success {
+      background: var(--success-dim);
+      color: var(--success);
+    }
+
+    .stat-icon.warning {
+      background: var(--warning-dim);
+      color: var(--warning);
+    }
+
+    .stat-icon.info {
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--info);
+    }
+
+    /* ── Tables ──────────────────────────────────── */
+    .table-container {
+      overflow-x: auto;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: var(--bg-hover);
+    }
+
+    td {
+      color: var(--text-primary);
+    }
+
+    td code {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      background: var(--bg-tertiary);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text-secondary);
+    }
+
+    .empty-state-icon {
+      font-size: 3rem;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    /* ── Forms & Inputs ──────────────────────────── */
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+      min-width: 200px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 0.9375rem;
+      transition: var(--transition);
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    input::placeholder, textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b949e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 36px;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    /* ── Buttons ──────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 18px;
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-hl);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-dim);
+      border-color: var(--accent-dim);
+    }
+
+    .btn-success {
+      background: var(--success);
+      border-color: var(--success);
+      color: #0d1117;
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: white;
+    }
+
+    .btn-ghost {
+      background: transparent;
+    }
+
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 0.8125rem;
+    }
+
+    .btn-icon {
+      padding: 8px;
+      font-size: 1.125rem;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* ── Toolbar ──────────────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      padding: 16px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
+
+    .toolbar-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .toolbar-group label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .toolbar-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* ── Badges ───────────────────────────────────── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .badge-success {
+      background: var(--success-dim);
+      color: var(--success);
+    }
+
+    .badge-danger {
+      background: var(--danger-dim);
+      color: var(--danger);
+    }
+
+    .badge-warning {
+      background: var(--warning-dim);
+      color: var(--warning);
+    }
+
+    .badge-info {
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--info);
+    }
+
+    .badge-muted {
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+    }
+
+    /* ── Charts ───────────────────────────────────── */
+    .chart-container {
+      position: relative;
+      height: 300px;
+      margin: 20px 0;
+    }
+
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .chart-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .chart-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+    }
+
+    .chart-title {
+      font-size: 0.9375rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-primary);
+    }
+
+    /* ── Pagination ──────────────────────────────── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    .pagination-info {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+    }
+
+    .pagination-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* ── Modal ───────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      visibility: hidden;
+      transition: var(--transition);
+    }
+
+    .modal-overlay.open {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .modal {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
+      margin: 20px;
+      transform: scale(0.95);
+      transition: var(--transition);
+    }
+
+    .modal-overlay.open .modal {
+      transform: scale(1);
+    }
+
+    .modal-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 4px;
+      line-height: 1;
+    }
+
+    .modal-close:hover {
+      color: var(--text-primary);
+    }
+
+    .modal-body {
+      padding: 20px;
+    }
+
+    .modal-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    /* ── Login Screen ─────────────────────────────── */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg-primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+
+    .login-box {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 40px;
+      width: 100%;
+      max-width: 420px;
+      text-align: center;
+    }
+
+    .login-logo {
+      font-size: 3rem;
+      margin-bottom: 16px;
+    }
+
+    .login-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .login-subtitle {
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    .login-error {
+      background: var(--danger-dim);
+      color: var(--danger);
+      padding: 12px;
+      border-radius: var(--radius-md);
+      margin-bottom: 16px;
+      font-size: 0.875rem;
+      display: none;
+    }
+
+    .login-error.visible {
+      display: block;
+    }
+
+    /* ── Toast Notifications ─────────────────────── */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 1001;
+    }
+
+    .toast {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 14px 20px;
+      min-width: 280px;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(100%);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    .toast.success {
+      border-color: var(--success);
+    }
+
+    .toast.error {
+      border-color: var(--danger);
+    }
+
+    .toast.warning {
+      border-color: var(--warning);
+    }
+
+    /* ── Loading States ───────────────────────────── */
+    .skeleton {
+      background: linear-gradient(
+        90deg,
+        var(--bg-tertiary) 25%,
+        var(--bg-hover) 50%,
+        var(--bg-tertiary) 75%
+      );
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: var(--radius-sm);
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(13, 17, 23, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-lg);
+      z-index: 10;
+    }
+
+    /* ── Groups UI ──────────────────────────────── */
+    .group-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .group-item {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+    }
+
+    .group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .group-name {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .group-mode {
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+    }
+
+    .group-channels {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .channel-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 0.8125rem;
+    }
+
+    /* ── Utilities ──────────────────────────────── */
+    .text-muted { color: var(--text-muted); }
+    .text-secondary { color: var(--text-secondary); }
+    .text-success { color: var(--success); }
+    .text-danger { color: var(--danger); }
+    .text-warning { color: var(--warning); }
+    .text-accent { color: var(--accent); }
+
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+
+    .mt-1 { margin-top: 4px; }
+    .mt-2 { margin-top: 8px; }
+    .mt-3 { margin-top: 12px; }
+    .mt-4 { margin-top: 16px; }
+
+    .mb-1 { margin-bottom: 4px; }
+    .mb-2 { margin-bottom: 8px; }
+    .mb-3 { margin-bottom: 12px; }
+    .mb-4 { margin-bottom: 16px; }
+
+    .hidden { display: none !important; }
+
+    /* ── Responsive Adjustments ─────────────────── */
+    @media (max-width: 640px) {
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .toolbar-actions {
+        margin-left: 0;
+        justify-content: flex-end;
+      }
+
+      th, td {
+        padding: 10px 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Login Overlay -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-box">
+      <div class="login-logo">⚡</div>
+      <h1 class="login-title">LLM Gateway</h1>
+      <p class="login-subtitle">Enter your credentials to access the dashboard</p>
+      <div id="loginError" class="login-error"></div>
+      <div class="form-group">
+        <label for="gatewayUrl">Gateway URL</label>
+        <input type="url" id="gatewayUrl" placeholder="http://localhost:3000">
+      </div>
+      <div class="form-group">
+        <label for="authToken">Auth Token</label>
+        <input type="password" id="authToken" placeholder="Enter auth token">
+      </div>
+      <button class="btn btn-primary" style="width: 100%" onclick="login()">
+        <span>Connect</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app" class="app" style="display: none;">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1 class="header-title">
+          <span class="icon">⚡</span>
+          LLM Gateway
+          <span class="version-badge" id="versionBadge">v0.0.0</span>
+        </h1>
+      </div>
+      <div class="header-right">
+        <div id="healthStatus" class="health-status warning">
+          <span class="health-dot"></span>
+          <span>Checking...</span>
+        </div>
+        <button class="btn btn-ghost btn-icon" onclick="refreshAll()" title="Refresh">
+          🔄
+        </button>
+        <button class="btn btn-ghost btn-icon" onclick="logout()" title="Logout">
+          🔒
+        </button>
+      </div>
+    </header>
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+      <button class="nav-item active" data-tab="overview" onclick="switchTab('overview')">
+        <span class="icon">📊</span>
+        <span>Overview</span>
+      </button>
+      <button class="nav-item" data-tab="logs" onclick="switchTab('logs')">
+        <span class="icon">📋</span>
+        <span>Logs</span>
+      </button>
+      <button class="nav-item" data-tab="analytics" onclick="switchTab('analytics')">
+        <span class="icon">📈</span>
+        <span>Analytics</span>
+      </button>
+      <button class="nav-item" data-tab="latency" onclick="switchTab('latency')">
+        <span class="icon">⏱️</span>
+        <span>Latency</span>
+      </button>
+      <button class="nav-item" data-tab="groups" onclick="switchTab('groups')">
+        <span class="icon">🔀</span>
+        <span>Groups</span>
+      </button>
+      <button class="nav-item" data-tab="settings" onclick="switchTab('settings')">
+        <span class="icon">⚙️</span>
+        <span>Settings</span>
+      </button>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-footer">
+        <div>Auto-refresh: <span id="autoRefreshStatus">OFF</span></div>
+        <div class="mt-1" id="lastRefresh">Never</div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- Overview Tab -->
+      <div id="tab-overview" class="tab-content active">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-icon primary">🌐</div>
+            <div class="stat-label">Gateway Status</div>
+            <div class="stat-value" id="overviewGatewayStatus">-</div>
+            <div class="stat-delta" id="overviewGatewayUptime">Uptime: -</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon success">🔌</div>
+            <div class="stat-label">Active Providers</div>
+            <div class="stat-value" id="overviewProviders">-</div>
+            <div class="stat-delta positive" id="overviewProviderRatio">- of -</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon info">📨</div>
+            <div class="stat-label">Total Requests</div>
+            <div class="stat-value" id="overviewRequests">-</div>
+            <div class="stat-delta" id="overviewRequestsRate">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon warning">💰</div>
+            <div class="stat-label">Total Cost</div>
+            <div class="stat-value" id="overviewCost">-</div>
+            <div class="stat-delta" id="overviewCostAvg">Avg per req: -</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">📋 Recent Activity</div>
+              <div class="card-subtitle">Last 10 requests</div>
+            </div>
+            <button class="btn btn-sm" onclick="loadOverview()">Refresh</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Provider</th>
+                  <th>Model</th>
+                  <th>Tokens</th>
+                  <th>Cost</th>
+                  <th>Latency</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="recentActivityTable">
+                <tr>
+                  <td colspan="7" class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    No recent activity
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">⚡ Quick Actions</div>
+          </div>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button class="btn btn-primary" onclick="testConnection()">
+              Test Connection
+            </button>
+            <button class="btn" onclick="refreshAll()">
+              Refresh All Data
+            </button>
+            <button class="btn" onclick="clearCache()">
+              Clear Cache
+            </button>
+            <button class="btn" onclick="exportData()">
+              Export Data
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs Tab -->
+      <div id="tab-logs" class="tab-content">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <label>From</label>
+            <input type="datetime-local" id="logsFrom">
+          </div>
+          <div class="toolbar-group">
+            <label>To</label>
+            <input type="datetime-local" id="logsTo">
+          </div>
+          <div class="toolbar-group">
+            <label>Provider</label>
+            <select id="logsProvider">
+              <option value="">All Providers</option>
+            </select>
+          </div>
+          <div class="toolbar-group">
+            <label>Model</label>
+            <input type="text" id="logsModel" placeholder="Filter by model">
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" onclick="loadLogs()">
+              <span>🔍</span> Search
+            </button>
+            <button class="btn" onclick="resetLogsFilters()">
+              Reset
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Provider</th>
+                  <th>Model</th>
+                  <th>Input</th>
+                  <th>Output</th>
+                  <th>Cost</th>
+                  <th>Latency</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="logsTable">
+                <tr>
+                  <td colspan="8" class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    No logs found. Click Search to load.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <div class="pagination-info">
+              Showing <span id="logsStart">0</span>-<span id="logsEnd">0</span> of <span id="logsTotal">0</span> records
+            </div>
+            <div class="pagination-actions">
+              <button class="btn btn-sm" onclick="prevLogsPage()" id="logsPrevBtn" disabled>Previous</button>
+              <button class="btn btn-sm" onclick="nextLogsPage()" id="logsNextBtn" disabled>Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Analytics Tab -->
+      <div id="tab-analytics" class="tab-content">
+        <div class="toolbar">
+          <div class="toolbar-group">
+            <label>Dimension</label>
+            <select id="analyticsDimension">
+              <option value="hourly">Hourly</option>
+              <option value="daily">Daily</option>
+              <option value="provider">By Provider</option>
+              <option value="model">By Model</option>
+            </select>
+          </div>
+          <div class="toolbar-group">
+            <label>From</label>
+            <input type="date" id="analyticsFrom">
+          </div>
+          <div class="toolbar-group">
+            <label>To</label>
+            <input type="date" id="analyticsTo">
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" onclick="loadAnalytics()">
+              <span>📊</span> Generate
+            </button>
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card">
+            <div class="chart-title">Requests Over Time</div>
+            <div class="chart-container">
+              <canvas id="requestsChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Cost by Provider</div>
+            <div class="chart-container">
+              <canvas id="costChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Latency Percentiles</div>
+            <div class="chart-container">
+              <canvas id="latencyPercentileChart"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Token Usage</div>
+            <div class="chart-container">
+              <canvas id="tokensChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-grid" id="analyticsSummary">
+          <div class="stat-card">
+            <div class="stat-label">Total Requests</div>
+            <div class="stat-value" id="analyticsTotalRequests">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Cost</div>
+            <div class="stat-value" id="analyticsTotalCost">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Avg Latency</div>
+            <div class="stat-value" id="analyticsAvgLatency">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Tokens</div>
+            <div class="stat-value" id="analyticsTotalTokens">-</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Latency Tab -->
+      <div id="tab-latency" class="tab-content">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">⏱️ Provider Latency Measurements</div>
+              <div class="card-subtitle">Real-time latency to each provider (measured every 5 minutes)</div>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="loadLatency()">
+              <span>🔄</span> Refresh
+            </button>
+          </div>
+          <div class="chart-container" style="height: 250px;">
+            <canvas id="latencyChart"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">📋 Latency Details</div>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Latency</th>
+                  <th>Status</th>
+                  <th>Measured At</th>
+                  <th>Routing Priority</th>
+                </tr>
+              </thead>
+              <tbody id="latencyTable">
+                <tr>
+                  <td colspan="5" class="empty-state">
+                    <div class="empty-state-icon">⏱️</div>
+                    No latency data available
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">ℹ️ About Routing</div>
+          <p class="text-secondary">
+            Latency measurements are used to route requests to the fastest available provider.
+            The gateway measures round-trip time (RTT) to each provider endpoint every 5 minutes.
+            Providers with stale measurements (older than 2 hours) are marked as such and may be
+            deprioritized in routing decisions.
+          </p>
+        </div>
+      </div>
+
+      <!-- Groups Tab -->
+      <div id="tab-groups" class="tab-content">
+        <div class="toolbar">
+          <div class="toolbar-actions" style="margin-left: 0;">
+            <button class="btn btn-primary" onclick="openCreateGroupModal()">
+              <span>➕</span> Create Group
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔀 Load Balancer Groups</div>
+          </div>
+          <div id="groupsList" class="group-list">
+            <div class="empty-state">
+              <div class="empty-state-icon">🔀</div>
+              No groups configured
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Tab -->
+      <div id="tab-settings" class="tab-content">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔌 Connection Settings</div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex: 2;">
+              <label for="settingsGatewayUrl">Gateway URL</label>
+              <input type="url" id="settingsGatewayUrl" placeholder="http://localhost:3000">
+            </div>
+            <div class="form-group" style="flex: 2;">
+              <label for="settingsAuthToken">Auth Token</label>
+              <input type="password" id="settingsAuthToken" placeholder="Enter auth token">
+            </div>
+          </div>
+          <div class="form-group">
+            <button class="btn btn-primary" onclick="testSettingsConnection()">
+              Test Connection
+            </button>
+            <button class="btn" onclick="saveConnectionSettings()">
+              Save Settings
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">⚙️ Dashboard Preferences</div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="autoRefreshToggle">Auto-refresh</label>
+              <select id="autoRefreshToggle">
+                <option value="0">Disabled</option>
+                <option value="30">30 seconds</option>
+                <option value="60" selected>1 minute</option>
+                <option value="300">5 minutes</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="defaultTab">Default Tab</label>
+              <select id="defaultTab">
+                <option value="overview">Overview</option>
+                <option value="logs">Logs</option>
+                <option value="analytics">Analytics</option>
+                <option value="latency">Latency</option>
+                <option value="groups">Groups</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <button class="btn btn-primary" onclick="savePreferences()">
+              Save Preferences
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🧹 Maintenance</div>
+          </div>
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button class="btn" onclick="clearCache()">
+              Clear Cache
+            </button>
+            <button class="btn" onclick="resetSettings()">
+              Reset to Defaults
+            </button>
+            <button class="btn btn-danger" onclick="logout()">
+              Logout
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">ℹ️ About</div>
+          </div>
+          <p><strong>LLM Gateway Dashboard</strong></p>
+          <p class="text-secondary">Version: <span id="aboutVersion">1.0.0</span></p>
+          <p class="text-secondary">Gateway Version: <span id="aboutGatewayVersion">-</span></p>
+          <p class="mt-2 text-secondary">
+            A modern dashboard for monitoring and managing your LLM Gateway.
+            <br>
+            Built with vanilla JavaScript and Chart.js.
+          </p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Create Group Modal -->
+  <div id="createGroupModal" class="modal-overlay" onclick="closeModalOnOverlay(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Create New Group</div>
+        <button class="modal-close" onclick="closeCreateGroupModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="groupName">Group Name</label>
+          <input type="text" id="groupName" placeholder="Enter group name">
+        </div>
+        <div class="form-group">
+          <label for="groupMode">Load Balancing Mode</label>
+          <select id="groupMode">
+            <option value="round_robin">Round Robin</option>
+            <option value="random">Random</option>
+            <option value="weighted">Weighted</option>
+            <option value="latency">Latency-based</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Channels</label>
+          <div id="groupChannelsList" style="max-height: 200px; overflow-y: auto;">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeCreateGroupModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createGroup()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- JavaScript -->
+  <script>
+    // ── State Management ─────────────────────────
+    const state = {
+      gatewayUrl: localStorage.getItem('gatewayUrl') || '',
+      authToken: localStorage.getItem('authToken') || '',
+      autoRefresh: parseInt(localStorage.getItem('autoRefresh') || '60'),
+      defaultTab: localStorage.getItem('defaultTab') || 'overview',
+      currentTab: 'overview',
+      charts: {},
+      logsPage: 0,
+      logsLimit: 50,
+      logsTotal: 0,
+      healthData: null,
+      providers: [],
+      models: [],
+      latencyData: [],
+      groups: [],
+      autoRefreshInterval: null,
+      lastRefresh: null,
+    };
+
+    // ── API Client ─────────────────────────────────
+    async function api(endpoint, options = {}) {
+      const url = `${state.gatewayUrl}${endpoint}`;
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(state.authToken && { 'Authorization': `Bearer ${state.authToken}` }),
+        ...options.headers,
+      };
+
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers,
+        });
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            showToast('Authentication failed. Please check your token.', 'error');
+            logout();
+            return null;
+          }
+          const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(error.error || `HTTP ${response.status}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        console.error(`API Error (${endpoint}):`, error);
+        showToast(`Error: ${error.message}`, 'error');
+        return null;
+      }
+    }
+
+    // ── Authentication ────────────────────────────
+    function init() {
+      if (state.gatewayUrl && state.authToken) {
+        document.getElementById('gatewayUrl').value = state.gatewayUrl;
+        document.getElementById('authToken').value = state.authToken;
+        showApp();
+        loadAll();
+        startAutoRefresh();
+      } else {
+        document.getElementById('loginOverlay').style.display = 'flex';
+        if (state.gatewayUrl) {
+          document.getElementById('gatewayUrl').value = state.gatewayUrl;
+        }
+      }
+
+      // Set default date ranges
+      setDefaultDateRanges();
+
+      // Load settings
+      loadSettings();
+    }
+
+    async function login() {
+      const url = document.getElementById('gatewayUrl').value.trim();
+      const token = document.getElementById('authToken').value.trim();
+
+      if (!url || !token) {
+        showLoginError('Please enter both Gateway URL and Auth Token');
+        return;
+      }
+
+      // Test connection
+      state.gatewayUrl = url.replace(/\/$/, ''); // Remove trailing slash
+      state.authToken = token;
+
+      const health = await api('/health');
+      if (health) {
+        localStorage.setItem('gatewayUrl', state.gatewayUrl);
+        localStorage.setItem('authToken', state.authToken);
+        hideLoginError();
+        showApp();
+        loadAll();
+        startAutoRefresh();
+        showToast('Connected successfully!', 'success');
+      } else {
+        showLoginError('Failed to connect. Please check your settings.');
+      }
+    }
+
+    function logout() {
+      stopAutoRefresh();
+      state.gatewayUrl = '';
+      state.authToken = '';
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('loginOverlay').style.display = 'flex';
+      document.getElementById('authToken').value = '';
+    }
+
+    function showApp() {
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.getElementById('app').style.display = 'grid';
+    }
+
+    function showLoginError(message) {
+      const errorEl = document.getElementById('loginError');
+      errorEl.textContent = message;
+      errorEl.classList.add('visible');
+    }
+
+    function hideLoginError() {
+      document.getElementById('loginError').classList.remove('visible');
+    }
+
+    // ── Navigation ──────────────────────────────
+    function switchTab(tab) {
+      state.currentTab = tab;
+
+      // Update nav items
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.tab === tab);
+      });
+
+      // Update tab content
+      document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+      });
+      document.getElementById(`tab-${tab}`).classList.add('active');
+
+      // Load tab data
+      switch (tab) {
+        case 'overview':
+          loadOverview();
+          break;
+        case 'logs':
+          if (!state.providers.length) loadProviders();
+          break;
+        case 'analytics':
+          loadAnalytics();
+          break;
+        case 'latency':
+          loadLatency();
+          break;
+        case 'groups':
+          loadGroups();
+          break;
+        case 'settings':
+          loadSettings();
+          break;
+      }
+    }
+
+    // ── Data Loading ────────────────────────────
+    async function loadAll() {
+      await Promise.all([
+        loadHealth(),
+        loadProviders(),
+        loadOverview(),
+      ]);
+      state.lastRefresh = new Date();
+      updateLastRefresh();
+    }
+
+    async function refreshAll() {
+      showToast('Refreshing all data...', 'info');
+      await loadAll();
+      // Reload current tab
+      switchTab(state.currentTab);
+      showToast('Refresh complete', 'success');
+    }
+
+    async function loadHealth() {
+      const data = await api('/health');
+      if (!data) return;
+
+      state.healthData = data;
+
+      // Update health badge
+      const healthEl = document.getElementById('healthStatus');
+      const isHealthy = data.status === 'ok';
+      healthEl.className = `health-status ${isHealthy ? 'ok' : 'error'}`;
+      healthEl.innerHTML = `
+        <span class="health-dot"></span>
+        <span>${isHealthy ? 'Healthy' : 'Unhealthy'}</span>
+      `;
+
+      // Update version badge
+      if (data.version) {
+        document.getElementById('versionBadge').textContent = `v${data.version}`;
+        document.getElementById('aboutGatewayVersion').textContent = data.version;
+      }
+
+      // Update overview stats
+      if (data.providers) {
+        document.getElementById('overviewProviders').textContent =
+          `${data.providers.available}/${data.providers.total}`;
+        document.getElementById('overviewProviderRatio').textContent =
+          `${data.providers.available} of ${data.providers.total} available`;
+      }
+
+      if (data.uptime) {
+        document.getElementById('overviewGatewayUptime').textContent =
+          `Uptime: ${formatDuration(data.uptime)}`;
+      }
+
+      document.getElementById('overviewGatewayStatus').textContent =
+        data.status === 'ok' ? 'Online' : 'Error';
+    }
+
+    async function loadProviders() {
+      const data = await api('/v1/providers');
+      if (!data) return;
+
+      state.providers = data.providers || [];
+
+      // Update provider filter dropdown
+      const select = document.getElementById('logsProvider');
+      const currentValue = select.value;
+      select.innerHTML = '<option value="">All Providers</option>' +
+        state.providers.map(p => `<option value="${p.provider}">${p.provider}</option>`).join('');
+      select.value = currentValue;
+    }
+
+    async function loadOverview() {
+      // Load usage summary for stats
+      const summary = await api('/v1/usage/summary');
+      if (summary) {
+        document.getElementById('overviewRequests').textContent =
+          formatNumber(summary.totalRequests || 0);
+        document.getElementById('overviewCost').textContent =
+          formatCurrency(summary.totalCost || 0);
+        document.getElementById('overviewCostAvg').textContent =
+          `Avg per req: ${formatCurrency(summary.avgCostPerRequest || 0)}`;
+
+        if (summary.avgLatency) {
+          document.getElementById('overviewRequestsRate').textContent =
+            `Avg ${Math.round(summary.avgLatency)}ms`;
+        }
+      }
+
+      // Load recent logs
+      const logs = await api('/v1/usage?limit=10');
+      if (logs && logs.records) {
+        renderRecentActivity(logs.records);
+      }
+    }
+
+    function renderRecentActivity(records) {
+      const tbody = document.getElementById('recentActivityTable');
+
+      if (!records || records.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="7" class="empty-state">
+              <div class="empty-state-icon">📭</div>
+              No recent activity
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = records.map(r => `
+        <tr>
+          <td>${formatDateTime(r.timestamp || r.created_at)}</td>
+          <td><code>${r.provider || '-'}</code></td>
+          <td><code>${r.model || '-'}</code></td>
+          <td>${formatNumber(r.tokens || 0)}</td>
+          <td>${formatCurrency(r.cost || 0)}</td>
+          <td>${r.latency ? r.latency + 'ms' : '-'}</td>
+          <td>
+            <span class="badge ${r.error ? 'badge-danger' : 'badge-success'}">
+              ${r.error ? 'Error' : 'Success'}
+            </span>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // ── Logs Tab ────────────────────────────────
+    async function loadLogs() {
+      const from = document.getElementById('logsFrom').value;
+      const to = document.getElementById('logsTo').value;
+      const provider = document.getElementById('logsProvider').value;
+      const model = document.getElementById('logsModel').value;
+
+      const params = new URLSearchParams();
+      params.set('limit', state.logsLimit.toString());
+      params.set('offset', (state.logsPage * state.logsLimit).toString());
+      if (from) params.set('from', new Date(from).toISOString());
+      if (to) params.set('to', new Date(to).toISOString());
+      if (provider) params.set('provider', provider);
+      if (model) params.set('model', model);
+
+      const data = await api(`/v1/usage?${params.toString()}`);
+      if (!data) return;
+
+      state.logsTotal = data.count || 0;
+      renderLogs(data.records || []);
+      updateLogsPagination();
+    }
+
+    function renderLogs(records) {
+      const tbody = document.getElementById('logsTable');
+
+      if (!records || records.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" class="empty-state">
+              <div class="empty-state-icon">📭</div>
+              No logs found matching your criteria
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = records.map(r => `
+        <tr>
+          <td>${formatDateTime(r.timestamp || r.created_at)}</td>
+          <td><code>${r.provider || '-'}</code></td>
+          <td><code>${r.model || '-'}</code></td>
+          <td>${formatNumber(r.inputTokens || 0)}</td>
+          <td>${formatNumber(r.outputTokens || 0)}</td>
+          <td>${formatCurrency(r.cost || 0)}</td>
+          <td>${r.latency ? r.latency + 'ms' : '-'}</td>
+          <td>
+            <span class="badge ${r.error ? 'badge-danger' : 'badge-success'}">
+              ${r.error ? 'Error' : 'Success'}
+            </span>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function updateLogsPagination() {
+      const start = state.logsPage * state.logsLimit + 1;
+      const end = Math.min(start + state.logsLimit - 1, state.logsTotal);
+
+      document.getElementById('logsStart').textContent = state.logsTotal ? start : 0;
+      document.getElementById('logsEnd').textContent = end;
+      document.getElementById('logsTotal').textContent = state.logsTotal;
+
+      document.getElementById('logsPrevBtn').disabled = state.logsPage === 0;
+      document.getElementById('logsNextBtn').disabled = end >= state.logsTotal;
+    }
+
+    function prevLogsPage() {
+      if (state.logsPage > 0) {
+        state.logsPage--;
+        loadLogs();
+      }
+    }
+
+    function nextLogsPage() {
+      state.logsPage++;
+      loadLogs();
+    }
+
+    function resetLogsFilters() {
+      setDefaultDateRanges();
+      document.getElementById('logsProvider').value = '';
+      document.getElementById('logsModel').value = '';
+      state.logsPage = 0;
+      loadLogs();
+    }
+
+    // ── Analytics Tab ───────────────────────────
+    async function loadAnalytics() {
+      const dimension = document.getElementById('analyticsDimension').value;
+      const from = document.getElementById('analyticsFrom').value;
+      const to = document.getElementById('analyticsTo').value;
+
+      const params = new URLSearchParams();
+      params.set('groupBy', dimension === 'hourly' ? 'hour' :
+                           dimension === 'daily' ? 'day' : dimension);
+      if (from) params.set('from', new Date(from).toISOString());
+      if (to) params.set('to', new Date(to).toISOString());
+
+      const data = await api(`/v1/usage?${params.toString()}`);
+      if (!data) return;
+
+      const records = data.records || [];
+      updateAnalyticsCharts(records, dimension);
+      updateAnalyticsSummary(records);
+    }
+
+    function updateAnalyticsCharts(records, dimension) {
+      // Prepare data
+      const labels = records.map(r => {
+        if (dimension === 'hourly') {
+          return formatTime(r.hour || r.timestamp);
+        } else if (dimension === 'daily') {
+          return formatDate(r.day || r.timestamp);
+        } else {
+          return r.provider || r.model || 'Unknown';
+        }
+      });
+
+      const requests = records.map(r => r.count || r.requests || 0);
+      const costs = records.map(r => r.totalCost || r.cost || 0);
+      const latencies = records.map(r => r.avgLatency || r.latency || 0);
+      const tokens = records.map(r => (r.inputTokens || 0) + (r.outputTokens || 0));
+
+      // Destroy existing charts
+      Object.values(state.charts).forEach(chart => chart?.destroy?.());
+
+      const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false }
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(48, 54, 61, 0.5)' },
+            ticks: { color: '#8b949e' }
+          },
+          y: {
+            grid: { color: 'rgba(48, 54, 61, 0.5)' },
+            ticks: { color: '#8b949e' }
+          }
+        }
+      };
+
+      // Requests chart (Line)
+      state.charts.requests = new Chart(document.getElementById('requestsChart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Requests',
+            data: requests,
+            borderColor: '#a855f7',
+            backgroundColor: 'rgba(168, 85, 247, 0.1)',
+            fill: true,
+            tension: 0.4,
+            pointRadius: 4,
+            pointBackgroundColor: '#a855f7',
+          }]
+        },
+        options: commonOptions
+      });
+
+      // Cost chart (Bar)
+      state.charts.cost = new Chart(document.getElementById('costChart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Cost ($)',
+            data: costs,
+            backgroundColor: records.map((_, i) =>
+              `hsl(${168 + (i * 30) % 360}, 70%, 50%)`
+            ),
+            borderRadius: 4,
+          }]
+        },
+        options: commonOptions
+      });
+
+      // Latency chart (Line with p95/p99 if available)
+      state.charts.latencyPercentile = new Chart(document.getElementById('latencyPercentileChart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Avg Latency',
+            data: latencies,
+            borderColor: '#58a6ff',
+            backgroundColor: 'rgba(88, 166, 255, 0.1)',
+            fill: true,
+            tension: 0.4,
+          }]
+        },
+        options: commonOptions
+      });
+
+      // Tokens chart (Stacked bar)
+      state.charts.tokens = new Chart(document.getElementById('tokensChart'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Input Tokens',
+              data: records.map(r => r.inputTokens || 0),
+              backgroundColor: '#3fb950',
+              borderRadius: 4,
+            },
+            {
+              label: 'Output Tokens',
+              data: records.map(r => r.outputTokens || 0),
+              backgroundColor: '#a855f7',
+              borderRadius: 4,
+            }
+          ]
+        },
+        options: {
+          ...commonOptions,
+          scales: {
+            ...commonOptions.scales,
+            x: {
+              ...commonOptions.scales.x,
+              stacked: true
+            },
+            y: {
+              ...commonOptions.scales.y,
+              stacked: true
+            }
+          }
+        }
+      });
+    }
+
+    function updateAnalyticsSummary(records) {
+      const totalRequests = records.reduce((sum, r) => sum + (r.count || r.requests || 0), 0);
+      const totalCost = records.reduce((sum, r) => sum + (r.totalCost || r.cost || 0), 0);
+      const avgLatency = records.length
+        ? records.reduce((sum, r) => sum + (r.avgLatency || r.latency || 0), 0) / records.length
+        : 0;
+      const totalTokens = records.reduce((sum, r) =>
+        sum + (r.inputTokens || 0) + (r.outputTokens || 0), 0);
+
+      document.getElementById('analyticsTotalRequests').textContent = formatNumber(totalRequests);
+      document.getElementById('analyticsTotalCost').textContent = formatCurrency(totalCost);
+      document.getElementById('analyticsAvgLatency').textContent = `${Math.round(avgLatency)}ms`;
+      document.getElementById('analyticsTotalTokens').textContent = formatNumber(totalTokens);
+    }
+
+    // ── Latency Tab ─────────────────────────────
+    async function loadLatency() {
+      const data = await api('/v1/latency');
+      if (!data) return;
+
+      state.latencyData = data.providers || [];
+      renderLatencyChart();
+      renderLatencyTable();
+    }
+
+    function renderLatencyChart() {
+      const ctx = document.getElementById('latencyChart');
+
+      if (state.charts.latency) {
+        state.charts.latency.destroy();
+      }
+
+      const labels = state.latencyData.map(p => p.provider);
+      const latencies = state.latencyData.map(p => p.latencyMs);
+      const colors = state.latencyData.map(p =>
+        p.stale ? '#6e7681' : p.latencyMs < 500 ? '#3fb950' :
+        p.latencyMs < 1000 ? '#d29922' : '#f85149'
+      );
+
+      state.charts.latency = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Latency (ms)',
+            data: latencies,
+            backgroundColor: colors,
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                afterLabel: (ctx) => {
+                  const p = state.latencyData[ctx.dataIndex];
+                  return p.stale ? '⚠️ Stale measurement' : '';
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: 'rgba(48, 54, 61, 0.5)' },
+              ticks: { color: '#8b949e' }
+            },
+            y: {
+              grid: { color: 'rgba(48, 54, 61, 0.5)' },
+              ticks: { color: '#8b949e' },
+              title: { display: true, text: 'Milliseconds', color: '#8b949e' }
+            }
+          }
+        }
+      });
+    }
+
+    function renderLatencyTable() {
+      const tbody = document.getElementById('latencyTable');
+
+      if (state.latencyData.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="empty-state">
+              <div class="empty-state-icon">⏱️</div>
+              No latency data available
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      // Sort by latency
+      const sorted = [...state.latencyData].sort((a, b) => a.latencyMs - b.latencyMs);
+
+      tbody.innerHTML = sorted.map((p, index) => `
+        <tr>
+          <td><strong>${p.provider}</strong></td>
+          <td>${p.latencyMs}ms</td>
+          <td>
+            <span class="badge ${p.stale ? 'badge-warning' :
+              p.latencyMs < 500 ? 'badge-success' :
+              p.latencyMs < 1000 ? 'badge-warning' : 'badge-danger'}">
+              ${p.stale ? 'Stale' :
+                p.latencyMs < 500 ? 'Fast' :
+                p.latencyMs < 1000 ? 'Moderate' : 'Slow'}
+            </span>
+          </td>
+          <td class="text-secondary">${formatDateTime(p.measuredAt)}</td>
+          <td>
+            <span class="badge ${index === 0 ? 'badge-success' : 'badge-muted'}">
+              ${index === 0 ? 'Primary' : `Backup ${index}`}
+            </span>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // ── Groups Tab ──────────────────────────────
+    async function loadGroups() {
+      const data = await api('/v1/groups');
+      if (!data) return;
+
+      state.groups = data.groups || [];
+      renderGroups();
+    }
+
+    function renderGroups() {
+      const container = document.getElementById('groupsList');
+
+      if (state.groups.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🔀</div>
+            No groups configured
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = state.groups.map(g => `
+        <div class="group-item">
+          <div class="group-header">
+            <div>
+              <div class="group-name">${g.name}</div>
+              <div class="group-mode">${g.mode || 'round_robin'}</div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-sm" onclick="editGroup('${g.id}')">Edit</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteGroup('${g.id}')">Delete</button>
+            </div>
+          </div>
+          <div class="group-channels">
+            ${(g.channels || []).map(c => `
+              <span class="channel-tag">
+                <span>🔌</span>
+                ${c}
+              </span>
+            `).join('') || '<span class="text-muted">No channels configured</span>'}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function openCreateGroupModal() {
+      document.getElementById('groupName').value = '';
+      document.getElementById('groupMode').value = 'round_robin';
+      document.getElementById('createGroupModal').classList.add('open');
+
+      // Populate channels list
+      const channelsList = document.getElementById('groupChannelsList');
+      channelsList.innerHTML = state.providers.map(p => `
+        <label style="display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer;">
+          <input type="checkbox" value="${p.provider}" class="group-channel-check">
+          <span>${p.provider}</span>
+          <span class="badge ${p.available ? 'badge-success' : 'badge-danger'}">
+            ${p.available ? 'Available' : 'Unavailable'}
+          </span>
+        </label>
+      `).join('');
+    }
+
+    function closeCreateGroupModal() {
+      document.getElementById('createGroupModal').classList.remove('open');
+    }
+
+    function closeModalOnOverlay(event) {
+      if (event.target === event.currentTarget) {
+        closeCreateGroupModal();
+      }
+    }
+
+    async function createGroup() {
+      const name = document.getElementById('groupName').value.trim();
+      const mode = document.getElementById('groupMode').value;
+      const channels = Array.from(document.querySelectorAll('.group-channel-check:checked'))
+        .map(cb => cb.value);
+
+      if (!name) {
+        showToast('Please enter a group name', 'error');
+        return;
+      }
+
+      const result = await api('/v1/groups', {
+        method: 'POST',
+        body: JSON.stringify({ name, mode, channels }),
+      });
+
+      if (result) {
+        showToast('Group created successfully!', 'success');
+        closeCreateGroupModal();
+        loadGroups();
+      }
+    }
+
+    async function deleteGroup(id) {
+      if (!confirm('Are you sure you want to delete this group?')) return;
+
+      const result = await api(`/v1/groups/${id}`, { method: 'DELETE' });
+      if (result) {
+        showToast('Group deleted', 'success');
+        loadGroups();
+      }
+    }
+
+    function editGroup(id) {
+      showToast('Edit group functionality coming soon', 'warning');
+    }
+
+    // ── Settings Tab ────────────────────────────
+    function loadSettings() {
+      document.getElementById('settingsGatewayUrl').value = state.gatewayUrl;
+      document.getElementById('settingsAuthToken').value = state.authToken;
+      document.getElementById('autoRefreshToggle').value = state.autoRefresh.toString();
+      document.getElementById('defaultTab').value = state.defaultTab;
+    }
+
+    async function testSettingsConnection() {
+      const url = document.getElementById('settingsGatewayUrl').value.trim();
+      const token = document.getElementById('settingsAuthToken').value.trim();
+
+      const originalUrl = state.gatewayUrl;
+      const originalToken = state.authToken;
+
+      state.gatewayUrl = url.replace(/\/$/, '');
+      state.authToken = token;
+
+      const health = await api('/health');
+      if (health) {
+        showToast('Connection successful!', 'success');
+      }
+
+      state.gatewayUrl = originalUrl;
+      state.authToken = originalToken;
+    }
+
+    function saveConnectionSettings() {
+      state.gatewayUrl = document.getElementById('settingsGatewayUrl').value.trim().replace(/\/$/, '');
+      state.authToken = document.getElementById('settingsAuthToken').value.trim();
+
+      localStorage.setItem('gatewayUrl', state.gatewayUrl);
+      localStorage.setItem('authToken', state.authToken);
+
+      showToast('Connection settings saved', 'success');
+    }
+
+    function savePreferences() {
+      state.autoRefresh = parseInt(document.getElementById('autoRefreshToggle').value);
+      state.defaultTab = document.getElementById('defaultTab').value;
+
+      localStorage.setItem('autoRefresh', state.autoRefresh.toString());
+      localStorage.setItem('defaultTab', state.defaultTab);
+
+      startAutoRefresh();
+      showToast('Preferences saved', 'success');
+    }
+
+    function resetSettings() {
+      if (!confirm('Reset all settings to defaults?')) return;
+
+      localStorage.removeItem('gatewayUrl');
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('autoRefresh');
+      localStorage.removeItem('defaultTab');
+
+      state.gatewayUrl = '';
+      state.authToken = '';
+      state.autoRefresh = 60;
+      state.defaultTab = 'overview';
+
+      logout();
+      showToast('Settings reset', 'success');
+    }
+
+    // ── Auto-Refresh ─────────────────────────────
+    function startAutoRefresh() {
+      stopAutoRefresh();
+
+      const statusEl = document.getElementById('autoRefreshStatus');
+
+      if (state.autoRefresh > 0) {
+        state.autoRefreshInterval = setInterval(() => {
+          if (document.visibilityState === 'visible') {
+            loadHealth();
+            // Refresh current tab data
+            switchTab(state.currentTab);
+          }
+        }, state.autoRefresh * 1000);
+
+        statusEl.textContent = `ON (${state.autoRefresh}s)`;
+        statusEl.className = 'text-success';
+      } else {
+        statusEl.textContent = 'OFF';
+        statusEl.className = 'text-secondary';
+      }
+    }
+
+    function stopAutoRefresh() {
+      if (state.autoRefreshInterval) {
+        clearInterval(state.autoRefreshInterval);
+        state.autoRefreshInterval = null;
+      }
+    }
+
+    function updateLastRefresh() {
+      const el = document.getElementById('lastRefresh');
+      if (state.lastRefresh) {
+        el.textContent = `Last: ${formatTime(state.lastRefresh)}`;
+      }
+    }
+
+    // ── Utilities ───────────────────────────────
+    function setDefaultDateRanges() {
+      const now = new Date();
+      const yesterday = new Date(now - 24 * 60 * 60 * 1000);
+
+      // Logs: last 24 hours
+      document.getElementById('logsFrom').value = formatDateTimeLocal(yesterday);
+      document.getElementById('logsTo').value = formatDateTimeLocal(now);
+
+      // Analytics: last 7 days
+      const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+      document.getElementById('analyticsFrom').value = formatDate(weekAgo);
+      document.getElementById('analyticsTo').value = formatDate(now);
+    }
+
+    function formatNumber(num) {
+      if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+      if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+      return num.toString();
+    }
+
+    function formatCurrency(amount) {
+      return '$' + amount.toFixed(4);
+    }
+
+    function formatDate(date) {
+      const d = new Date(date);
+      return d.toISOString().split('T')[0];
+    }
+
+    function formatTime(date) {
+      const d = new Date(date);
+      return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatDateTime(date) {
+      if (!date) return '-';
+      const d = new Date(date);
+      return d.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+
+    function formatDateTimeLocal(date) {
+      const d = new Date(date);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().slice(0, 16);
+    }
+
+    function formatDuration(seconds) {
+      if (seconds < 60) return `${Math.round(seconds)}s`;
+      if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+      if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+      return `${Math.round(seconds / 86400)}d`;
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+
+      const icon = type === 'success' ? '✅' :
+                   type === 'error' ? '❌' :
+                   type === 'warning' ? '⚠️' : 'ℹ️';
+
+      toast.innerHTML = `
+        <span>${icon}</span>
+        <span>${message}</span>
+      `;
+
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.animation = 'slideIn 0.3s ease reverse';
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    function testConnection() {
+      testSettingsConnection();
+    }
+
+    function clearCache() {
+      state.charts = {};
+      state.providers = [];
+      state.groups = [];
+      state.latencyData = [];
+      showToast('Cache cleared', 'success');
+    }
+
+    function exportData() {
+      const data = {
+        timestamp: new Date().toISOString(),
+        health: state.healthData,
+        providers: state.providers,
+        latency: state.latencyData,
+        groups: state.groups,
+      };
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `llm-gateway-export-${formatDate(new Date())}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showToast('Data exported', 'success');
+    }
+
+    // ── Initialize ───────────────────────────────
+    document.addEventListener('DOMContentLoaded', init);
+
+    // Handle Enter key on login form
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && document.getElementById('loginOverlay').style.display !== 'none') {
+        if (e.target.id === 'authToken') {
+          login();
+        }
+      }
+    });
+  </script>
+</body>
 </html>
