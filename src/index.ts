@@ -28,6 +28,7 @@ import { SessionStore } from './core/session.js';
 import { registry } from './core/transformer.js';
 import { BridgeOrchestrator, loadBridgeConfig } from './bridge/index.js';
 import { CompressorService } from './context-compression/index.js';
+import { CodeSearchService } from './code-search/index.js';
 
 // Populate the transformer registry with all inbound/outbound transformers
 import './transformers/index.js';
@@ -66,6 +67,9 @@ router.setSessionStore(sessionStore);
 // Initialize context compression service (background pre-computation)
 const compressor = new CompressorService();
 
+// Initialize semantic code search service (in-memory index)
+const codeSearch = new CodeSearchService();
+
 // Initialize bridge orchestrator (opt-in via bridge.yaml config)
 const bridgeConfig = loadBridgeConfig();
 const bridge = bridgeConfig ? new BridgeOrchestrator(router, bridgeConfig) : null;
@@ -102,7 +106,7 @@ if (mode === 'serve') {
   startHttpServer(router, vault, config, groupStore, costTracker);
 } else {
   // MCP stdio (default — backward compatible)
-  await startMcpServer(router, vault, undefined, costTracker, bridge);
+  await startMcpServer(router, vault, undefined, costTracker, bridge, codeSearch);
   if (mode === '--http') {
     startHttpServer(router, vault, config, groupStore, costTracker);
   }

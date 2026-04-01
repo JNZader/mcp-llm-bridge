@@ -17,6 +17,7 @@ import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
 import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
+import type { CodeSearchService } from '../code-search/index.js';
 import { CreateGroupSchema } from '../core/groups.js';
 import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
@@ -344,6 +345,57 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'code_search',
+    description:
+      'Search code semantically. Finds functions, classes, and blocks matching a query using keyword + fuzzy matching. Optionally follows imports for related code.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query (e.g. "authentication middleware", "database connection")',
+        },
+        scope: {
+          type: 'string',
+          description: 'Directory path to limit search scope (default: current working directory)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum results to return (default: 10, max: 50)',
+        },
+        followImports: {
+          type: 'boolean',
+          description: 'Follow imports to find related code chunks (default: false)',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'index_codebase',
+    description:
+      'Index a codebase directory for semantic code search. Scans files, extracts functions/classes/blocks, and builds an in-memory search index.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        rootDir: {
+          type: 'string',
+          description: 'Root directory to index (default: current working directory)',
+        },
+        extensions: {
+          type: 'array',
+          description: 'File extensions to index (default: .ts, .js, .py, .go, .rs, etc.)',
+          items: { type: 'string' },
+        },
+        ignorePatterns: {
+          type: 'array',
+          description: 'Directory names to ignore (default: node_modules, .git, dist, etc.)',
+          items: { type: 'string' },
+        },
+      },
+    },
+  },
 ] as const;
 
 /**
@@ -357,6 +409,7 @@ async function handleToolCall(
   groupStore?: GroupStore,
   costTracker?: CostTracker,
   bridge?: BridgeOrchestrator | null,
+  codeSearch?: CodeSearchService | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (toolName) {
@@ -577,6 +630,45 @@ async function handleToolCall(
         };
       }
 
+      case 'code_search': {
+        if (!codeSearch) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Code search not configured' }) }],
+            isError: true,
+          };
+        }
+        const searchQuery = args['query'] as string;
+        if (!searchQuery?.trim()) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Query is required and must not be empty' }) }],
+            isError: true,
+          };
+        }
+        const results = codeSearch.search({
+          query: searchQuery,
+          scope: (args['scope'] as string | undefined) ?? process.cwd(),
+          limit: args['limit'] as number | undefined,
+          followImports: args['followImports'] as boolean | undefined,
+        });
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ results, count: results.length }) }],
+        };
+      }
+
+      case 'index_codebase': {
+        if (!codeSearch) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Code search not configured' }) }],
+            isError: true,
+          };
+        }
+        const rootDir = (args['rootDir'] as string | undefined) ?? process.cwd();
+        const chunks = codeSearch.reindex(rootDir);
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ indexed: true, rootDir, chunks }) }],
+        };
+      }
+
       default:
         return {
           content: [
@@ -600,7 +692,7 @@ async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -617,7 +709,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge);
+    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch);
   });
 
   const transport = new StdioServerTransport();
