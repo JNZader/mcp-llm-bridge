@@ -27,6 +27,7 @@ import { GroupStore } from './core/groups.js';
 import { SessionStore } from './core/session.js';
 import { registry } from './core/transformer.js';
 import { BridgeOrchestrator, loadBridgeConfig } from './bridge/index.js';
+import { CompressorService } from './context-compression/index.js';
 
 // Populate the transformer registry with all inbound/outbound transformers
 import './transformers/index.js';
@@ -62,6 +63,9 @@ router.setGroupStore(groupStore);
 const sessionStore = new SessionStore();
 router.setSessionStore(sessionStore);
 
+// Initialize context compression service (background pre-computation)
+const compressor = new CompressorService();
+
 // Initialize bridge orchestrator (opt-in via bridge.yaml config)
 const bridgeConfig = loadBridgeConfig();
 const bridge = bridgeConfig ? new BridgeOrchestrator(router, bridgeConfig) : null;
@@ -76,6 +80,7 @@ if (bridge) {
 async function setupGracefulShutdown(vault: Vault): Promise<void> {
   const cleanup = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
+    compressor.destroy();
     costTracker.destroy();
     groupStore.close();
     sessionStore.destroy();
