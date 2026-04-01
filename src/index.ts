@@ -30,6 +30,7 @@ import { BridgeOrchestrator, loadBridgeConfig } from './bridge/index.js';
 import { CompressorService } from './context-compression/index.js';
 import { CodeSearchService } from './code-search/index.js';
 import { StateManager } from './crdt/index.js';
+import { FreeModelRouter } from './free-models/index.js';
 
 // Populate the transformer registry with all inbound/outbound transformers
 import './transformers/index.js';
@@ -74,6 +75,14 @@ const codeSearch = new CodeSearchService();
 // Initialize CRDT state manager for multi-agent collaboration
 const stateManager = new StateManager();
 
+// Initialize free model router (opt-in via FALLBACK_STRATEGY=free-models)
+const freeModelEnabled = process.env['FALLBACK_STRATEGY'] === 'free-models';
+const freeModelRouter = new FreeModelRouter({ enabled: freeModelEnabled });
+if (freeModelEnabled) {
+  router.setFreeModelRouter(freeModelRouter);
+  logger.info('Free model fallback routing enabled');
+}
+
 // Initialize bridge orchestrator (opt-in via bridge.yaml config)
 const bridgeConfig = loadBridgeConfig();
 const bridge = bridgeConfig ? new BridgeOrchestrator(router, bridgeConfig) : null;
@@ -89,6 +98,7 @@ async function setupGracefulShutdown(vault: Vault): Promise<void> {
   const cleanup = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
     compressor.destroy();
+    freeModelRouter.destroy();
     costTracker.destroy();
     groupStore.close();
     sessionStore.destroy();

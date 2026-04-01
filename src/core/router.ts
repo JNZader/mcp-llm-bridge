@@ -27,6 +27,7 @@ import type { StreamingOutboundTransformer } from '../transformers/streaming.js'
 import type { GroupStore, ProviderGroup } from './groups.js';
 import type { SessionStore } from './session.js';
 import type { CostTracker } from './cost-tracker.js';
+import type { FreeModelRouter } from '../free-models/router.js';
 import { createBalancer, memberKey } from './balancer.js';
 import { logger } from './logger.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
@@ -68,6 +69,7 @@ export class Router {
   private _groupStore: GroupStore | null = null;
   private _sessionStore: SessionStore | null = null;
   private _costTracker: CostTracker | null = null;
+  private _freeModelRouter: FreeModelRouter | null = null;
 
   /** Set the cost tracker for usage recording. */
   setCostTracker(tracker: CostTracker): void {
@@ -77,6 +79,16 @@ export class Router {
   /** Get the cost tracker (null if not set). */
   get costTracker(): CostTracker | null {
     return this._costTracker;
+  }
+
+  /** Set the free model router for fallback strategy. */
+  setFreeModelRouter(router: FreeModelRouter): void {
+    this._freeModelRouter = router;
+  }
+
+  /** Get the free model router (null if not set). */
+  get freeModelRouter(): FreeModelRouter | null {
+    return this._freeModelRouter;
   }
 
   /** Set the transformer registry for the new pipeline. */
@@ -206,6 +218,19 @@ export class Router {
         logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
         errors.push(`${provider.id}: ${message}`);
         continue;
+      }
+    }
+
+    // Try free model fallback before giving up
+    if (this._freeModelRouter?.isAvailable) {
+      try {
+        logger.info('All paid providers failed, attempting free model fallback');
+        const freeResult = await this._freeModelRouter.generate(request);
+        const latencyMs = Date.now() - startTime;
+        return this.withResolutionMetadata(request, freeResult, true, latencyMs);
+      } catch (freeError) {
+        const freeMsg = freeError instanceof Error ? freeError.message : String(freeError);
+        errors.push(`free-models: ${freeMsg}`);
       }
     }
 
