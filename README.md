@@ -11,6 +11,10 @@ A centralized LLM credential management and routing service. One service handles
 - **Web dashboard** — manage everything from the browser
 - **MCP server** — use directly from Claude Code via stdio
 - **Docker ready** — deploy anywhere with persistent volumes
+- **Cross-model bridging** — task-aware routing across providers with fallback chains
+- **Context compression** — background extractive, structural, and token-budget compression with LRU cache
+- **Semantic code search** — regex-based chunking, trigram fuzzy search, and multi-hop import resolution
+- **CRDT multi-agent state** — conflict-free replicated data types for multi-agent collaboration
 
 ---
 
@@ -22,15 +26,19 @@ A centralized LLM credential management and routing service. One service handles
 4. [Providers](#providers)
 5. [Authentication](#authentication)
 6. [Credential Management](#credential-management)
-7. [Using with OpenCode](#using-with-opencode)
-8. [Using with GHAGGA](#using-with-ghagga)
-9. [Using with Any OpenAI-Compatible Tool](#using-with-any-openai-compatible-tool)
-10. [Docker Deployment](#docker-deployment)
-11. [MCP Server](#mcp-server)
-12. [Configuration](#configuration)
-13. [Architecture](#architecture)
-14. [Security](#security)
-15. [Development](#development)
+7. [Cross-Model Bridging](#cross-model-bridging)
+8. [Context Compression](#context-compression)
+9. [Semantic Code Search](#semantic-code-search)
+10. [CRDT Multi-Agent State](#crdt-multi-agent-state)
+11. [Using with OpenCode](#using-with-opencode)
+12. [Using with GHAGGA](#using-with-ghagga)
+13. [Using with Any OpenAI-Compatible Tool](#using-with-any-openai-compatible-tool)
+14. [Docker Deployment](#docker-deployment)
+15. [MCP Server](#mcp-server)
+16. [Configuration](#configuration)
+17. [Architecture](#architecture)
+18. [Security](#security)
+19. [Development](#development)
 
 ---
 
@@ -556,6 +564,220 @@ This lets you use different API keys per project while maintaining a shared defa
 
 ---
 
+## Cross-Model Bridging
+
+The bridge module adds **task-aware routing** across LLM providers. Instead of always hitting the same provider, the bridge classifies each prompt and routes it to the best provider for that task type.
+
+### How It Works
+
+1. **Classify** — a heuristic classifier analyzes the incoming prompt (token count, keywords, prompt length)
+2. **Route** — the classified task type maps to a preferred provider via `bridge.yaml`
+3. **Fallback** — if the preferred provider fails, the bridge walks through an ordered fallback chain
+
+### Task Types
+
+| Task Type | Heuristic | Use Case |
+|-----------|-----------|----------|
+| `large-context` | Estimated tokens > 100K | Large file analysis, long documents |
+| `code-review` | Contains review-related keywords | PR reviews, audits, refactoring |
+| `fast-completion` | Short prompt (< 500 chars) | Quick questions, completions |
+| `default` | No heuristic matched | General-purpose tasks |
+
+### Configuration
+
+Create `~/.llm-gateway/bridge.yaml`:
+
+```yaml
+# Map task types to preferred providers
+routes:
+  large-context: gemini-cli
+  code-review: claude-cli
+  fast-completion: groq
+
+# Default provider when no route matches
+default: claude-cli
+
+# Ordered fallback chain (tried sequentially on failure)
+fallback_order:
+  - claude-cli
+  - gemini-cli
+  - opencode-cli
+  - anthropic
+  - groq
+```
+
+When the config file is absent, the bridge is disabled and the gateway uses standard provider routing.
+
+### Bridge Response
+
+The bridge returns a normalized `BridgeResponse` with routing metadata:
+
+| Field | Description |
+|-------|-------------|
+| `text` | Generated text content |
+| `provider` | Provider that handled the request |
+| `model` | Model used by the provider |
+| `taskType` | Classified task type |
+| `fallbackUsed` | Whether a fallback provider was used |
+| `latencyMs` | Total latency in milliseconds |
+
+---
+
+## Context Compression
+
+Background context compression reduces token usage by compressing context before sending it to LLM providers. The `CompressorService` facade combines strategies, an LRU cache, and a background worker.
+
+### Strategies
+
+| Strategy | How It Works | Best For |
+|----------|-------------|----------|
+| `extractive` | Scores sentences by length, position, and keywords; keeps the highest-scoring ones | General text, documentation |
+| `structural` | Keeps markdown headings, first lines after headings, and list items | Structured/markdown content |
+| `token-budget` | Truncates at sentence boundaries to fit a character budget | Hard token limits |
+
+### Usage
+
+```typescript
+import { CompressorService } from './context-compression/index.js';
+
+const compressor = new CompressorService({
+  maxCacheSize: 200,        // LRU cache entries (default: 200)
+  workerIntervalMs: 5000,   // Background tick interval (default: 5000)
+  defaultStrategy: 'extractive', // Default strategy (default: 'extractive')
+  defaultRatio: 0.5,        // Keep ~50% of content (default: 0.5)
+});
+
+// Submit for background compression (non-blocking)
+compressor.submit(longContext);
+
+// Later, retrieve compressed version (instant, returns original if not yet cached)
+const compressed = compressor.getCompressed(longContext);
+
+// Or compress synchronously when you need the result now
+const result = compressor.compressNow(longContext, 'structural');
+
+// Cleanup on shutdown
+compressor.destroy();
+```
+
+### Features
+
+- **LRU cache** — recently compressed content is served instantly without re-computation
+- **Background worker** — compression runs asynchronously on a configurable interval
+- **Non-blocking reads** — `getCompressed()` returns the original if compression hasn't finished yet
+- **Pluggable strategies** — each strategy implements a simple `compress(content, options)` interface
+
+---
+
+## Semantic Code Search
+
+In-memory semantic code search with regex-based chunking, trigram fuzzy matching, and multi-hop import resolution. Exposed as `code_search` and `index_codebase` MCP tools.
+
+### How It Works
+
+1. **Chunking** — source files are split into meaningful chunks (functions, classes, interfaces, type aliases, methods, imports) using regex-based parsing
+2. **Indexing** — chunks are indexed with a trigram-based fuzzy search index for fast lookup
+3. **Search** — queries match against chunk names and content using keyword + fuzzy scoring
+4. **Multi-hop** — optionally follows `import` statements to find related chunks across files
+
+### Supported Languages
+
+Chunking supports files with these extensions by default:
+
+`.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, `.go`, `.rs`, `.java`, `.rb`, `.lua`
+
+### MCP Tools
+
+#### `index_codebase`
+
+Index a directory for search. Scans files, extracts code chunks, and builds the in-memory index. Results are cached with a 5-minute TTL.
+
+```json
+{
+  "rootDir": "/path/to/project",
+  "extensions": [".ts", ".js"],
+  "ignorePatterns": ["node_modules", "dist"]
+}
+```
+
+#### `code_search`
+
+Search the indexed codebase. If no index exists for the scope, it indexes automatically.
+
+```json
+{
+  "query": "authentication middleware",
+  "scope": "/path/to/project",
+  "limit": 10,
+  "followImports": true
+}
+```
+
+Returns ranked results with file path, symbol name, kind (function/class/interface/etc.), content, line numbers, relevance score, and optionally related chunks from import following.
+
+### Configuration Defaults
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Max file size | 100 KB | Files larger than this are skipped |
+| Result limit | 10 | Default results per search (max: 50) |
+| Index TTL | 5 minutes | Re-indexing is skipped within this window |
+| Ignored dirs | `node_modules`, `.git`, `dist`, `build`, `target`, etc. | Directories excluded from indexing |
+
+---
+
+## CRDT Multi-Agent State
+
+Conflict-free replicated data types (CRDTs) for multi-agent state merging. Multiple agents can read and write shared state concurrently without coordination — conflicts are resolved automatically by the data structure semantics. Exposed as the `shared_state` MCP tool.
+
+### CRDT Types
+
+| Type | Class | Merge Semantics | Use Case |
+|------|-------|----------------|----------|
+| `g-counter` | `GCounter` | Max per node | Token tracking, request counting |
+| `lww-register` | `LWWRegister` | Last writer wins (by timestamp) | Agent status, current assignment |
+| `or-set` | `ORSet` | Observed-remove (add wins over concurrent remove) | Shared findings, collected URLs |
+
+### MCP Tool: `shared_state`
+
+All operations go through a single `shared_state` tool with an `op` parameter:
+
+| Operation | Description | Required Fields |
+|-----------|-------------|----------------|
+| `read` | Read a container's current value | `key` |
+| `write` | Write to a container (creates if needed) | `key`, `type`, `nodeId` + type-specific fields |
+| `list` | List all container keys and types | *(none)* |
+| `snapshot` | Export full state as a serializable snapshot | *(none)* |
+| `merge` | Merge an incoming snapshot into local state | `snapshot` |
+
+### Examples
+
+```json
+// Increment a token counter
+{ "op": "write", "key": "tokens", "type": "g-counter", "nodeId": "agent-1", "amount": 150 }
+
+// Set agent status
+{ "op": "write", "key": "status", "type": "lww-register", "nodeId": "agent-1", "value": "analyzing" }
+
+// Add a finding to a shared set
+{ "op": "write", "key": "findings", "type": "or-set", "nodeId": "agent-1", "action": "add", "element": "SQL injection in auth.ts:42" }
+
+// Read a container
+{ "op": "read", "key": "findings" }
+
+// Snapshot all state for syncing
+{ "op": "snapshot" }
+
+// Merge a remote snapshot
+{ "op": "merge", "snapshot": { "entries": { ... } } }
+```
+
+### State Manager
+
+The `StateManager` class coordinates named CRDT containers. Each container is identified by a string key and holds one CRDT instance. Type mismatches on write or merge throw errors — a key is permanently bound to its CRDT type once created.
+
+---
+
 ## Using with OpenCode
 
 [OpenCode](https://github.com/anomalyco/opencode) supports custom providers. Configure it to use the LLM Gateway as a backend:
@@ -753,6 +975,9 @@ The gateway works as an **MCP server** via stdio transport, allowing Claude Code
 | `vault_store_file` | Store an auth file (e.g., auth.json) in the vault |
 | `vault_list_files` | List stored auth files (metadata only) |
 | `vault_delete_file` | Delete a stored auth file by ID |
+| `code_search` | Search code semantically with keyword + fuzzy matching and optional import following |
+| `index_codebase` | Index a directory for semantic code search (extracts functions, classes, blocks) |
+| `shared_state` | CRDT-based shared state for multi-agent collaboration (read, write, merge, snapshot) |
 
 ### Claude Code Configuration
 
@@ -810,6 +1035,10 @@ All configuration is done through environment variables.
 | `LLM_GATEWAY_DB_PATH` | `~/.llm-gateway/vault.db` | Path to the SQLite credential vault database |
 | `LLM_GATEWAY_AUTH_TOKEN` | *(none)* | Bearer token for HTTP API authentication. Must be at least 32 characters. If not set, auth is disabled. |
 
+### Bridge Configuration
+
+The cross-model bridge is configured via a separate YAML file at `~/.llm-gateway/bridge.yaml`. See the [Cross-Model Bridging](#cross-model-bridging) section for the full schema. When the file is absent, the bridge is disabled.
+
 ### Master Key Priority
 
 1. `LLM_GATEWAY_MASTER_KEY` environment variable (hex-encoded)
@@ -829,22 +1058,37 @@ Clients (GHAGGA, OpenCode, curl, LangChain, any OpenAI-compatible tool)
     |  POST /v1/generate          (native format)
     |  MCP stdio                  (Claude Code)
     v
-+---------------------------------------------------+
-|              LLM Gateway (Hono + MCP)              |
-|                                                    |
-|  HTTP Server (Hono)          MCP Server (stdio)    |
-|  - /v1/chat/completions      - llm_generate        |
-|  - /v1/generate              - vault_store          |
-|  - /v1/models                - vault_list           |
-|  - /v1/providers             - vault_delete         |
-|  - /v1/credentials CRUD      - llm_models           |
-|  - /v1/files CRUD            - vault_store_file     |
-|  - /health                   - vault_list_files     |
-|                              - vault_delete_file    |
-+----------------------------+-----------------------+
-|          Router (model -> provider selection)       |
-|          Vault  (AES-256-GCM encrypted SQLite)      |
-+----------------------------+-----------------------+
++-------------------------------------------------------------------+
+|                    LLM Gateway (Hono + MCP)                        |
+|                                                                    |
+|  HTTP Server (Hono)              MCP Server (stdio)                |
+|  - /v1/chat/completions          - llm_generate                    |
+|  - /v1/generate                  - vault_store / vault_list        |
+|  - /v1/models                    - vault_delete / llm_models       |
+|  - /v1/providers                 - vault_store_file                |
+|  - /v1/credentials CRUD          - vault_list_files                |
+|  - /v1/files CRUD                - vault_delete_file               |
+|  - /health                       - code_search / index_codebase    |
+|                                  - shared_state                    |
++-------------------------------------------------------------------+
+|                                                                    |
+|  Bridge Orchestrator (task-aware routing via bridge.yaml)          |
+|  - Heuristic classifier → task type                                |
+|  - Route → preferred provider → fallback chain                     |
+|                                                                    |
+|  Context Compression (background, LRU-cached)                      |
+|  - Extractive / Structural / Token-budget strategies               |
+|                                                                    |
+|  Code Search (in-memory trigram index)                             |
+|  - Regex chunking → fuzzy search → multi-hop import resolution     |
+|                                                                    |
+|  CRDT State (multi-agent merging)                                  |
+|  - G-Counter / LWW-Register / OR-Set → StateManager               |
+|                                                                    |
++-----------------------------+-------------------------------------+
+|          Router (model -> provider selection)                       |
+|          Vault  (AES-256-GCM encrypted SQLite)                     |
++-----------------------------+-------------------------------------+
     |                                    |
     v                                    v
 API Providers                    CLI Providers
@@ -866,6 +1110,10 @@ LLM APIs                        Local CLI tools
 - **API providers always tried before CLI** — CLI acts as a fallback layer
 - **Upsert semantics** — storing a credential with the same (provider, keyName, project) updates it
 - **Temp file cleanup** — CLI adapters write auth files to temp directories and clean up in `finally` blocks
+- **Bridge as optional layer** — bridge.yaml enables task-aware routing; without it, standard routing applies
+- **Simple YAML parser** — bridge config uses a lightweight parser to avoid adding a YAML dependency
+- **In-memory code index** — code search uses trigram indexing with a 5-minute TTL to balance freshness and performance
+- **CRDTs for multi-agent** — conflict-free data types eliminate coordination overhead between concurrent agents
 
 ---
 
