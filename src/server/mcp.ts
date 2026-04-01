@@ -18,6 +18,8 @@ import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
 import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
 import type { CodeSearchService } from '../code-search/index.js';
+import type { StateManager } from '../crdt/index.js';
+import type { CRDTType, StateSnapshot } from '../crdt/types.js';
 import { CreateGroupSchema } from '../core/groups.js';
 import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
@@ -396,6 +398,52 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: 'shared_state',
+    description:
+      'CRDT-based shared state for multi-agent collaboration. Supports conflict-free read/write/merge with G-Counter (token tracking), LWW-Register (agent status), and OR-Set (shared findings).',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        op: {
+          type: 'string',
+          description: 'Operation: "read", "write", "merge", "snapshot", or "list"',
+        },
+        key: {
+          type: 'string',
+          description: 'Container key name (required for read/write)',
+        },
+        type: {
+          type: 'string',
+          description: 'CRDT type: "g-counter", "lww-register", or "or-set" (required for write)',
+        },
+        nodeId: {
+          type: 'string',
+          description: 'Agent/node identifier (required for write)',
+        },
+        value: {
+          description: 'Value to write (semantics depend on type)',
+        },
+        amount: {
+          type: 'number',
+          description: 'Increment amount for g-counter (default: 1)',
+        },
+        element: {
+          type: 'string',
+          description: 'Element to add/remove for or-set',
+        },
+        action: {
+          type: 'string',
+          description: 'Action for or-set: "add" or "remove"',
+        },
+        snapshot: {
+          type: 'object',
+          description: 'State snapshot to merge (required for merge op)',
+        },
+      },
+      required: ['op'],
+    },
+  },
 ] as const;
 
 /**
@@ -410,6 +458,7 @@ async function handleToolCall(
   costTracker?: CostTracker,
   bridge?: BridgeOrchestrator | null,
   codeSearch?: CodeSearchService | null,
+  stateManager?: StateManager | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (toolName) {
@@ -669,6 +718,116 @@ async function handleToolCall(
         };
       }
 
+      case 'shared_state': {
+        if (!stateManager) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'State manager not configured' }) }],
+            isError: true,
+          };
+        }
+        const op = args['op'] as string;
+
+        switch (op) {
+          case 'read': {
+            const readKey = args['key'] as string;
+            if (!readKey) {
+              return {
+                content: [{ type: 'text', text: JSON.stringify({ error: 'key is required for read' }) }],
+                isError: true,
+              };
+            }
+            const result = stateManager.read(readKey);
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result ?? { error: `Key not found: ${readKey}` }) }],
+              isError: !result,
+            };
+          }
+
+          case 'write': {
+            const writeKey = args['key'] as string;
+            const crdtType = args['type'] as CRDTType;
+            const writeNodeId = args['nodeId'] as string;
+            if (!writeKey || !crdtType || !writeNodeId) {
+              return {
+                content: [{ type: 'text', text: JSON.stringify({ error: 'key, type, and nodeId are required for write' }) }],
+                isError: true,
+              };
+            }
+
+            if (crdtType === 'g-counter') {
+              stateManager.write(writeKey, 'g-counter', {
+                nodeId: writeNodeId,
+                amount: (args['amount'] as number | undefined) ?? 1,
+              });
+            } else if (crdtType === 'lww-register') {
+              stateManager.write(writeKey, 'lww-register', {
+                value: args['value'],
+                nodeId: writeNodeId,
+                timestamp: args['timestamp'] as number | undefined,
+              });
+            } else if (crdtType === 'or-set') {
+              const setAction = (args['action'] as 'add' | 'remove') ?? 'add';
+              const element = args['element'] as string;
+              if (!element) {
+                return {
+                  content: [{ type: 'text', text: JSON.stringify({ error: 'element is required for or-set write' }) }],
+                  isError: true,
+                };
+              }
+              stateManager.write(writeKey, 'or-set', {
+                action: setAction,
+                element,
+                nodeId: writeNodeId,
+              });
+            } else {
+              return {
+                content: [{ type: 'text', text: JSON.stringify({ error: `Unknown CRDT type: ${crdtType as string}` }) }],
+                isError: true,
+              };
+            }
+
+            const written = stateManager.read(writeKey);
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ ok: true, key: writeKey, ...written }) }],
+            };
+          }
+
+          case 'merge': {
+            const incoming = args['snapshot'] as StateSnapshot | undefined;
+            if (!incoming) {
+              return {
+                content: [{ type: 'text', text: JSON.stringify({ error: 'snapshot is required for merge' }) }],
+                isError: true,
+              };
+            }
+            stateManager.mergeSnapshot(incoming);
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ ok: true, merged: Object.keys(incoming.entries).length }) }],
+            };
+          }
+
+          case 'snapshot': {
+            const snap = stateManager.snapshot();
+            return {
+              content: [{ type: 'text', text: JSON.stringify(snap) }],
+            };
+          }
+
+          case 'list': {
+            const containers = stateManager.list();
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ containers }) }],
+            };
+          }
+
+          default:
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ error: `Unknown operation: ${op}` }) }],
+              isError: true,
+            };
+        }
+      }
+
       default:
         return {
           content: [
@@ -692,7 +851,7 @@ async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -709,7 +868,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch);
+    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager);
   });
 
   const transport = new StdioServerTransport();
