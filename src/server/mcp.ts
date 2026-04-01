@@ -16,6 +16,7 @@ import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
+import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
 import { CreateGroupSchema } from '../core/groups.js';
 import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
@@ -355,18 +356,29 @@ async function handleToolCall(
   vault: Vault,
   groupStore?: GroupStore,
   costTracker?: CostTracker,
+  bridge?: BridgeOrchestrator | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     switch (toolName) {
       case 'llm_generate': {
-        const result = await router.generate({
+        const request = {
           prompt: args['prompt'] as string,
           system: args['system'] as string | undefined,
           provider: args['provider'] as string | undefined,
           model: args['model'] as string | undefined,
           maxTokens: args['maxTokens'] as number | undefined,
           project: args['project'] as string | undefined,
-        });
+        };
+
+        // Use bridge orchestrator when available and no explicit provider/model requested
+        if (bridge && !request.provider && !request.model) {
+          const result = await bridge.generate(request);
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+          };
+        }
+
+        const result = await router.generate(request);
         return {
           content: [{ type: 'text', text: JSON.stringify(result) }],
         };
@@ -588,7 +600,7 @@ async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -605,7 +617,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker);
+    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge);
   });
 
   const transport = new StdioServerTransport();

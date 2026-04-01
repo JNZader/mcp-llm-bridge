@@ -26,6 +26,7 @@ import { CostTracker } from './core/cost-tracker.js';
 import { GroupStore } from './core/groups.js';
 import { SessionStore } from './core/session.js';
 import { registry } from './core/transformer.js';
+import { BridgeOrchestrator, loadBridgeConfig } from './bridge/index.js';
 
 // Populate the transformer registry with all inbound/outbound transformers
 import './transformers/index.js';
@@ -61,6 +62,13 @@ router.setGroupStore(groupStore);
 const sessionStore = new SessionStore();
 router.setSessionStore(sessionStore);
 
+// Initialize bridge orchestrator (opt-in via bridge.yaml config)
+const bridgeConfig = loadBridgeConfig();
+const bridge = bridgeConfig ? new BridgeOrchestrator(router, bridgeConfig) : null;
+if (bridge) {
+  logger.info('Bridge orchestrator enabled — task-aware routing active');
+}
+
 /**
  * Graceful shutdown handler.
  * Closes the vault database connection, provider homes, and tracing on exit.
@@ -89,7 +97,7 @@ if (mode === 'serve') {
   startHttpServer(router, vault, config, groupStore, costTracker);
 } else {
   // MCP stdio (default — backward compatible)
-  await startMcpServer(router, vault, undefined, costTracker);
+  await startMcpServer(router, vault, undefined, costTracker, bridge);
   if (mode === '--http') {
     startHttpServer(router, vault, config, groupStore, costTracker);
   }
