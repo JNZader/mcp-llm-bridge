@@ -68,10 +68,13 @@ export interface StoredFile {
   createdAt: string;
 }
 
+export type TrustLevel = 'local-dev' | 'restricted' | 'open';
+
 export interface GatewayConfig {
   masterKey: Buffer;
   dbPath: string;
   httpPort: number;
   project?: string;
   authToken?: string;
+  securityProfile?: TrustLevel;
 }

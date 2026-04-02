@@ -20,10 +20,12 @@ import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
 import type { CodeSearchService } from '../code-search/index.js';
 import type { StateManager } from '../crdt/index.js';
 import type { CRDTType, StateSnapshot } from '../crdt/types.js';
+import type { TrustLevel } from '../core/types.js';
 import { CreateGroupSchema } from '../core/groups.js';
 import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
+import { ProfileEnforcer } from '../security/enforcer.js';
 
 /** Tool definitions exposed via MCP. */
 const TOOLS = [
@@ -851,7 +853,7 @@ async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -862,6 +864,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
     },
   );
 
+  // Default handlers (no security filtering)
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [...TOOLS],
   }));
@@ -871,10 +874,25 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
     return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager);
   });
 
+  // Apply security profile enforcement — overwrites handlers above with
+  // filtered ListTools and authorized + rate-limited CallTool.
+  let enforcer: ProfileEnforcer | undefined;
+  const profileName = securityProfile ?? 'local-dev';
+
+  if (profileName !== 'local-dev') {
+    enforcer = new ProfileEnforcer(profileName);
+    enforcer.wrapHandlers(
+      server,
+      TOOLS,
+      (name, args) =>
+        handleToolCall(name, args, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager),
+    );
+  }
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  logger.info('MCP server started on stdio');
+  logger.info({ securityProfile: profileName }, 'MCP server started on stdio');
 
   return server;
 }

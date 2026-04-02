@@ -120,7 +120,7 @@ if (mode === 'serve') {
   startHttpServer(router, vault, config, groupStore, costTracker);
 } else {
   // MCP stdio (default — backward compatible)
-  await startMcpServer(router, vault, undefined, costTracker, bridge, codeSearch, stateManager);
+  await startMcpServer(router, vault, undefined, costTracker, bridge, codeSearch, stateManager, config.securityProfile);
   if (mode === '--http') {
     startHttpServer(router, vault, config, groupStore, costTracker);
   }

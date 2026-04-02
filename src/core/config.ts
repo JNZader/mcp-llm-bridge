@@ -137,5 +137,17 @@ export function loadConfig(): GatewayConfig {
     logger.warn('Auth disabled (not production, LLM_GATEWAY_AUTH_REQUIRED not set)');
   }
 
-  return { masterKey, dbPath, httpPort, authToken };
+  const VALID_PROFILES = ['local-dev', 'restricted', 'open'] as const;
+  type TrustLevel = (typeof VALID_PROFILES)[number];
+  const rawProfile = process.env['LLM_GATEWAY_SECURITY_PROFILE']?.trim() ?? 'local-dev';
+
+  if (!VALID_PROFILES.includes(rawProfile as TrustLevel)) {
+    throw new Error(
+      `LLM_GATEWAY_SECURITY_PROFILE must be one of: ${VALID_PROFILES.join(', ')}. Got: "${rawProfile}"`,
+    );
+  }
+
+  const securityProfile = rawProfile as TrustLevel;
+
+  return { masterKey, dbPath, httpPort, authToken, securityProfile };
 }
