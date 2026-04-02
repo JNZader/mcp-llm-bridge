@@ -12,6 +12,7 @@ import { z } from 'zod';
 import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { resolveModel } from './fuzzy.js';
 
 // ── Zod Schemas ────────────────────────────────────────────
 
@@ -273,6 +274,26 @@ export class GroupStore {
       if (!group.modelPattern) continue;
       if (globMatch(group.modelPattern, model)) return group;
     }
+
+    // Fuzzy fallback: resolve against all modelPattern values
+    const corpus: string[] = [];
+    const patternToGroup = new Map<string, ProviderGroup>();
+    for (const group of this.cache.values()) {
+      if (!group.modelPattern) continue;
+      // Only use non-glob patterns for fuzzy (globs don't make sense for JW)
+      if (!group.modelPattern.includes('*') && !group.modelPattern.includes('?')) {
+        corpus.push(group.modelPattern);
+        patternToGroup.set(group.modelPattern, group);
+      }
+    }
+
+    if (corpus.length > 0) {
+      const fuzzyResult = resolveModel(model, corpus);
+      if (fuzzyResult) {
+        return patternToGroup.get(fuzzyResult.match) ?? null;
+      }
+    }
+
     return null;
   }
 

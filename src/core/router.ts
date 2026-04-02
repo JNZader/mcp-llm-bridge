@@ -30,6 +30,7 @@ import type { CostTracker } from './cost-tracker.js';
 import type { FreeModelRouter } from '../free-models/router.js';
 import { createBalancer, memberKey } from './balancer.js';
 import { logger } from './logger.js';
+import { resolveModel } from './fuzzy.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 
 /**
@@ -689,6 +690,18 @@ export class Router {
       );
       if (modelProvider) {
         return [modelProvider, ...available.filter((p) => p !== modelProvider)];
+      }
+
+      // Fuzzy fallback: try resolving against all available model IDs
+      const corpus = available.flatMap((p) => p.models.map((m) => m.id));
+      const fuzzyResult = resolveModel(request.model, corpus);
+      if (fuzzyResult) {
+        const fuzzyProvider = available.find((p) =>
+          p.models.some((m) => m.id === fuzzyResult.match),
+        );
+        if (fuzzyProvider) {
+          return [fuzzyProvider, ...available.filter((p) => p !== fuzzyProvider)];
+        }
       }
     }
 

@@ -64,7 +64,7 @@ const PRICE_TABLE: Record<string, ModelPrice> = {
  * - strip date suffixes (e.g., "-20250514")
  * - strip "latest" suffix
  */
-function normalizeModelName(model: string): string {
+export function normalizeModelName(model: string): string {
   return model
     .toLowerCase()
     .replace(/\./g, '-')

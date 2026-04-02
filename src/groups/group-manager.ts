@@ -28,6 +28,7 @@ import {
   LoadBalanceMode,
 } from '../balancer/index.js';
 import { SessionManager } from '../session/index.js';
+import { resolveModel } from '../core/fuzzy.js';
 
 /**
  * Database row for groups table
@@ -169,15 +170,26 @@ export class GroupManager {
 
     // Load from database
     const row = this.db.prepare('SELECT * FROM groups WHERE name = ?').get(name) as GroupRow | undefined;
-    if (!row) return null;
+    if (row) {
+      const channels = this.loadGroupChannels(row.id);
+      const group = this.rowToGroup(row, channels);
 
-    const channels = this.loadGroupChannels(row.id);
-    const group = this.rowToGroup(row, channels);
+      // Update cache
+      this.cache.set(name, group);
 
-    // Update cache
-    this.cache.set(name, group);
+      return group;
+    }
 
-    return group;
+    // Fuzzy fallback: resolve against cache keys
+    const cacheKeys = Array.from(this.cache.keys());
+    if (cacheKeys.length > 0) {
+      const fuzzyResult = resolveModel(name, cacheKeys);
+      if (fuzzyResult) {
+        return this.cache.get(fuzzyResult.match) ?? null;
+      }
+    }
+
+    return null;
   }
 
   /**
