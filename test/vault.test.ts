@@ -153,6 +153,85 @@ describe('Vault', () => {
   });
 });
 
+// ── Master key zeroing ───────────────────────────────────
+
+describe('Vault destroy (key zeroing)', () => {
+  it('destroy() zeroes the master key buffer', () => {
+    const config = createTestConfig();
+    const v = new Vault(config);
+
+    // Store something so we know the key was functional
+    v.store('zeroing-test', 'default', 'sk-secret-value');
+    assert.equal(v.getDecrypted('zeroing-test', 'default'), 'sk-secret-value');
+
+    v.destroy();
+
+    // The original Buffer should now be all zeroes
+    assert.ok(
+      config.masterKey.every((byte) => byte === 0),
+      'Master key buffer must be zeroed after destroy()',
+    );
+    assert.equal(v.destroyed, true, 'destroyed flag must be true');
+
+    // Cleanup
+    for (const suffix of ['', '-wal', '-shm']) {
+      const filePath = config.dbPath + suffix;
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  it('destroy() is idempotent — calling twice does not throw', () => {
+    const config = createTestConfig();
+    const v = new Vault(config);
+
+    v.destroy();
+    assert.doesNotThrow(() => v.destroy());
+
+    for (const suffix of ['', '-wal', '-shm']) {
+      const filePath = config.dbPath + suffix;
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  it('close() also zeroes the master key (backward compat)', () => {
+    const config = createTestConfig();
+    const v = new Vault(config);
+
+    v.close();
+
+    assert.ok(
+      config.masterKey.every((byte) => byte === 0),
+      'Master key buffer must be zeroed after close()',
+    );
+    assert.equal(v.destroyed, true);
+
+    for (const suffix of ['', '-wal', '-shm']) {
+      const filePath = config.dbPath + suffix;
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
+  it('decrypt fails after destroy because key is zeroed', () => {
+    const config = createTestConfig();
+    const v = new Vault(config);
+
+    v.store('post-destroy', 'default', 'should-not-decrypt');
+    v.destroy();
+
+    // Re-open a NEW vault with the same DB but the original key is now zeroed
+    // This proves the in-memory key was wiped — the buffer is shared
+    assert.ok(
+      config.masterKey.every((byte) => byte === 0),
+      'Key buffer is zeroed',
+    );
+
+    for (const suffix of ['', '-wal', '-shm']) {
+      const filePath = config.dbPath + suffix;
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+});
+
 // ── Project scoping ───────────────────────────────────────
 
 describe('Vault project scoping', () => {

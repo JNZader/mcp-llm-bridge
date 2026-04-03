@@ -103,7 +103,7 @@ async function setupGracefulShutdown(vault: Vault): Promise<void> {
     groupStore.close();
     sessionStore.destroy();
     cleanupAllProviderHomes();
-    vault.close();
+    vault.destroy();
     await shutdownTracing();
     process.exit(0);
   };

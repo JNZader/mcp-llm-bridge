@@ -58,6 +58,7 @@ interface FileRow {
 export class Vault {
   private readonly db: Database.Database;
   private readonly masterKey: Buffer;
+  private _destroyed = false;
 
   constructor(config: GatewayConfig) {
     this.masterKey = config.masterKey;
@@ -661,9 +662,34 @@ export class Vault {
   }
 
   /**
+   * Whether this vault has been destroyed (master key zeroed).
+   */
+  get destroyed(): boolean {
+    return this._destroyed;
+  }
+
+  /**
    * Close the underlying database connection.
+   * @deprecated Use {@link destroy} instead to also zero the master key.
    */
   close(): void {
+    this.destroy();
+  }
+
+  /**
+   * Zero the in-memory master key and close the database.
+   *
+   * After calling this method the Vault instance is no longer usable —
+   * any attempt to encrypt or decrypt will fail because the key material
+   * has been overwritten with zeroes.
+   *
+   * Idempotent: calling destroy() more than once is safe.
+   */
+  destroy(): void {
+    if (!this._destroyed) {
+      this.masterKey.fill(0);
+      this._destroyed = true;
+    }
     this.db.close();
   }
 }
