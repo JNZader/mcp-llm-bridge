@@ -17,3 +17,5 @@ export {
 } from './profiles.js';
 
 export { ProfileEnforcer } from './enforcer.js';
+
+export { sanitizeErrorMessage } from './sanitize.js';

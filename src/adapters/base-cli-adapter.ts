@@ -17,6 +17,7 @@ import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '
 import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
 import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import { sanitizeErrorMessage } from '../security/sanitize.js';
 
 /**
  * Interface for CLI adapter configuration.
@@ -126,7 +127,7 @@ export abstract class BaseCliAdapter implements LLMProvider {
         } catch { /* ignore parse errors */ }
       }
       throw new Error(
-        `${this.config.name} CLI failed: ${execError.message ?? String(error)}`,
+        sanitizeErrorMessage(`${this.config.name} CLI failed: ${execError.message ?? String(error)}`),
       );
     } finally {
       mount?.cleanup();

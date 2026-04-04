@@ -3,6 +3,7 @@
  */
 
 import { execFileSync, execFile } from 'node:child_process';
+import { sanitizeErrorMessage } from '../security/sanitize.js';
 
 /**
  * Default timeout for CLI subprocess (2 minutes).
@@ -154,7 +155,7 @@ export async function execCliAsync(
       } else {
         const error = new Error(`Process exited with code ${code}`) as CliError;
         error.stdout = stdoutParts.join('');
-        error.stderr = stderrParts.join('');
+        error.stderr = sanitizeErrorMessage(stderrParts.join(''));
         reject(error);
       }
     });
