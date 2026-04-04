@@ -1,5 +1,6 @@
 export { Vault } from './vault.js';
 export { MultiKeyManager } from './multi-key-manager.js';
+export { encrypt, decrypt } from './crypto.js';
 export type { EncryptedData } from './crypto.js';
 export type {
   KeyStatus,
