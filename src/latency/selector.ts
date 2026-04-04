@@ -34,7 +34,7 @@ export function selectProviderWithLatency(
   }
 
   if (candidates.length === 1) {
-    return candidates[0];
+    return candidates[0]!;
   }
 
   // Attach latency data to candidates (Infinity means no data)
@@ -45,11 +45,11 @@ export function selectProviderWithLatency(
 
   // Separate candidates with valid latency from those without
   const withValidLatency = withLatency.filter((c) => c.latency > 0 && c.latency !== Number.POSITIVE_INFINITY);
-  const withoutLatency = withLatency.filter((c) => c.latency <= 0 || c.latency === Number.POSITIVE_INFINITY);
+  // withoutLatency intentionally computed but unused - kept for future logging/metrics
 
   // If no valid latency data, use round robin
   if (withValidLatency.length === 0) {
-    return candidates[roundRobinIndex % candidates.length];
+    return candidates[roundRobinIndex % candidates.length]!;
   }
 
   // Sort by latency (fastest first)
@@ -57,7 +57,7 @@ export function selectProviderWithLatency(
 
   // If only one candidate has latency data, use it
   if (withValidLatency.length === 1) {
-    const winner = withValidLatency[0];
+    const winner = withValidLatency[0]!;
     const original = candidates.find((c) => c.provider === winner.provider);
     if (original) {
       return original;
@@ -65,7 +65,7 @@ export function selectProviderWithLatency(
   }
 
   // Check if best and second best are within 20% (similar performance)
-  const best = withValidLatency[0];
+  const best = withValidLatency[0]!;
   const second = withValidLatency[1];
 
   if (second) {
@@ -77,16 +77,16 @@ export function selectProviderWithLatency(
       const eligibleCandidates = candidates.filter((c) =>
         withValidLatency.some((w) => w.provider === c.provider)
       );
-      return eligibleCandidates[roundRobinIndex % eligibleCandidates.length];
+      return eligibleCandidates[roundRobinIndex % eligibleCandidates.length]!;
     }
   }
 
   // Use fastest provider
-  const winner = withValidLatency[0];
-  const original = candidates.find((c) => c.provider === winner.provider);
+  const winner2 = withValidLatency[0]!;
+  const original = candidates.find((c) => c.provider === winner2.provider);
   if (!original) {
     // Fallback to first candidate if something went wrong
-    return candidates[0];
+    return candidates[0]!;
   }
 
   return original;

@@ -212,9 +212,9 @@ describe('BridgeOrchestrator response normalization', () => {
     });
 
     assert.equal(capturedRequest.length, 1);
-    assert.equal(capturedRequest[0].system, 'You are a code reviewer');
-    assert.equal(capturedRequest[0].maxTokens, 2048);
-    assert.equal(capturedRequest[0].project, 'my-project');
-    assert.equal(capturedRequest[0].provider, 'claude-cli');
+    assert.equal(capturedRequest[0]!.system, 'You are a code reviewer');
+    assert.equal(capturedRequest[0]!.maxTokens, 2048);
+    assert.equal(capturedRequest[0]!.project, 'my-project');
+    assert.equal(capturedRequest[0]!.provider, 'claude-cli');
   });
 });

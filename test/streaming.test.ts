@@ -12,7 +12,7 @@ import {
   StreamTokenAccumulator,
 } from '../src/transformers/streaming.js';
 import type { InternalLLMChunk } from '../src/transformers/streaming.js';
-import { StreamRecorder, CostTracker } from '../src/core/cost-tracker.js';
+import { CostTracker } from '../src/core/cost-tracker.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

@@ -204,8 +204,6 @@ export class MultiKeyManager {
     decryptFn: (encrypted: Buffer, iv: Buffer, authTag: Buffer) => string
   ): Promise<KeyStatus | null> {
     const project = this.resolveProject(options.project);
-    const now = Date.now();
-
     const soonestStmt = this.db.prepare(`
       SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag,
              key_priority, cooldown_until, last_used_at, request_count, 

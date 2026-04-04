@@ -16,7 +16,7 @@ import { normalizeOpenAIRequest } from './openai-format.js';
 
 export class ProtocolConverter {
   private adapters: Map<ProtocolType, ProtocolAdapter>;
-  private readonly canonicalFormat: 'openai' = 'openai';
+  // Canonical format is always OpenAI
 
   constructor() {
     this.adapters = new Map<ProtocolType, ProtocolAdapter>([

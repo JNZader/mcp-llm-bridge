@@ -8,7 +8,7 @@
 
 import type { Router } from '../core/router.js';
 import type { GenerateRequest } from '../core/types.js';
-import type { BridgeConfig, BridgeResponse, TaskType } from './types.js';
+import type { BridgeConfig, BridgeResponse } from './types.js';
 import { classify } from './classifier.js';
 import { logger } from '../core/logger.js';
 

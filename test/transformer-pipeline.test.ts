@@ -12,16 +12,14 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { TransformerRegistry } from '../src/core/transformer.js';
-import { TransformError } from '../src/core/transformer.js';
 import { Router, useTransformers } from '../src/core/router.js';
 import type {
   LLMProvider,
   GenerateRequest,
   GenerateResponse,
-  ModelInfo,
   ProviderType,
 } from '../src/core/types.js';
-import type { InternalLLMRequest, InternalLLMResponse } from '../src/core/internal-model.js';
+import type { InternalLLMRequest } from '../src/core/internal-model.js';
 
 // ── Inbound transformers ────────────────────────────────────
 

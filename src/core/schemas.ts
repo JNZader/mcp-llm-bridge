@@ -53,11 +53,19 @@ export const fileStoreSchema = z.object({
   project: z.string().optional(),
 });
 
+/** Cost estimate query schema (GET query params). */
+export const costEstimateQuerySchema = z.object({
+  model: z.string().min(1, 'model is required'),
+  inputTokens: z.coerce.number().int().nonnegative('inputTokens must be >= 0'),
+  outputTokens: z.coerce.number().int().nonnegative('outputTokens must be >= 0'),
+});
+
 /** Type exports. */
 export type GenerateRequest = z.infer<typeof generateRequestSchema>;
 export type ChatCompletionsRequest = z.infer<typeof chatCompletionsSchema>;
 export type CredentialStoreRequest = z.infer<typeof credentialStoreSchema>;
 export type FileStoreRequest = z.infer<typeof fileStoreSchema>;
+export type CostEstimateQuery = z.infer<typeof costEstimateQuerySchema>;
 
 /**
  * Validate a generate request.

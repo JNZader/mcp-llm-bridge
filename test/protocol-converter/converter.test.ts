@@ -33,10 +33,10 @@ describe('ProtocolConverter', () => {
 
       assert.strictEqual(result.canonical.model, 'claude-3-sonnet-20240229');
       assert.strictEqual(result.canonical.messages.length, 3); // system + 2 messages
-      assert.strictEqual(result.canonical.messages[0].role, 'system');
-      assert.strictEqual(result.canonical.messages[0].content, 'You are a helpful assistant');
-      assert.strictEqual(result.canonical.messages[1].role, 'user');
-      assert.strictEqual(result.canonical.messages[1].content, 'Hello');
+      assert.strictEqual(result.canonical.messages[0]!.role, 'system');
+      assert.strictEqual(result.canonical.messages[0]!.content, 'You are a helpful assistant');
+      assert.strictEqual(result.canonical.messages[1]!.role, 'user');
+      assert.strictEqual(result.canonical.messages[1]!.content, 'Hello');
       assert.strictEqual(result.targetProtocol, 'anthropic');
     });
 
@@ -53,7 +53,7 @@ describe('ProtocolConverter', () => {
 
       const result = converter.convertIncoming('anthropic', anthropicRequest);
 
-      assert.strictEqual(result.canonical.messages[0].content, 'Hello with blocks');
+      assert.strictEqual(result.canonical.messages[0]!.content, 'Hello with blocks');
     });
 
     it('should convert OpenAI response to Anthropic format', () => {
@@ -74,7 +74,7 @@ describe('ProtocolConverter', () => {
 
       const result = converter.convertOutgoing('anthropic', openaiResponse) as { content: Array<{ type: string; text: string }>; role: string; usage: { input_tokens: number; output_tokens: number } };
 
-      assert.strictEqual(result.content[0].text, 'Hello!');
+      assert.strictEqual(result.content[0]!.text, 'Hello!');
       assert.strictEqual(result.role, 'assistant');
       assert.strictEqual(result.usage.input_tokens, 10);
       assert.strictEqual(result.usage.output_tokens, 5);
@@ -117,10 +117,10 @@ describe('ProtocolConverter', () => {
 
       assert.strictEqual(result.canonical.model, 'gemini-1.5-flash');
       assert.strictEqual(result.canonical.messages.length, 2);
-      assert.strictEqual(result.canonical.messages[0].role, 'user');
-      assert.strictEqual(result.canonical.messages[0].content, 'Hello');
-      assert.strictEqual(result.canonical.messages[1].role, 'assistant');
-      assert.strictEqual(result.canonical.messages[1].content, 'Hi!');
+      assert.strictEqual(result.canonical.messages[0]!.role, 'user');
+      assert.strictEqual(result.canonical.messages[0]!.content, 'Hello');
+      assert.strictEqual(result.canonical.messages[1]!.role, 'assistant');
+      assert.strictEqual(result.canonical.messages[1]!.content, 'Hi!');
       assert.strictEqual(result.canonical.temperature, 0.7);
     });
 
@@ -160,8 +160,8 @@ describe('ProtocolConverter', () => {
 
       const result = converter.convertOutgoing('gemini', openaiResponse) as { candidates: Array<{ content: { parts: Array<{ text: string }> }; finishReason: string }>; usageMetadata: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number } };
 
-      assert.strictEqual(result.candidates[0].content.parts[0].text, 'Gemini response!');
-      assert.strictEqual(result.candidates[0].finishReason, 'STOP');
+      assert.strictEqual(result.candidates[0]!.content.parts[0]!.text, 'Gemini response!');
+      assert.strictEqual(result.candidates[0]!.finishReason, 'STOP');
       assert.strictEqual(result.usageMetadata.promptTokenCount, 8);
       assert.strictEqual(result.usageMetadata.candidatesTokenCount, 3);
       assert.strictEqual(result.usageMetadata.totalTokenCount, 11);
@@ -185,7 +185,7 @@ describe('ProtocolConverter', () => {
 
       const result = converter.convertOutgoing('gemini', openaiResponse) as { candidates: Array<{ finishReason: string }> };
 
-      assert.strictEqual(result.candidates[0].finishReason, 'MAX_TOKENS');
+      assert.strictEqual(result.candidates[0]!.finishReason, 'MAX_TOKENS');
     });
   });
 
@@ -363,7 +363,7 @@ describe('ProtocolConverter', () => {
     it('should allow registering custom adapter', () => {
       const customAdapter = {
         protocol: 'custom' as any,
-        toCanonical: (req: unknown) => ({
+        toCanonical: (_req: unknown) => ({
           model: 'custom-model',
           messages: [{ role: 'user' as const, content: 'test' }],
         }),
@@ -393,7 +393,7 @@ describe('ProtocolConverter', () => {
 
         const result = adapter.toCanonical(request);
 
-        assert.strictEqual(result.messages[0].content, 'FirstSecond');
+        assert.strictEqual(result.messages[0]!.content, 'FirstSecond');
       });
 
       it('should convert canonical back to Anthropic request', () => {
@@ -410,7 +410,7 @@ describe('ProtocolConverter', () => {
 
         assert.strictEqual(result.system, 'Be helpful');
         assert.strictEqual(result.messages.length, 1);
-        assert.strictEqual(result.messages[0].role, 'user');
+        assert.strictEqual(result.messages[0]!.role, 'user');
       });
     });
 
@@ -430,7 +430,7 @@ describe('ProtocolConverter', () => {
 
         const result = adapter.toCanonical(request);
 
-        assert.strictEqual(result.messages[0].content, 'Part 1Part 2');
+        assert.strictEqual(result.messages[0]!.content, 'Part 1Part 2');
       });
 
       it('should convert canonical back to Gemini request', () => {
@@ -447,8 +447,8 @@ describe('ProtocolConverter', () => {
 
         // System messages are filtered in Gemini
         assert.strictEqual(result.contents.length, 1);
-        assert.strictEqual(result.contents[0].role, 'user');
-        assert.strictEqual(result.contents[0].parts[0].text, 'Hello');
+        assert.strictEqual(result.contents[0]!.role, 'user');
+        assert.strictEqual(result.contents[0]!.parts[0]!.text, 'Hello');
       });
     });
   });

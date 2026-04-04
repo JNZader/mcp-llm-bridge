@@ -408,7 +408,7 @@ describe('GET /v1/analytics', () => {
       };
 
       assert.equal(data.data.length, 1);
-      const point = data.data[0];
+      const point = data.data[0]!;
 
       // Verify all required fields
       assert.ok(typeof point.timestamp === 'number', 'Should have timestamp');
@@ -447,7 +447,7 @@ describe('GET /v1/analytics', () => {
         }>;
       };
 
-      const point = data.data[0];
+      const point = data.data[0]!;
       // Percentiles may or may not be present depending on implementation
       if (point.p95Latency !== undefined) {
         assert.ok(typeof point.p95Latency === 'number', 'p95Latency should be a number');
@@ -478,7 +478,7 @@ describe('GET /v1/analytics', () => {
       };
 
       // Summary should match sum of data
-      const dataPoint = data.data[0];
+      const dataPoint = data.data[0]!;
       assert.equal(data.summary.totalRequests, dataPoint.requests);
       assert.equal(data.summary.totalTokens, dataPoint.inputTokens + dataPoint.outputTokens);
       assert.equal(data.summary.totalCost, dataPoint.cost);

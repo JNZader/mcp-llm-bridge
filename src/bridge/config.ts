@@ -9,7 +9,6 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { logger } from '../core/logger.js';
-import { VALID_PROVIDERS } from '../core/constants.js';
 import type { BridgeConfig, BridgeConfigRaw } from './types.js';
 
 const VALID_TASK_TYPES = new Set(['large-context', 'code-review', 'fast-completion', 'default']);
@@ -39,7 +38,7 @@ export function parseSimpleYaml(content: string): BridgeConfigRaw {
     // Array item (  - value)
     const arrayMatch = stripped.match(/^\s+-\s+(.+)$/);
     if (arrayMatch && arrayKey) {
-      arrayValues.push(arrayMatch[1].trim());
+      arrayValues.push(arrayMatch[1]!.trim());
       continue;
     }
 
@@ -60,7 +59,7 @@ export function parseSimpleYaml(content: string): BridgeConfigRaw {
       // Top-level key with no value (section header like "routes:")
       const sectionMatch = stripped.match(/^(\w[\w_]*):\s*$/);
       if (sectionMatch) {
-        currentSection = sectionMatch[1];
+        currentSection = sectionMatch[1]!;
         if (currentSection === 'fallback_order') {
           arrayKey = 'fallback_order';
         }
@@ -73,13 +72,13 @@ export function parseSimpleYaml(content: string): BridgeConfigRaw {
         currentSection = null;
         const [, key, value] = topLevelMatch;
         if (key === 'default') {
-          result.default = value.trim();
+          result.default = value!.trim();
         }
         if (key === 'fallback_order') {
           // Inline array: [a, b, c]
-          const inlineMatch = value.match(/^\[(.+)]$/);
+          const inlineMatch = value!.match(/^\[(.+)]$/);
           if (inlineMatch) {
-            result.fallback_order = inlineMatch[1].split(',').map((s) => s.trim());
+            result.fallback_order = inlineMatch[1]!.split(',').map((s) => s.trim());
           }
         }
         continue;
@@ -90,7 +89,7 @@ export function parseSimpleYaml(content: string): BridgeConfigRaw {
     const nestedMatch = stripped.match(/^\s+(\S+):\s+(.+)$/);
     if (nestedMatch && currentSection === 'routes') {
       if (!result.routes) result.routes = {};
-      result.routes[nestedMatch[1].trim()] = nestedMatch[2].trim();
+      result.routes[nestedMatch[1]!.trim()] = nestedMatch[2]!.trim();
       continue;
     }
   }

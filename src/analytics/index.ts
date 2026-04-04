@@ -17,14 +17,14 @@ export type {
   AggregatorConfig,
   Database,
   AnalyticsFlushData,
-} from './types';
+} from './types.js';
 
 // Export type guards
 export {
   isAnalyticsMetrics,
   isAnalyticsQuery,
   isAggregatedDataPoint,
-} from './types';
+} from './types.js';
 
 // Export AnalyticsAggregator class
-export { AnalyticsAggregator } from './aggregator';
+export { AnalyticsAggregator } from './aggregator.js';

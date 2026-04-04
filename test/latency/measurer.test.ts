@@ -7,9 +7,6 @@ import assert from 'node:assert/strict';
 
 import {
   LatencyMeasurer,
-  DEFAULT_TTL_MS,
-  DEFAULT_INTERVAL_MS,
-  MEASUREMENT_TIMEOUT_MS,
 } from '../../src/latency/measurer.js';
 import type { ProviderConfig } from '../../src/latency/types.js';
 

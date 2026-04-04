@@ -5,7 +5,7 @@
  * Measurements are cached with a 2-hour TTL for freshness.
  */
 
-import type { LatencyMeasurement, ProviderConfig, MeasurementResult } from './types.js';
+import type { LatencyMeasurement, ProviderConfig } from './types.js';
 
 /** Default TTL for measurements in milliseconds (2 hours) */
 export const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000;
@@ -47,7 +47,7 @@ export class LatencyMeasurer {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), MEASUREMENT_TIMEOUT_MS);
 
-      const response = await fetch(url, {
+      await fetch(url, {
         method: 'HEAD',
         signal: controller.signal,
         // Prevent following redirects to avoid measuring wrong endpoint

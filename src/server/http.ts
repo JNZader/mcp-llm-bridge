@@ -42,7 +42,9 @@ import {
   validateChatCompletions,
   validateCredentialStore,
   validateFileStore,
+  costEstimateQuerySchema,
 } from '../core/schemas.js';
+import { estimateCost, getPriceTable } from '../core/pricing.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 import type { LatencyMeasurer } from '../latency/index.js';
 import type { InternalLLMRequest } from '../core/internal-model.js';
@@ -527,6 +529,7 @@ export function startHttpServer(
   groupStore?: GroupStore,
   costTracker?: CostTracker,
   latencyMeasurer?: LatencyMeasurer,
+  ..._rest: unknown[]
 ): ServerType {
   // Reset start time on server creation
   serverStartTime = Date.now();
@@ -836,6 +839,48 @@ export function startHttpServer(
         count: measurements.length,
         timestamp: new Date().toISOString(),
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── Cost Estimation ────────────────────────────────────
+
+  app.get('/v1/cost/estimate', (c) => {
+    try {
+      const query = {
+        model: c.req.query('model'),
+        inputTokens: c.req.query('inputTokens'),
+        outputTokens: c.req.query('outputTokens'),
+      };
+
+      const parsed = costEstimateQuerySchema.safeParse(query);
+      if (!parsed.success) {
+        const issues = parsed.error.issues;
+        const firstIssue = issues[0];
+        return c.json({
+          error: 'Validation error',
+          details: firstIssue ? `${firstIssue.path.join('.')}: ${firstIssue.message}` : 'Invalid query parameters',
+        }, 400);
+      }
+
+      const result = estimateCost(parsed.data.model, parsed.data.inputTokens, parsed.data.outputTokens);
+      if (!result) {
+        return c.json({ error: 'Unknown model' }, 400);
+      }
+
+      return c.json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.get('/v1/cost/models', (c) => {
+    try {
+      const table = getPriceTable();
+      return c.json(table);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);

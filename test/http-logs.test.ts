@@ -145,7 +145,7 @@ describe('GET /v1/logs', () => {
     // Create RequestLogger with the separate database
     requestLogger = new RequestLogger(logsDb);
 
-    server = startHttpServer(router, vault, config, undefined, undefined, requestLogger) as unknown as http.Server;
+    server = startHttpServer(router, vault, config, undefined, undefined, requestLogger as any) as unknown as http.Server;
     await new Promise<void>((resolve) => {
       server.on('listening', () => {
         const address = server.address();
@@ -203,7 +203,7 @@ describe('GET /v1/logs', () => {
       // Verify descending order
       for (let i = 1; i < data.logs.length; i++) {
         assert.ok(
-          data.logs[i - 1].timestamp >= data.logs[i].timestamp,
+          data.logs[i - 1]!.timestamp >= data.logs[i]!.timestamp,
           'Logs should be in descending timestamp order'
         );
       }
@@ -400,7 +400,7 @@ describe('GET /v1/logs', () => {
         }>;
       };
 
-      const log = data.logs[0];
+      const log = data.logs[0]!;
       assert.ok(typeof log.id === 'number', 'Should have id');
       assert.ok(typeof log.timestamp === 'number', 'Should have timestamp');
       assert.ok(typeof log.provider === 'string', 'Should have provider');

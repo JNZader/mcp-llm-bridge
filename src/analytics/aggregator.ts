@@ -26,7 +26,7 @@ import type {
   AggregatorConfig,
   Database,
   AnalyticsFlushData,
-} from './types';
+} from './types.js';
 
 /**
  * AnalyticsAggregator - In-memory metrics aggregation
@@ -321,10 +321,10 @@ export class AnalyticsAggregator {
     const weight = index - lower;
 
     if (upper >= sorted.length) {
-      return sorted[sorted.length - 1];
+      return sorted[sorted.length - 1]!;
     }
 
-    return Math.round(sorted[lower] * (1 - weight) + sorted[upper] * weight);
+    return Math.round(sorted[lower]! * (1 - weight) + sorted[upper]! * weight);
   }
 
   /**

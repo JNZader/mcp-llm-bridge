@@ -5,9 +5,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { unlinkSync, existsSync, mkdirSync, statSync, readFileSync } from 'node:fs';
+import { unlinkSync, existsSync, statSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
 
 import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
@@ -168,7 +167,7 @@ describe('isCliAvailableAsync', () => {
 
 describe('Vault file operations', () => {
   beforeEach(() => {
-    vault.db.exec('DELETE FROM files');
+    (vault as any).db.exec('DELETE FROM files');
   });
 
   it('stores and retrieves files', () => {
@@ -222,7 +221,7 @@ describe('Vault file operations', () => {
     
     const files = vault.getProviderFiles('claude', 'my-project');
     assert.equal(files.length, 1);
-    assert.equal(files[0].content, '{"project": true}');
-    assert.equal(files[0].project, 'my-project');
+    assert.equal(files[0]!.content, '{"project": true}');
+    assert.equal(files[0]!.project, 'my-project');
   });
 });

@@ -16,6 +16,7 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { trace, context, SpanStatusCode, Span } from '@opentelemetry/api';
 import { VERSION } from './constants.js';
+import { calculateCost } from './pricing.js';
 
 let sdk: NodeSDK | null = null;
 
@@ -125,6 +126,74 @@ export async function withSpan<T>(
   } finally {
     span.end();
   }
+}
+
+/**
+ * GenAI semantic convention attributes for LLM generation spans.
+ * Follows the emerging OTel GenAI semantic conventions:
+ * https://opentelemetry.io/docs/specs/semconv/gen-ai/
+ */
+export interface GenAISpanAttributes {
+  'gen_ai.system': string;
+  'gen_ai.request.model': string;
+  'gen_ai.usage.input_tokens': number;
+  'gen_ai.usage.output_tokens': number;
+  'gen_ai.usage.cost': number;
+  'gen_ai.response.finish_reason': string;
+}
+
+/**
+ * Enrich an active span with OTel GenAI semantic convention attributes.
+ *
+ * Sets gen_ai.* attributes on the span for observability dashboards
+ * that understand the GenAI conventions (e.g., Grafana, Datadog).
+ *
+ * Cost is computed via calculateCost(). Unknown models get cost=0
+ * with a warning logged (handled inside calculateCost).
+ *
+ * @param span - The active OTel span to enrich
+ * @param attrs - GenAI attributes to set
+ */
+export function enrichGenerateSpan(span: Span, attrs: GenAISpanAttributes): void {
+  span.setAttribute('gen_ai.system', attrs['gen_ai.system']);
+  span.setAttribute('gen_ai.request.model', attrs['gen_ai.request.model']);
+  span.setAttribute('gen_ai.usage.input_tokens', attrs['gen_ai.usage.input_tokens']);
+  span.setAttribute('gen_ai.usage.output_tokens', attrs['gen_ai.usage.output_tokens']);
+  span.setAttribute('gen_ai.usage.cost', attrs['gen_ai.usage.cost']);
+  span.setAttribute('gen_ai.response.finish_reason', attrs['gen_ai.response.finish_reason']);
+}
+
+/**
+ * Build GenAISpanAttributes from usage data and enrich the span.
+ *
+ * Convenience wrapper that computes cost from model + tokens
+ * and maps success/error to finish_reason before calling enrichGenerateSpan().
+ *
+ * @param span - The active OTel span to enrich
+ * @param provider - Provider name (e.g., "openai", "anthropic")
+ * @param model - Model name (e.g., "gpt-4o", "claude-3.5-sonnet")
+ * @param tokensIn - Input/prompt token count
+ * @param tokensOut - Output/completion token count
+ * @param success - Whether the generation succeeded
+ */
+export function enrichGenerateSpanFromUsage(
+  span: Span,
+  provider: string,
+  model: string,
+  tokensIn: number,
+  tokensOut: number,
+  success: boolean,
+): void {
+  const cost = calculateCost(model, tokensIn, tokensOut);
+
+  enrichGenerateSpan(span, {
+    'gen_ai.system': provider,
+    'gen_ai.request.model': model,
+    'gen_ai.usage.input_tokens': tokensIn,
+    'gen_ai.usage.output_tokens': tokensOut,
+    'gen_ai.usage.cost': cost,
+    'gen_ai.response.finish_reason': success ? 'stop' : 'error',
+  });
 }
 
 /**

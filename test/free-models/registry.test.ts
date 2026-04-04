@@ -34,7 +34,7 @@ describe('validateEntry', () => {
   it('rejects non-object input', () => {
     const errors = validateEntry('not-an-object');
     assert.ok(errors.length > 0);
-    assert.ok(errors[0].includes('must be an object'));
+    assert.ok(errors[0]!.includes('must be an object'));
   });
 
   it('rejects entry with missing id', () => {

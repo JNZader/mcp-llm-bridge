@@ -330,8 +330,8 @@ describe('PriceManager', () => {
 
       const history = manager.getSyncHistory(10);
       expect(history.length).toBeGreaterThan(0);
-      expect(history[0].modelsAdded).toBe(1);
-      expect(history[0].modelsUpdated).toBe(0);
+      expect(history[0]!.modelsAdded).toBe(1);
+      expect(history[0]!.modelsUpdated).toBe(0);
     });
   });
 
@@ -562,7 +562,7 @@ describe('PriceManager', () => {
 
       const prices = manager.getAllPrices({ overridesOnly: true });
       expect(prices.length).toBe(1);
-      expect(prices[0].provider).toBe('anthropic');
+      expect(prices[0]!.provider).toBe('anthropic');
     });
   });
 
@@ -700,7 +700,7 @@ describe('PriceFetcher', () => {
     const prices = await fetcher.fetchPrices();
 
     expect(prices.length).toBe(1);
-    expect(prices[0].inputPrice).toBe(0);
-    expect(prices[0].outputPrice).toBe(0);
+    expect(prices[0]!.inputPrice).toBe(0);
+    expect(prices[0]!.outputPrice).toBe(0);
   });
 });

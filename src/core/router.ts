@@ -28,6 +28,9 @@ import type { GroupStore, ProviderGroup } from './groups.js';
 import type { SessionStore } from './session.js';
 import type { CostTracker } from './cost-tracker.js';
 import type { FreeModelRouter } from '../free-models/router.js';
+import type { LatencyMeasurer } from '../latency/measurer.js';
+import { selectProviderWithLatency, buildLatencyMap } from '../latency/selector.js';
+import type { ProviderCandidate } from '../latency/types.js';
 import { createBalancer, memberKey } from './balancer.js';
 import { logger } from './logger.js';
 import { resolveModel } from './fuzzy.js';
@@ -71,6 +74,28 @@ export class Router {
   private _sessionStore: SessionStore | null = null;
   private _costTracker: CostTracker | null = null;
   private _freeModelRouter: FreeModelRouter | null = null;
+  private _latencyMeasurer: LatencyMeasurer | null = null;
+  private _explorationRate: number = 0.1; // 10% epsilon-greedy
+
+  /** Set the latency measurer for latency-based routing. */
+  setLatencyMeasurer(measurer: LatencyMeasurer): void {
+    this._latencyMeasurer = measurer;
+  }
+
+  /** Get the latency measurer (null if not set). */
+  get latencyMeasurer(): LatencyMeasurer | null {
+    return this._latencyMeasurer;
+  }
+
+  /** Set the exploration rate for epsilon-greedy routing (0-1). */
+  setExplorationRate(rate: number): void {
+    this._explorationRate = Math.max(0, Math.min(1, rate));
+  }
+
+  /** Get the exploration rate. */
+  get explorationRate(): number {
+    return this._explorationRate;
+  }
 
   /** Set the cost tracker for usage recording. */
   setCostTracker(tracker: CostTracker): void {
@@ -714,10 +739,58 @@ export class Router {
     }
 
     // 3. Default: API providers first, then CLI
-    return available.sort((a, b) => {
+    const sorted = available.sort((a, b) => {
       if (a.type === 'api' && b.type === 'cli') return -1;
       if (a.type === 'cli' && b.type === 'api') return 1;
       return 0;
     });
+
+    // 4. Latency-based reordering (when measurer is set)
+    return this.reorderByLatency(sorted);
+  }
+
+  /**
+   * Reorder candidates by latency measurements using epsilon-greedy strategy.
+   *
+   * - 90% of the time: pick the fastest provider (by latency data)
+   * - 10% of the time: pick a random provider (exploration to prevent starvation)
+   * - When no measurer is set or no latency data exists: return candidates unchanged
+   */
+  private reorderByLatency(candidates: LLMProvider[]): LLMProvider[] {
+    if (!this._latencyMeasurer || candidates.length <= 1) {
+      return candidates;
+    }
+
+    const measurements = this._latencyMeasurer.getAll();
+    const latencyMap = buildLatencyMap(measurements);
+
+    // No latency data available — skip reordering
+    if (latencyMap.size === 0) {
+      return candidates;
+    }
+
+    // Epsilon-greedy exploration: random selection to prevent provider starvation
+    if (Math.random() < this._explorationRate) {
+      const randomIndex = Math.floor(Math.random() * candidates.length);
+      const picked = candidates[randomIndex];
+      if (picked) {
+        const rest = candidates.filter((_, i) => i !== randomIndex);
+        return [picked, ...rest];
+      }
+    }
+
+    // Exploit: use latency-based selection to pick the best provider
+    const providerCandidates: ProviderCandidate[] = candidates.map((p) => ({
+      provider: p.id,
+    }));
+
+    const selected = selectProviderWithLatency(providerCandidates, latencyMap, 0);
+    const best = candidates.find((p) => p.id === selected.provider);
+
+    if (best) {
+      return [best, ...candidates.filter((p) => p !== best)];
+    }
+
+    return candidates;
   }
 }

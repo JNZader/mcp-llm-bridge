@@ -27,6 +27,29 @@ import {
   MASK_VISIBLE_CHARS,
   MASK_SUFFIX,
 } from '../core/constants.js';
+import { childLogger } from '../core/logger.js';
+
+// ── Vault Audit Logging ─────────────────────────────────────
+
+/** Structured audit event for vault operations. */
+export interface VaultAuditEvent {
+  action: 'store' | 'delete' | 'access' | 'list' | 'store_file' | 'delete_file' | 'access_file';
+  provider: string;
+  keyName?: string;
+  fileName?: string;
+  project: string;
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Pino child logger scoped to vault audit events.
+ *
+ * Retention policy: In production, configure Pino transport-level log rotation
+ * (e.g. pino-roll with `frequency: 'daily'` and `limit: { count: 30 }`) to
+ * enforce 30-day retention. In development, logs are ephemeral (pino-pretty).
+ */
+export const vaultAuditLogger = childLogger({ component: 'vault-audit' });
 
 /** Row shape returned by SELECT queries on the credentials table. */
 interface CredentialRow {
@@ -199,30 +222,38 @@ export class Vault {
    */
   store(provider: string, keyName: string, apiKey: string, project?: string): number {
     const proj = project ?? GLOBAL_PROJECT;
-    const { encrypted, iv, authTag } = encrypt(apiKey, this.masterKey);
 
-    const stmt = this.db.prepare(`
-      INSERT INTO credentials (provider, key_name, project, encrypted_value, iv, auth_tag, length_hint, updated_at)
-      VALUES (@provider, @keyName, @project, @encrypted, @iv, @authTag, @lengthHint, datetime('now'))
-      ON CONFLICT(provider, key_name, project) DO UPDATE SET
-        encrypted_value = @encrypted,
-        iv              = @iv,
-        auth_tag        = @authTag,
-        length_hint     = @lengthHint,
-        updated_at      = datetime('now')
-    `);
+    try {
+      const { encrypted, iv, authTag } = encrypt(apiKey, this.masterKey);
 
-    const result = stmt.run({
-      provider,
-      keyName,
-      project: proj,
-      encrypted,
-      iv,
-      authTag,
-      lengthHint: apiKey.length,
-    });
+      const stmt = this.db.prepare(`
+        INSERT INTO credentials (provider, key_name, project, encrypted_value, iv, auth_tag, length_hint, updated_at)
+        VALUES (@provider, @keyName, @project, @encrypted, @iv, @authTag, @lengthHint, datetime('now'))
+        ON CONFLICT(provider, key_name, project) DO UPDATE SET
+          encrypted_value = @encrypted,
+          iv              = @iv,
+          auth_tag        = @authTag,
+          length_hint     = @lengthHint,
+          updated_at      = datetime('now')
+      `);
 
-    return Number(result.lastInsertRowid);
+      const result = stmt.run({
+        provider,
+        keyName,
+        project: proj,
+        encrypted,
+        iv,
+        authTag,
+        lengthHint: apiKey.length,
+      });
+
+      vaultAuditLogger.info({ action: 'store', provider, keyName, project: proj, success: true } satisfies VaultAuditEvent);
+      return Number(result.lastInsertRowid);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      vaultAuditLogger.error({ action: 'store', provider, keyName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
+      throw err;
+    }
   }
 
   /**
@@ -237,18 +268,27 @@ export class Vault {
    * @throws Error if no credential is found for the given provider/keyName
    */
   getDecrypted(provider: string, keyName = 'default', project?: string): string {
-    const decrypted = this.findCredentialDecrypted(provider, keyName, project);
+    const proj = this.resolveProject(project);
 
-    if (!decrypted) {
-      const scopeInfo = project && project !== GLOBAL_PROJECT
-        ? ` (checked project "${project}" and global)`
-        : '';
-      throw new Error(
-        `No credential found for provider "${provider}" with key name "${keyName}"${scopeInfo}.`,
-      );
+    try {
+      const decrypted = this.findCredentialDecrypted(provider, keyName, project);
+
+      if (!decrypted) {
+        const scopeInfo = project && project !== GLOBAL_PROJECT
+          ? ` (checked project "${project}" and global)`
+          : '';
+        throw new Error(
+          `No credential found for provider "${provider}" with key name "${keyName}"${scopeInfo}.`,
+        );
+      }
+
+      vaultAuditLogger.info({ action: 'access', provider, keyName, project: proj, success: true } satisfies VaultAuditEvent);
+      return decrypted;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      vaultAuditLogger.error({ action: 'access', provider, keyName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
+      throw err;
     }
-
-    return decrypted;
   }
 
   /**
@@ -267,51 +307,62 @@ export class Vault {
    * If not specified, returns all credentials.
    */
   listMasked(project?: string): MaskedCredential[] {
-    let rows: CredentialRow[];
+    const proj = project ?? GLOBAL_PROJECT;
 
-    if (project) {
-      rows = this.db
-        .prepare(
-          'SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at FROM credentials WHERE project = ? OR project = ? ORDER BY provider, key_name, project',
-        )
-        .all(project, GLOBAL_PROJECT) as CredentialRow[];
-    } else {
-      rows = this.db
-        .prepare(
-          'SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at FROM credentials ORDER BY provider, key_name, project',
-        )
-        .all() as CredentialRow[];
-    }
+    try {
+      let rows: CredentialRow[];
 
-    return rows.map((row) => {
-      // Use length_hint for masking if available (lazy - no decryption needed)
-      // Fall back to decrypting for existing records without length_hint
-      let maskedValue: string;
-      if (row.length_hint != null) {
-        maskedValue = this.maskByLength(row.length_hint);
+      if (project) {
+        rows = this.db
+          .prepare(
+            'SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at FROM credentials WHERE project = ? OR project = ? ORDER BY provider, key_name, project',
+          )
+          .all(project, GLOBAL_PROJECT) as CredentialRow[];
       } else {
-        // Fallback: decrypt then mask (for legacy records)
-        const decrypted = decrypt(
-          {
-            encrypted: row.encrypted_value,
-            iv: row.iv,
-            authTag: row.auth_tag,
-          },
-          this.masterKey,
-        );
-        maskedValue = this.mask(decrypted);
+        rows = this.db
+          .prepare(
+            'SELECT id, provider, key_name, project, encrypted_value, iv, auth_tag, created_at, updated_at FROM credentials ORDER BY provider, key_name, project',
+          )
+          .all() as CredentialRow[];
       }
 
-      return {
-        id: row.id,
-        provider: row.provider,
-        keyName: row.key_name,
-        project: row.project,
-        maskedValue,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      };
-    });
+      const result = rows.map((row) => {
+        // Use length_hint for masking if available (lazy - no decryption needed)
+        // Fall back to decrypting for existing records without length_hint
+        let maskedValue: string;
+        if (row.length_hint != null) {
+          maskedValue = this.maskByLength(row.length_hint);
+        } else {
+          // Fallback: decrypt then mask (for legacy records)
+          const decrypted = decrypt(
+            {
+              encrypted: row.encrypted_value,
+              iv: row.iv,
+              authTag: row.auth_tag,
+            },
+            this.masterKey,
+          );
+          maskedValue = this.mask(decrypted);
+        }
+
+        return {
+          id: row.id,
+          provider: row.provider,
+          keyName: row.key_name,
+          project: row.project,
+          maskedValue,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        };
+      });
+
+      vaultAuditLogger.info({ action: 'list', provider: '*', project: proj, success: true } satisfies VaultAuditEvent);
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      vaultAuditLogger.error({ action: 'list', provider: '*', project: proj, success: false, error: message } satisfies VaultAuditEvent);
+      throw err;
+    }
   }
 
   /**
@@ -327,11 +378,13 @@ export class Vault {
   delete(id: number, project?: string): void {
     // First, verify the credential exists and get its project
     const row = this.db
-      .prepare('SELECT project FROM credentials WHERE id = ?')
-      .get(id) as { project: string } | undefined;
+      .prepare('SELECT project, provider, key_name FROM credentials WHERE id = ?')
+      .get(id) as { project: string; provider: string; key_name: string } | undefined;
 
     if (!row) {
-      throw new Error(`Credential not found: id ${id}`);
+      const err = new Error(`Credential not found: id ${id}`);
+      vaultAuditLogger.error({ action: 'delete', provider: 'unknown', project: project ?? GLOBAL_PROJECT, success: false, error: err.message } satisfies VaultAuditEvent);
+      throw err;
     }
 
     // Authorization check: allow deletion if same project or global
@@ -339,12 +392,15 @@ export class Vault {
     const isSameProject = row.project === project;
 
     if (!isGlobal && !isSameProject) {
-      throw new Error(
+      const err = new Error(
         `Unauthorized: credential belongs to project "${row.project}", not "${project ?? '_global'}"`,
       );
+      vaultAuditLogger.error({ action: 'delete', provider: row.provider, keyName: row.key_name, project: row.project, success: false, error: err.message } satisfies VaultAuditEvent);
+      throw err;
     }
 
     this.db.prepare('DELETE FROM credentials WHERE id = ?').run(id);
+    vaultAuditLogger.info({ action: 'delete', provider: row.provider, keyName: row.key_name, project: row.project, success: true } satisfies VaultAuditEvent);
   }
 
   /**
@@ -389,28 +445,36 @@ export class Vault {
    */
   storeFile(provider: string, fileName: string, content: string, project?: string): number {
     const proj = project ?? GLOBAL_PROJECT;
-    const { encrypted, iv, authTag } = encrypt(content, this.masterKey);
 
-    const stmt = this.db.prepare(`
-      INSERT INTO files (provider, file_name, project, encrypted_value, iv, auth_tag, updated_at)
-      VALUES (@provider, @fileName, @project, @encrypted, @iv, @authTag, datetime('now'))
-      ON CONFLICT(provider, file_name, project) DO UPDATE SET
-        encrypted_value = @encrypted,
-        iv              = @iv,
-        auth_tag        = @authTag,
-        updated_at      = datetime('now')
-    `);
+    try {
+      const { encrypted, iv, authTag } = encrypt(content, this.masterKey);
 
-    const result = stmt.run({
-      provider,
-      fileName,
-      project: proj,
-      encrypted,
-      iv,
-      authTag,
-    });
+      const stmt = this.db.prepare(`
+        INSERT INTO files (provider, file_name, project, encrypted_value, iv, auth_tag, updated_at)
+        VALUES (@provider, @fileName, @project, @encrypted, @iv, @authTag, datetime('now'))
+        ON CONFLICT(provider, file_name, project) DO UPDATE SET
+          encrypted_value = @encrypted,
+          iv              = @iv,
+          auth_tag        = @authTag,
+          updated_at      = datetime('now')
+      `);
 
-    return Number(result.lastInsertRowid);
+      const result = stmt.run({
+        provider,
+        fileName,
+        project: proj,
+        encrypted,
+        iv,
+        authTag,
+      });
+
+      vaultAuditLogger.info({ action: 'store_file', provider, fileName, project: proj, success: true } satisfies VaultAuditEvent);
+      return Number(result.lastInsertRowid);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      vaultAuditLogger.error({ action: 'store_file', provider, fileName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
+      throw err;
+    }
   }
 
   /**
@@ -447,11 +511,13 @@ export class Vault {
   deleteFile(id: number, project?: string): void {
     // First, verify the file exists and get its project
     const row = this.db
-      .prepare('SELECT project FROM files WHERE id = ?')
-      .get(id) as { project: string } | undefined;
+      .prepare('SELECT project, provider, file_name FROM files WHERE id = ?')
+      .get(id) as { project: string; provider: string; file_name: string } | undefined;
 
     if (!row) {
-      throw new Error(`File not found: id ${id}`);
+      const err = new Error(`File not found: id ${id}`);
+      vaultAuditLogger.error({ action: 'delete_file', provider: 'unknown', project: project ?? GLOBAL_PROJECT, success: false, error: err.message } satisfies VaultAuditEvent);
+      throw err;
     }
 
     // Authorization check: allow deletion if same project or global
@@ -459,12 +525,15 @@ export class Vault {
     const isSameProject = row.project === project;
 
     if (!isGlobal && !isSameProject) {
-      throw new Error(
+      const err = new Error(
         `Unauthorized: file belongs to project "${row.project}", not "${project ?? '_global'}"`,
       );
+      vaultAuditLogger.error({ action: 'delete_file', provider: row.provider, fileName: row.file_name, project: row.project, success: false, error: err.message } satisfies VaultAuditEvent);
+      throw err;
     }
 
     this.db.prepare('DELETE FROM files WHERE id = ?').run(id);
+    vaultAuditLogger.info({ action: 'delete_file', provider: row.provider, fileName: row.file_name, project: row.project, success: true } satisfies VaultAuditEvent);
   }
 
   /**

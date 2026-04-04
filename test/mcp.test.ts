@@ -205,8 +205,8 @@ describe('Router with adapters', () => {
 
 describe('Vault MCP operations', () => {
   beforeEach(() => {
-    vault.db.exec('DELETE FROM credentials');
-    vault.db.exec('DELETE FROM files');
+    (vault as any).db.exec('DELETE FROM credentials');
+    (vault as any).db.exec('DELETE FROM files');
   });
 
   it('stores and retrieves credentials like MCP vault_store', () => {

@@ -30,8 +30,8 @@ const vault = new Vault(config);
 
 describe('Vault concurrent access', () => {
   beforeEach(() => {
-    vault.db.exec('DELETE FROM credentials');
-    vault.db.exec('DELETE FROM files');
+    (vault as any).db.exec('DELETE FROM credentials');
+    (vault as any).db.exec('DELETE FROM files');
   });
 
   it('handles concurrent reads without errors', async () => {
@@ -39,7 +39,7 @@ describe('Vault concurrent access', () => {
     vault.store('test-provider', 'api-key', 'secret-value-12345');
     
     // Read concurrently
-    const reads = Array.from({ length: 10 }, (_, i) => 
+    const reads = Array.from({ length: 10 }, (_) =>
       Promise.resolve().then(() => {
         const has = vault.has('test-provider', 'api-key');
         const value = vault.getDecrypted('test-provider', 'api-key');
@@ -104,7 +104,7 @@ describe('Vault concurrent access', () => {
       Promise.resolve().then(() => vault.listMasked()),
     ];
     
-    const results = await Promise.all(operations);
+    await Promise.all(operations);
     
     // Should not throw - all operations should complete
     assert.ok(true);

@@ -6,7 +6,6 @@
  * directory via HOME override before invocation.
  */
 
-import type { GenerateResponse } from '../core/types.js';
 import { BaseCliAdapter, type CliAdapterConfig } from './base-cli-adapter.js';
 import type { Vault } from '../vault/vault.js';
 

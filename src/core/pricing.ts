@@ -148,3 +148,44 @@ export function getModelPrice(model: string): ModelPrice | null {
 export function getPriceTable(): Record<string, ModelPrice> {
   return { ...PRICE_TABLE };
 }
+
+/** Response shape for cost estimation. */
+export interface CostEstimateResponse {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  pricePerMTok: { input: number; output: number };
+  currency: 'USD';
+}
+
+/**
+ * Estimate cost for a model and token counts.
+ *
+ * Returns a full response object with cost breakdown,
+ * or null if the model is not found in the price table.
+ */
+export function estimateCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): CostEstimateResponse | null {
+  const strippedModel = model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model;
+  const price = findPrice(strippedModel);
+
+  if (!price) {
+    return null;
+  }
+
+  const inputCost = (inputTokens / 1_000_000) * price.inputPerMTok;
+  const outputCost = (outputTokens / 1_000_000) * price.outputPerMTok;
+
+  return {
+    model,
+    inputTokens,
+    outputTokens,
+    estimatedCost: inputCost + outputCost,
+    pricePerMTok: { input: price.inputPerMTok, output: price.outputPerMTok },
+    currency: 'USD',
+  };
+}

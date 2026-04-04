@@ -27,7 +27,7 @@ export class RoundRobinStrategy implements BalancerStrategy {
 
     const selected = candidates[this.counter % candidates.length];
     this.counter++;
-    return selected;
+    return selected ?? null;
   }
 
   reset(): void {
@@ -44,7 +44,7 @@ export class RandomStrategy implements BalancerStrategy {
     if (candidates.length === 0) return null;
 
     const index = Math.floor(Math.random() * candidates.length);
-    return candidates[index];
+    return candidates[index] ?? null;
   }
 }
 
@@ -93,7 +93,7 @@ export class WeightedStrategy implements BalancerStrategy {
     }
 
     // Fallback to last candidate (should rarely happen due to floating point)
-    return candidates[candidates.length - 1];
+    return candidates[candidates.length - 1] ?? null;
   }
 }
 

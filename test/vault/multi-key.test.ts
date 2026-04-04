@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { mkdirSync, rmSync } from 'node:fs';
 
-import { MultiKeyManager, type KeyStatus } from '../../src/vault/multi-key-manager.js';
+import { MultiKeyManager } from '../../src/vault/multi-key-manager.js';
 import { Vault } from '../../src/vault/vault.js';
 import { initializeDb } from '../../src/vault/schema.js';
 import { decrypt } from '../../src/vault/crypto.js';
@@ -38,6 +38,7 @@ describe('MultiKeyManager', () => {
   const createConfig = () => ({
     masterKey: TEST_MASTER_KEY,
     dbPath: TEST_DB_PATH,
+    httpPort: 0,
   });
 
   // Helper to decrypt using crypto module
@@ -302,7 +303,7 @@ describe('MultiKeyManager', () => {
       // First cooldown - normal duration
       await testManager.putOnCooldown(keyId);
       const status1 = await testManager.getKeyStatus(keyId);
-      const duration1 = status1!.cooldownUntil! - Date.now();
+      void (status1!.cooldownUntil! - Date.now());
 
       // Second cooldown - normal (consecutiveErrors = 1, below threshold)
       await testManager.putOnCooldown(keyId);
@@ -394,9 +395,9 @@ describe('MultiKeyManager', () => {
 
       const keys = await manager.getAllKeys('openai', 'test-project', decryptFn);
 
-      assert.strictEqual(keys[0].priority, 1);
-      assert.strictEqual(keys[1].priority, 2);
-      assert.strictEqual(keys[2].priority, 3);
+      assert.strictEqual(keys[0]!.priority, 1);
+      assert.strictEqual(keys[1]!.priority, 2);
+      assert.strictEqual(keys[2]!.priority, 3);
     });
   });
 

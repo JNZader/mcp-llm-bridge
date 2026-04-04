@@ -16,8 +16,8 @@ import {
   isProviderType,
   isSupportedProvider,
   getFetcherForProvider,
-  type ModelSyncConfig,
   type Database,
+  type ProviderType,
 } from '../../src/model-sync/index.js';
 
 // === Mock Database ===
@@ -56,7 +56,7 @@ function createMockDatabase(): Database {
 
           if (sql.includes('UPDATE provider_models')) {
             // Soft delete logic - mark all for provider as inactive
-            for (const [key, row] of tables.provider_models) {
+            for (const [_key, row] of tables.provider_models) {
               if (row.provider === params[1]) {
                 row.is_active = 0;
                 row.last_synced_at = params[0];
@@ -231,9 +231,9 @@ describe('ModelSyncManager', () => {
       });
 
       expect(result.modelsAdded.length).toBe(1);
-      expect(result.modelsAdded[0].id).toBe('gpt-4o');
+      expect(result.modelsAdded[0]!.id).toBe('gpt-4o');
       expect(result.modelsRemoved.length).toBe(1);
-      expect(result.modelsRemoved[0]).toBe('old-model');
+      expect(result.modelsRemoved[0]!).toBe('old-model');
     });
 
     it('should handle fetch errors', async () => {
@@ -297,7 +297,7 @@ describe('ModelSyncManager', () => {
 
     it('should track running auto-sync providers', () => {
       // Mock both fetch responses since sync happens immediately
-      global.fetch = vi.fn().mockImplementation((url) => {
+      global.fetch = vi.fn().mockImplementation((url: string | URL) => {
         const urlStr = url.toString();
         if (urlStr.includes('anthropic')) {
           return Promise.resolve({
@@ -332,7 +332,7 @@ describe('ModelSyncManager', () => {
 
     it('should stop all auto-sync on stopAllAutoSync', () => {
       // Mock both fetch responses since sync happens immediately
-      global.fetch = vi.fn().mockImplementation((url) => {
+      global.fetch = vi.fn().mockImplementation((url: string | URL) => {
         const urlStr = url.toString();
         if (urlStr.includes('anthropic')) {
           return Promise.resolve({
@@ -403,7 +403,7 @@ describe('ModelSyncManager', () => {
 
       const models = manager.getModels(PROVIDER_TYPE.OPENAI);
       expect(models.length).toBe(1);
-      expect(models[0].id).toBe('gpt-4o');
+      expect(models[0]!.id).toBe('gpt-4o');
     });
 
     it('should include inactive when activeOnly is false', async () => {
@@ -444,7 +444,7 @@ describe('ModelSyncManager', () => {
 
       const history = manager.getSyncHistory(PROVIDER_TYPE.OPENAI, 10);
       expect(history.length).toBeGreaterThan(0);
-      expect(history[0].provider).toBe(PROVIDER_TYPE.OPENAI);
+      expect(history[0]!.provider).toBe(PROVIDER_TYPE.OPENAI);
     });
 
     it('should filter history by provider', async () => {
@@ -516,10 +516,10 @@ describe('Model Fetchers', () => {
       );
 
       expect(models.length).toBe(1);
-      expect(models[0].id).toBe('gpt-4o');
-      expect(models[0].name).toBe('GPT-4o');
-      expect(models[0].contextLength).toBe(128000);
-      expect(models[0].pricing).toEqual({ input: 0.005, output: 0.015 });
+      expect(models[0]!.id).toBe('gpt-4o');
+      expect(models[0]!.name).toBe('GPT-4o');
+      expect(models[0]!.contextLength).toBe(128000);
+      expect(models[0]!.pricing).toEqual({ input: 0.005, output: 0.015 });
     });
 
     it('should handle missing optional fields', async () => {
@@ -533,10 +533,10 @@ describe('Model Fetchers', () => {
         'sk-test'
       );
 
-      expect(models[0].id).toBe('gpt-4o');
-      expect(models[0].name).toBe('gpt-4o'); // Falls back to id
-      expect(models[0].description).toBeUndefined();
-      expect(models[0].contextLength).toBeUndefined();
+      expect(models[0]!.id).toBe('gpt-4o');
+      expect(models[0]!.name).toBe('gpt-4o'); // Falls back to id
+      expect(models[0]!.description).toBeUndefined();
+      expect(models[0]!.contextLength).toBeUndefined();
     });
   });
 
@@ -560,8 +560,8 @@ describe('Model Fetchers', () => {
       );
 
       expect(models.length).toBe(1);
-      expect(models[0].id).toBe('claude-3-opus-20240229');
-      expect(models[0].name).toBe('Claude 3 Opus');
+      expect(models[0]!.id).toBe('claude-3-opus-20240229');
+      expect(models[0]!.name).toBe('Claude 3 Opus');
     });
   });
 
@@ -587,14 +587,14 @@ describe('Model Fetchers', () => {
       );
 
       expect(models.length).toBe(1);
-      expect(models[0].id).toBe('gemini-1.5-pro');
-      expect(models[0].name).toBe('Gemini 1.5 Pro');
-      expect(models[0].contextLength).toBe(1008192); // Sum of input + output
+      expect(models[0]!.id).toBe('gemini-1.5-pro');
+      expect(models[0]!.name).toBe('Gemini 1.5 Pro');
+      expect(models[0]!.contextLength).toBe(1008192); // Sum of input + output
     });
 
     it('should handle pagination', async () => {
       let callCount = 0;
-      global.fetch = vi.fn().mockImplementation((url) => {
+      global.fetch = vi.fn().mockImplementation((url: string | URL) => {
         const urlStr = url.toString();
         callCount++;
 

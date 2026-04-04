@@ -72,7 +72,7 @@ export abstract class BaseCliAdapter implements LLMProvider {
    * Check if provider files are valid for this provider.
    * Override to add validation.
    */
-  protected validateProviderFiles(files: Array<{ fileName: string }>): void {
+  protected validateProviderFiles(_files: Array<{ fileName: string }>): void {
     // Default: no validation
   }
 

@@ -5,7 +5,6 @@
  * with load balancing across providers.
  */
 
-import { LoadBalanceMode } from '../balancer/types.js';
 
 /**
  * Group load balancing modes

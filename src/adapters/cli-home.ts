@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 
 function assertSafeFileName(fileName: string): string {

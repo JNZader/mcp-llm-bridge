@@ -31,6 +31,7 @@ import { CompressorService } from './context-compression/index.js';
 import { CodeSearchService } from './code-search/index.js';
 import { StateManager } from './crdt/index.js';
 import { FreeModelRouter } from './free-models/index.js';
+import { LatencyMeasurer } from './latency/index.js';
 
 // Populate the transformer registry with all inbound/outbound transformers
 import './transformers/index.js';
@@ -83,6 +84,14 @@ if (freeModelEnabled) {
   logger.info('Free model fallback routing enabled');
 }
 
+// Initialize latency-based routing (opt-in via LATENCY_ROUTING=true)
+const latencyRoutingEnabled = process.env['LATENCY_ROUTING'] === 'true';
+const latencyMeasurer = new LatencyMeasurer();
+if (latencyRoutingEnabled) {
+  router.setLatencyMeasurer(latencyMeasurer);
+  logger.info('Latency-based routing enabled');
+}
+
 // Initialize bridge orchestrator (opt-in via bridge.yaml config)
 const bridgeConfig = loadBridgeConfig();
 const bridge = bridgeConfig ? new BridgeOrchestrator(router, bridgeConfig) : null;
@@ -98,6 +107,7 @@ async function setupGracefulShutdown(vault: Vault): Promise<void> {
   const cleanup = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
     compressor.destroy();
+    latencyMeasurer.stopBackgroundTask();
     freeModelRouter.destroy();
     costTracker.destroy();
     groupStore.close();

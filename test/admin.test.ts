@@ -26,7 +26,6 @@ import { GroupStore } from '../src/core/groups.js';
 import { CostTracker } from '../src/core/cost-tracker.js';
 import {
   getCircuitBreakerRegistry,
-  resetCircuitBreakerRegistry,
   CircuitState,
 } from '../src/core/circuit-breaker.js';
 

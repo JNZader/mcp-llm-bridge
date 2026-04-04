@@ -5,15 +5,13 @@
  */
 
 import {
-  ModelInfo,
-  ModelSyncConfig,
-  ModelSyncResult,
-  ProviderType,
-  ProviderModelRecord,
-  ModelSyncLogRecord,
-  isProviderType,
+  type ModelInfo,
+  type ModelSyncConfig,
+  type ModelSyncResult,
+  type ProviderType,
+  type ModelSyncLogRecord,
 } from './types.js';
-import { ModelFetcher, getFetcherForProvider } from './fetcher.js';
+import { getFetcherForProvider } from './fetcher.js';
 
 // === Database Interface (minimal, to be implemented by consumer) ===
 
@@ -41,8 +39,6 @@ export class ModelSyncManager {
    * Sync models for a provider
    */
   async syncProvider(config: ModelSyncConfig): Promise<ModelSyncResult> {
-    const startTime = Date.now();
-
     try {
       // Get fetcher for provider
       const fetcher = getFetcherForProvider(config.provider);
