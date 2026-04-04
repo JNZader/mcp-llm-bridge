@@ -15,8 +15,11 @@ import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
 
 /**
  * Parse OpenCode's newline-delimited JSON output into text + token usage.
+ *
+ * Exported so consumers (e.g. ghagga) can reuse this parser instead of
+ * maintaining a duplicate. Canonical implementation lives here.
  */
-function parseOpenCodeOutput(raw: string): { text: string; tokens?: { input?: number; output?: number } } {
+export function parseOpenCodeOutput(raw: string): { text: string; tokens?: { input?: number; output?: number } } {
   const lines = raw.split('\n').filter(line => line.trim().length > 0);
   const textParts: string[] = [];
   let tokens: { input?: number; output?: number } | undefined;

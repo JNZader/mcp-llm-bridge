@@ -31,6 +31,8 @@ export {
   CopilotCliAdapter,
 };
 
+export { parseOpenCodeOutput } from './cli-opencode.js';
+
 /**
  * Create all available provider adapters.
  *
