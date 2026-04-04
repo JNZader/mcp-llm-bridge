@@ -131,6 +131,7 @@ describe('GET /v1/analytics', () => {
       undefined, // costTracker
       undefined, // latencyMeasurer
       undefined, // freeModelRouter
+      undefined, // db
       analyticsAggregator
     ) as unknown as http.Server;
 
@@ -497,6 +498,7 @@ describe('GET /v1/analytics', () => {
         undefined,
         undefined,
         undefined,
+        undefined, // db
         freshAggregator
       ) as unknown as http.Server;
 

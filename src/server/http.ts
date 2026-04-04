@@ -49,6 +49,8 @@ import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 import type { LatencyMeasurer } from '../latency/index.js';
 import type { FreeModelRouter } from '../free-models/router.js';
 import type { InternalLLMRequest } from '../core/internal-model.js';
+import type Database from 'better-sqlite3';
+import { apiKeyAuth } from '../auth/middleware.js';
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -531,6 +533,7 @@ export function startHttpServer(
   costTracker?: CostTracker,
   latencyMeasurer?: LatencyMeasurer,
   freeModelRouter?: FreeModelRouter,
+  db?: Database.Database,
   ..._rest: unknown[]
 ): ServerType {
   // Reset start time on server creation
@@ -569,7 +572,35 @@ export function startHttpServer(
   }));
 
   // ── Auth — bearer token middleware ─────────────────────
-  app.use('*', bearerAuth(config));
+  //
+  // When ENABLE_MULTI_TENANT=true, /v1/* routes (except /v1/admin/* and health)
+  // use per-key auth via apiKeyAuth middleware. The existing bearerAuth still
+  // runs for non-v1 routes (dashboard, metrics, etc.) and as a fallback.
+  //
+  const multiTenantEnabled = process.env['ENABLE_MULTI_TENANT'] === 'true' && db;
+
+  if (multiTenantEnabled) {
+    // Multi-tenant mode: API key auth for /v1/* routes (except admin — has its own auth)
+    app.use('/v1/*', async (c: Context, next: Next) => {
+      // Skip admin routes — they have their own auth middleware
+      if (c.req.path.startsWith('/v1/admin/')) {
+        return next();
+      }
+      // Delegate to API key auth middleware
+      return apiKeyAuth(db, costTracker)(c, next);
+    });
+
+    // Non-v1 routes still use bearer auth (dashboard, health, metrics)
+    app.use('*', async (c: Context, next: Next) => {
+      if (c.req.path.startsWith('/v1/')) {
+        return next(); // Already handled above
+      }
+      return bearerAuth(config)(c, next);
+    });
+  } else {
+    // Single-tenant mode: existing AUTH_TOKEN flow for all routes
+    app.use('*', bearerAuth(config));
+  }
 
   // ── Dashboard ───────────────────────────────────────────
 
@@ -1253,6 +1284,7 @@ export function startHttpServer(
     costTracker,
     serverStartTime,
     freeModelRouter,
+    db,
   });
 
   // ── Start ──────────────────────────────────────────────

@@ -25,6 +25,8 @@ export interface UsageEntry {
   keyName?: string;
   model: string;
   project?: string;
+  /** Optional user ID for multi-tenant tracking. */
+  userId?: string;
   tokensIn: number;
   tokensOut: number;
   costUsd?: number;
@@ -331,6 +333,42 @@ export class CostTracker {
     project?: string,
   ): StreamRecorder {
     return new StreamRecorder(this, provider, model, project);
+  }
+
+  /**
+   * Check whether a user has remaining budget for the current month.
+   *
+   * Queries usage_logs by key_name (correlated to userId by the auth middleware)
+   * to get the user's total spend since the start of the current month.
+   *
+   * @param userId - The user ID to check budget for.
+   * @param budgetUsd - The maximum monthly budget in USD. 0 = unlimited.
+   * @returns Whether the request is allowed and the remaining budget.
+   */
+  checkBudget(userId: string, budgetUsd: number): { allowed: boolean; remaining: number } {
+    // Budget of 0 means unlimited
+    if (budgetUsd <= 0) {
+      return { allowed: true, remaining: Infinity };
+    }
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    const row = this.db
+      .prepare<[string, string], { total_cost: number }>(
+        `SELECT COALESCE(SUM(cost_usd), 0.0) as total_cost
+         FROM usage_logs
+         WHERE key_name = ? AND created_at >= ?`,
+      )
+      .get(userId, monthStart);
+
+    const used = row?.total_cost ?? 0;
+    const remaining = Math.max(0, budgetUsd - used);
+
+    return {
+      allowed: remaining > 0,
+      remaining,
+    };
   }
 
   /**

@@ -136,13 +136,16 @@ async function setupGracefulShutdown(vault: Vault): Promise<void> {
 // Setup graceful shutdown
 await setupGracefulShutdown(vault);
 
+// Expose the DB for multi-tenant auth (api_keys table lives in the vault DB)
+const db = vault.getDb();
+
 if (mode === 'serve') {
   // HTTP only
-  startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter);
+  startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db);
 } else {
   // MCP stdio (default — backward compatible)
   await startMcpServer(router, vault, undefined, costTracker, bridge, codeSearch, stateManager, config.securityProfile);
   if (mode === '--http') {
-    startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter);
+    startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db);
   }
 }

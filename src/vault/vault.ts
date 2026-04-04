@@ -83,6 +83,14 @@ export class Vault {
   private readonly masterKey: Buffer;
   private _destroyed = false;
 
+  /**
+   * Expose the underlying database connection for modules that need direct access
+   * (e.g., auth middleware, admin key CRUD).
+   */
+  getDb(): Database.Database {
+    return this.db;
+  }
+
   constructor(config: GatewayConfig) {
     this.masterKey = config.masterKey;
 

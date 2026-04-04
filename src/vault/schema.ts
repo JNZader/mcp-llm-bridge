@@ -156,4 +156,42 @@ export function initializeDb(db: Database.Database): void {
       updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // ── API keys table (Phase 7: Per-User Auth) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id                  TEXT PRIMARY KEY,
+      key_hash            TEXT NOT NULL UNIQUE,
+      key_prefix          TEXT NOT NULL,
+      user_id             TEXT NOT NULL,
+      project             TEXT,
+      trust_level         TEXT NOT NULL DEFAULT 'restricted',
+      rate_limit_max      INTEGER NOT NULL DEFAULT 100,
+      rate_limit_window_ms INTEGER NOT NULL DEFAULT 900000,
+      budget_usd          REAL NOT NULL DEFAULT 0.0,
+      enabled             INTEGER NOT NULL DEFAULT 1,
+      created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at          TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+    CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+  `);
+
+  // ── User quotas table (Phase 7: Per-User Quotas) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_quotas (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         TEXT NOT NULL,
+      quota_type      TEXT NOT NULL CHECK(quota_type IN ('daily', 'monthly')),
+      max_tokens      INTEGER NOT NULL DEFAULT 0,
+      max_cost_usd    REAL NOT NULL DEFAULT 0.0,
+      period_start    TEXT NOT NULL DEFAULT (datetime('now')),
+      used_tokens     INTEGER NOT NULL DEFAULT 0,
+      used_cost_usd   REAL NOT NULL DEFAULT 0.0,
+      UNIQUE(user_id, quota_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_quotas_user ON user_quotas(user_id);
+  `);
 }
