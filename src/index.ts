@@ -10,33 +10,38 @@
  */
 
 // Initialize tracing before other imports
-import { initTracing, shutdownTracing } from './core/tracing.js';
+import { initTracing, shutdownTracing } from "./core/tracing.js";
+
 initTracing();
 
-import { loadConfig } from './core/config.js';
-import { logger } from './core/logger.js';
-import { initMetrics } from './core/metrics.js';
-import { Router } from './core/router.js';
-import { Vault } from './vault/index.js';
-import { createAllAdapters } from './adapters/index.js';
-import { startMcpServer } from './server/mcp.js';
-import { startHttpServer } from './server/http.js';
-import { cleanupAllProviderHomes } from './adapters/cli-home.js';
-import { CostTracker } from './core/cost-tracker.js';
-import { GroupStore } from './core/groups.js';
-import { SessionStore } from './core/session.js';
-import { registry } from './core/transformer.js';
-import { BridgeOrchestrator, loadBridgeConfig } from './bridge/index.js';
-import { CompressorService } from './context-compression/index.js';
-import { CodeSearchService } from './code-search/index.js';
-import { StateManager } from './crdt/index.js';
-import { FreeModelRouter, loadCatalog, importCatalog } from './free-models/index.js';
-import { LatencyMeasurer } from './latency/index.js';
-import { ComparisonService } from './comparison/service.js';
-import { ComparisonStore } from './comparison/persistence.js';
+import { cleanupAllProviderHomes } from "./adapters/cli-home.js";
+import { createAllAdapters } from "./adapters/index.js";
+import { BridgeOrchestrator, loadBridgeConfig } from "./bridge/index.js";
+import { CodeSearchService } from "./code-search/index.js";
+import { ComparisonStore } from "./comparison/persistence.js";
+import { ComparisonService } from "./comparison/service.js";
+import { CompressorService } from "./context-compression/index.js";
+import { loadConfig } from "./core/config.js";
+import { CostTracker } from "./core/cost-tracker.js";
+import { GroupStore } from "./core/groups.js";
+import { logger } from "./core/logger.js";
+import { initMetrics } from "./core/metrics.js";
+import { Router } from "./core/router.js";
+import { SessionStore } from "./core/session.js";
+import { registry } from "./core/transformer.js";
+import { StateManager } from "./crdt/index.js";
+import {
+	FreeModelRouter,
+	importCatalog,
+	loadCatalog,
+} from "./free-models/index.js";
+import { LatencyMeasurer } from "./latency/index.js";
+import { startHttpServer } from "./server/http.js";
+import { startMcpServer } from "./server/mcp.js";
+import { Vault } from "./vault/index.js";
 
 // Populate the transformer registry with all inbound/outbound transformers
-import './transformers/index.js';
+import "./transformers/index.js";
 
 // Initialize metrics
 initMetrics();
@@ -51,7 +56,7 @@ const router = new Router();
 
 // Register all adapters
 for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
+	router.register(adapter);
 }
 
 // Initialize cost tracker (uses same DB path as vault)
@@ -79,37 +84,39 @@ const codeSearch = new CodeSearchService();
 const stateManager = new StateManager();
 
 // Initialize free model router (opt-in via FALLBACK_STRATEGY=free-models)
-const freeModelEnabled = process.env['FALLBACK_STRATEGY'] === 'free-models';
+const freeModelEnabled = process.env["FALLBACK_STRATEGY"] === "free-models";
 const freeModelRouter = new FreeModelRouter({ enabled: freeModelEnabled });
 if (freeModelEnabled) {
-  router.setFreeModelRouter(freeModelRouter);
-  logger.info('Free model fallback routing enabled');
+	router.setFreeModelRouter(freeModelRouter);
+	logger.info("Free model fallback routing enabled");
 }
 
 // Load free model catalog at startup (opt-in via FREE_MODEL_CATALOG=true)
-const catalogEnabled = process.env['FREE_MODEL_CATALOG'] === 'true';
+const catalogEnabled = process.env["FREE_MODEL_CATALOG"] === "true";
 if (catalogEnabled) {
-  const catalog = loadCatalog();
-  if (catalog) {
-    const entries = importCatalog(catalog, freeModelRouter.getHealthChecker());
-    const imported = freeModelRouter.getRegistry().importModels(entries);
-    logger.info({ imported }, 'Free model catalog loaded at startup');
-  }
+	const catalog = loadCatalog();
+	if (catalog) {
+		const entries = importCatalog(catalog, freeModelRouter.getHealthChecker());
+		const imported = freeModelRouter.getRegistry().importModels(entries);
+		logger.info({ imported }, "Free model catalog loaded at startup");
+	}
 }
 
 // Initialize latency-based routing (opt-in via LATENCY_ROUTING=true)
-const latencyRoutingEnabled = process.env['LATENCY_ROUTING'] === 'true';
+const latencyRoutingEnabled = process.env["LATENCY_ROUTING"] === "true";
 const latencyMeasurer = new LatencyMeasurer();
 if (latencyRoutingEnabled) {
-  router.setLatencyMeasurer(latencyMeasurer);
-  logger.info('Latency-based routing enabled');
+	router.setLatencyMeasurer(latencyMeasurer);
+	logger.info("Latency-based routing enabled");
 }
 
 // Initialize bridge orchestrator (opt-in via bridge.yaml config)
 const bridgeConfig = loadBridgeConfig();
-const bridge = bridgeConfig ? new BridgeOrchestrator(router, bridgeConfig) : null;
+const bridge = bridgeConfig
+	? new BridgeOrchestrator(router, bridgeConfig)
+	: null;
 if (bridge) {
-  logger.info('Bridge orchestrator enabled — task-aware routing active');
+	logger.info("Bridge orchestrator enabled — task-aware routing active");
 }
 
 /**
@@ -117,22 +124,22 @@ if (bridge) {
  * Closes the vault database connection, provider homes, and tracing on exit.
  */
 async function setupGracefulShutdown(vault: Vault): Promise<void> {
-  const cleanup = async (signal: string) => {
-    logger.info({ signal }, 'Shutting down');
-    compressor.destroy();
-    latencyMeasurer.stopBackgroundTask();
-    freeModelRouter.destroy();
-    costTracker.destroy();
-    groupStore.close();
-    sessionStore.destroy();
-    cleanupAllProviderHomes();
-    vault.destroy();
-    await shutdownTracing();
-    process.exit(0);
-  };
+	const cleanup = async (signal: string) => {
+		logger.info({ signal }, "Shutting down");
+		compressor.destroy();
+		latencyMeasurer.stopBackgroundTask();
+		freeModelRouter.destroy();
+		costTracker.destroy();
+		groupStore.close();
+		sessionStore.destroy();
+		cleanupAllProviderHomes();
+		vault.destroy();
+		await shutdownTracing();
+		process.exit(0);
+	};
 
-  process.on('SIGINT', () => cleanup('SIGINT'));
-  process.on('SIGTERM', () => cleanup('SIGTERM'));
+	process.on("SIGINT", () => cleanup("SIGINT"));
+	process.on("SIGTERM", () => cleanup("SIGTERM"));
 }
 
 // Setup graceful shutdown
@@ -142,21 +149,54 @@ await setupGracefulShutdown(vault);
 const db = vault.getDb();
 
 // Initialize comparison service
-const maxComparisonCostUsd = parseFloat(process.env['MAX_COMPARISON_COST_USD'] ?? '1.0');
+const maxComparisonCostUsd = parseFloat(
+	process.env["MAX_COMPARISON_COST_USD"] ?? "1.0",
+);
 const comparisonStore = new ComparisonStore(db);
 const comparisonService = new ComparisonService(router, {
-  freeModelRegistry: freeModelEnabled ? freeModelRouter.getRegistry() : undefined,
-  store: comparisonStore,
-  maxCostCeiling: maxComparisonCostUsd,
+	freeModelRegistry: freeModelEnabled
+		? freeModelRouter.getRegistry()
+		: undefined,
+	store: comparisonStore,
+	maxCostCeiling: maxComparisonCostUsd,
 });
 
-if (mode === 'serve') {
-  // HTTP only
-  startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db, comparisonService);
+if (mode === "serve") {
+	// HTTP only
+	startHttpServer(
+		router,
+		vault,
+		config,
+		groupStore,
+		costTracker,
+		latencyMeasurer,
+		freeModelRouter,
+		db,
+		comparisonService,
+	);
 } else {
-  // MCP stdio (default — backward compatible)
-  await startMcpServer(router, vault, undefined, costTracker, bridge, codeSearch, stateManager, config.securityProfile);
-  if (mode === '--http') {
-    startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db, comparisonService);
-  }
+	// MCP stdio (default — backward compatible)
+	await startMcpServer(
+		router,
+		vault,
+		undefined,
+		costTracker,
+		bridge,
+		codeSearch,
+		stateManager,
+		config.securityProfile,
+	);
+	if (mode === "--http") {
+		startHttpServer(
+			router,
+			vault,
+			config,
+			groupStore,
+			costTracker,
+			latencyMeasurer,
+			freeModelRouter,
+			db,
+			comparisonService,
+		);
+	}
 }

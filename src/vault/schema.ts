@@ -194,4 +194,21 @@ export function initializeDb(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_user_quotas_user ON user_quotas(user_id);
   `);
+
+  // ── Comparison results table (LLM Comparison endpoint) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS comparison_results (
+      id              TEXT PRIMARY KEY,
+      prompt          TEXT NOT NULL,
+      system_prompt   TEXT,
+      models          TEXT NOT NULL,
+      results         TEXT NOT NULL,
+      summary         TEXT NOT NULL,
+      project         TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_comparison_project ON comparison_results(project);
+    CREATE INDEX IF NOT EXISTS idx_comparison_created ON comparison_results(created_at);
+  `);
 }
