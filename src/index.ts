@@ -32,6 +32,8 @@ import { CodeSearchService } from './code-search/index.js';
 import { StateManager } from './crdt/index.js';
 import { FreeModelRouter, loadCatalog, importCatalog } from './free-models/index.js';
 import { LatencyMeasurer } from './latency/index.js';
+import { ComparisonService } from './comparison/service.js';
+import { ComparisonStore } from './comparison/persistence.js';
 
 // Populate the transformer registry with all inbound/outbound transformers
 import './transformers/index.js';
@@ -139,13 +141,22 @@ await setupGracefulShutdown(vault);
 // Expose the DB for multi-tenant auth (api_keys table lives in the vault DB)
 const db = vault.getDb();
 
+// Initialize comparison service
+const maxComparisonCostUsd = parseFloat(process.env['MAX_COMPARISON_COST_USD'] ?? '1.0');
+const comparisonStore = new ComparisonStore(db);
+const comparisonService = new ComparisonService(router, {
+  freeModelRegistry: freeModelEnabled ? freeModelRouter.getRegistry() : undefined,
+  store: comparisonStore,
+  maxCostCeiling: maxComparisonCostUsd,
+});
+
 if (mode === 'serve') {
   // HTTP only
-  startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db);
+  startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db, comparisonService);
 } else {
   // MCP stdio (default — backward compatible)
   await startMcpServer(router, vault, undefined, costTracker, bridge, codeSearch, stateManager, config.securityProfile);
   if (mode === '--http') {
-    startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db);
+    startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter, db, comparisonService);
   }
 }
