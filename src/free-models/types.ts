@@ -36,6 +36,57 @@ export interface FreeModelEntry {
   apiKeyEnv?: string;
   /** Whether this endpoint is enabled (default: true). */
   enabled: boolean;
+  /** Stability score (0-100) computed from health check history. */
+  stabilityScore?: number;
+  /** ISO timestamp of last stability score computation. */
+  lastStabilityCheck?: string;
+}
+
+/**
+ * External model definition from a catalog source (e.g., free-coding-models).
+ *
+ * Maps the [model_id, display_label, tier, swe_score, ctx] tuple format
+ * used in sources.js into a typed structure.
+ */
+export interface ExternalModelDef {
+  /** API model identifier string. */
+  modelId: string;
+  /** Human-readable display label. */
+  displayName: string;
+  /** Performance tier (S+, S, A+, A, A-, B+, B, C). */
+  tier: string;
+  /** SWE-bench verified percentage (0-100). */
+  sweScore: number;
+  /** Context window string (e.g., "128k", "1M"). */
+  contextWindow: string;
+}
+
+/**
+ * Provider definition from a catalog source.
+ */
+export interface CatalogProvider {
+  /** Provider source key (e.g., "nvidia", "groq"). */
+  sourceKey: string;
+  /** OpenAI-compatible base URL. */
+  baseUrl: string;
+  /** Environment variable name for API key. */
+  envKey?: string;
+  /** Models available from this provider. */
+  models: ExternalModelDef[];
+}
+
+/**
+ * Full catalog structure loaded from catalog.json.
+ */
+export interface ModelCatalog {
+  /** Catalog version string. */
+  version: string;
+  /** ISO timestamp of catalog generation. */
+  generatedAt: string;
+  /** Source attribution. */
+  source: string;
+  /** Provider entries. */
+  providers: CatalogProvider[];
 }
 
 /**

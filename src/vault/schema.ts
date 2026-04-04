@@ -142,4 +142,18 @@ export function initializeDb(db: Database.Database): void {
       UNIQUE(provider, model)
     );
   `);
+
+  // ── Security profiles table (Phase 5: Per-Project Tool Filtering) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS security_profiles (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      project             TEXT NOT NULL UNIQUE,
+      trust_level         TEXT NOT NULL DEFAULT 'restricted',
+      allowed_categories  TEXT NOT NULL DEFAULT '[]',
+      rate_limit_max      INTEGER,
+      rate_limit_window_ms INTEGER,
+      created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }

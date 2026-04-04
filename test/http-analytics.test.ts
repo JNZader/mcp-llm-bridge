@@ -129,7 +129,8 @@ describe('GET /v1/analytics', () => {
       config,
       undefined, // groupStore
       undefined, // costTracker
-      undefined, // requestLogger
+      undefined, // latencyMeasurer
+      undefined, // freeModelRouter
       analyticsAggregator
     ) as unknown as http.Server;
 
@@ -492,6 +493,7 @@ describe('GET /v1/analytics', () => {
         router,
         vault,
         { ...config, httpPort: 0 },
+        undefined,
         undefined,
         undefined,
         undefined,

@@ -30,7 +30,7 @@ import { BridgeOrchestrator, loadBridgeConfig } from './bridge/index.js';
 import { CompressorService } from './context-compression/index.js';
 import { CodeSearchService } from './code-search/index.js';
 import { StateManager } from './crdt/index.js';
-import { FreeModelRouter } from './free-models/index.js';
+import { FreeModelRouter, loadCatalog, importCatalog } from './free-models/index.js';
 import { LatencyMeasurer } from './latency/index.js';
 
 // Populate the transformer registry with all inbound/outbound transformers
@@ -84,6 +84,17 @@ if (freeModelEnabled) {
   logger.info('Free model fallback routing enabled');
 }
 
+// Load free model catalog at startup (opt-in via FREE_MODEL_CATALOG=true)
+const catalogEnabled = process.env['FREE_MODEL_CATALOG'] === 'true';
+if (catalogEnabled) {
+  const catalog = loadCatalog();
+  if (catalog) {
+    const entries = importCatalog(catalog, freeModelRouter.getHealthChecker());
+    const imported = freeModelRouter.getRegistry().importModels(entries);
+    logger.info({ imported }, 'Free model catalog loaded at startup');
+  }
+}
+
 // Initialize latency-based routing (opt-in via LATENCY_ROUTING=true)
 const latencyRoutingEnabled = process.env['LATENCY_ROUTING'] === 'true';
 const latencyMeasurer = new LatencyMeasurer();
@@ -127,11 +138,11 @@ await setupGracefulShutdown(vault);
 
 if (mode === 'serve') {
   // HTTP only
-  startHttpServer(router, vault, config, groupStore, costTracker);
+  startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter);
 } else {
   // MCP stdio (default — backward compatible)
   await startMcpServer(router, vault, undefined, costTracker, bridge, codeSearch, stateManager, config.securityProfile);
   if (mode === '--http') {
-    startHttpServer(router, vault, config, groupStore, costTracker);
+    startHttpServer(router, vault, config, groupStore, costTracker, latencyMeasurer, freeModelRouter);
   }
 }

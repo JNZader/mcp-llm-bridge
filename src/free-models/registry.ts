@@ -7,10 +7,12 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { logger } from '../core/logger.js';
-import type { FreeModelEntry, ModelCapability } from './types.js';
+import type { FreeModelEntry, ModelCapability, ModelCatalog, CatalogProvider, ExternalModelDef } from './types.js';
+import type { HealthChecker } from './health.js';
 
 /** Default config path for user-defined free model entries. */
 export const FREE_MODELS_CONFIG_PATH = join(homedir(), '.llm-gateway', 'free-models.json');
@@ -202,5 +204,241 @@ export class FreeModelRegistry {
   /** Total count of registered models. */
   get size(): number {
     return this.models.size;
+  }
+
+  /**
+   * Bulk-import models into the registry.
+   * New entries are added; existing IDs are updated (overwritten).
+   */
+  importModels(entries: FreeModelEntry[]): number {
+    let count = 0;
+    for (const entry of entries) {
+      this.models.set(entry.id, entry);
+      count++;
+    }
+    return count;
+  }
+
+  /** Clear all models from the registry. */
+  clear(): void {
+    this.models.clear();
+  }
+}
+
+// ── Catalog Import ──────────────────────────────────────────
+
+/**
+ * Parse a context window string (e.g., "128k", "1M", "10M") into a token count.
+ */
+export function parseContextWindow(ctx: string): number {
+  const normalized = ctx.trim().toLowerCase();
+  const match = normalized.match(/^([\d.]+)\s*([km]?)$/);
+  if (!match) return 8192; // safe fallback
+
+  const value = parseFloat(match[1]!);
+  const unit = match[2];
+
+  if (unit === 'm') return Math.round(value * 1_000_000);
+  if (unit === 'k') return Math.round(value * 1_000);
+  return Math.round(value);
+}
+
+/**
+ * Map a tier string to a base stability score.
+ * Higher-tier models get a higher base score, reflecting their
+ * SWE-bench performance and general reliability expectations.
+ */
+export function tierToBaseStability(tier: string): number {
+  const map: Record<string, number> = {
+    'S+': 90,
+    'S': 80,
+    'A+': 70,
+    'A': 60,
+    'A-': 55,
+    'B+': 45,
+    'B': 35,
+    'C': 20,
+  };
+  return map[tier] ?? 50;
+}
+
+/**
+ * Compute stability score for a catalog model.
+ *
+ * Combines the tier-based base score with optional health check
+ * history. If a HealthChecker is provided, reliability data (0-1)
+ * is blended in at 40% weight.
+ *
+ * @param tier      Performance tier from catalog
+ * @param sweScore  SWE-bench verified percentage (0-100)
+ * @param modelId   ID for health checker lookup
+ * @param healthChecker Optional health checker for reliability data
+ */
+export function computeStabilityScore(
+  tier: string,
+  sweScore: number,
+  modelId?: string,
+  healthChecker?: HealthChecker,
+): number {
+  const baseScore = tierToBaseStability(tier);
+
+  // Blend SWE score (normalized) at 20% weight with tier base at 80%
+  const sweNormalized = Math.max(0, Math.min(100, sweScore));
+  let score = baseScore * 0.6 + sweNormalized * 0.4;
+
+  // If health data exists, factor in reliability
+  if (healthChecker && modelId) {
+    const reliability = healthChecker.getReliability(modelId);
+    // Only adjust if we have actual data (not the default 0.5)
+    if (reliability !== 0.5) {
+      const reliabilityScore = reliability * 100;
+      score = score * 0.6 + reliabilityScore * 0.4;
+    }
+  }
+
+  return Math.round(Math.max(0, Math.min(100, score)));
+}
+
+/**
+ * Infer capabilities from a model's tier, display name, and model ID.
+ */
+function inferCapabilities(model: ExternalModelDef): ModelCapability[] {
+  const capabilities: ModelCapability[] = ['chat'];
+
+  const nameLower = (model.displayName + ' ' + model.modelId).toLowerCase();
+
+  // Most coding-tier models support code generation
+  if (
+    nameLower.includes('coder') ||
+    nameLower.includes('codestral') ||
+    nameLower.includes('code') ||
+    model.sweScore >= 30
+  ) {
+    capabilities.push('code');
+  }
+
+  // Reasoning models
+  if (
+    nameLower.includes('reasoning') ||
+    nameLower.includes('thinking') ||
+    nameLower.includes('r1') ||
+    nameLower.includes('qwq')
+  ) {
+    capabilities.push('reasoning');
+  }
+
+  return capabilities;
+}
+
+/**
+ * Generate a unique ID for a catalog model entry.
+ */
+function catalogEntryId(sourceKey: string, modelId: string): string {
+  // Clean the model ID to produce a readable slug
+  const slug = modelId
+    .replace(/[:@/]/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+  return `catalog-${sourceKey}-${slug}`;
+}
+
+/**
+ * Convert a catalog provider's models into FreeModelEntry[].
+ *
+ * @param provider  Catalog provider definition
+ * @param healthChecker Optional health checker for stability scoring
+ */
+export function importProviderModels(
+  provider: CatalogProvider,
+  healthChecker?: HealthChecker,
+): FreeModelEntry[] {
+  const entries: FreeModelEntry[] = [];
+  const now = new Date().toISOString();
+
+  for (const model of provider.models) {
+    const id = catalogEntryId(provider.sourceKey, model.modelId);
+    const stabilityScore = computeStabilityScore(
+      model.tier,
+      model.sweScore,
+      id,
+      healthChecker,
+    );
+
+    entries.push({
+      id,
+      name: `${model.displayName} (${provider.sourceKey})`,
+      source: provider.sourceKey,
+      baseUrl: provider.baseUrl,
+      modelId: model.modelId,
+      capabilities: inferCapabilities(model),
+      maxTokens: parseContextWindow(model.contextWindow),
+      apiKeyEnv: provider.envKey,
+      enabled: true,
+      stabilityScore,
+      lastStabilityCheck: now,
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * Import an entire catalog into FreeModelEntry[].
+ *
+ * Parses the catalog.json structure and converts all providers'
+ * models into FreeModelEntry[] with stability scoring.
+ *
+ * @param catalog        Parsed ModelCatalog object
+ * @param healthChecker  Optional health checker for reliability blending
+ * @returns All imported model entries
+ */
+export function importCatalog(
+  catalog: ModelCatalog,
+  healthChecker?: HealthChecker,
+): FreeModelEntry[] {
+  const allEntries: FreeModelEntry[] = [];
+
+  for (const provider of catalog.providers) {
+    const entries = importProviderModels(provider, healthChecker);
+    allEntries.push(...entries);
+  }
+
+  logger.info(
+    { modelCount: allEntries.length, providers: catalog.providers.length, version: catalog.version },
+    'Imported free model catalog',
+  );
+
+  return allEntries;
+}
+
+/**
+ * Load and parse the bundled catalog.json file.
+ *
+ * @param catalogPath Override path for testing
+ * @returns Parsed ModelCatalog or null if not found/invalid
+ */
+export function loadCatalog(catalogPath?: string): ModelCatalog | null {
+  const defaultPath = join(dirname(fileURLToPath(import.meta.url)), 'catalog.json');
+  const path = catalogPath ?? defaultPath;
+
+  if (!existsSync(path)) {
+    logger.warn({ path }, 'Catalog file not found');
+    return null;
+  }
+
+  try {
+    const content = readFileSync(path, 'utf8');
+    const parsed = JSON.parse(content) as ModelCatalog;
+
+    if (!parsed.providers || !Array.isArray(parsed.providers)) {
+      logger.warn({ path }, 'Invalid catalog: missing providers array');
+      return null;
+    }
+
+    return parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn({ error: message, path }, 'Failed to load catalog');
+    return null;
   }
 }

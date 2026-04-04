@@ -9,6 +9,7 @@
  */
 
 import type { Hono, Context, Next } from 'hono';
+import type Database from 'better-sqlite3';
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
@@ -17,6 +18,9 @@ import type { GatewayConfig } from '../core/types.js';
 import { timingSafeEqual } from 'node:crypto';
 import { getCircuitBreakerRegistry, CircuitState } from '../core/circuit-breaker.js';
 import { VERSION } from '../core/constants.js';
+import { z } from 'zod';
+import { ToolCategorySchema, TrustLevelSchema } from '../security/profiles.js';
+import { loadCatalog, importCatalog } from '../free-models/registry.js';
 
 // ── Admin Auth Middleware ─────────────────────────────────
 
@@ -80,6 +84,9 @@ export interface AdminDeps {
   groupStore?: GroupStore;
   costTracker?: CostTracker;
   serverStartTime: number;
+  db?: Database.Database;
+  /** Optional free model router for catalog operations. */
+  freeModelRouter?: import('../free-models/router.js').FreeModelRouter;
 }
 
 /**
@@ -281,6 +288,150 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         ok: true,
         flushed: bufferBefore - bufferAfter,
         remainingBuffer: bufferAfter,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── Security Profile CRUD Routes (Phase 5) ────────────────
+
+  const CreateProfileSchema = z.object({
+    project: z.string().min(1),
+    trustLevel: TrustLevelSchema.optional().default('restricted'),
+    allowedCategories: z.array(ToolCategorySchema).min(1),
+    rateLimitMax: z.number().int().positive().nullable().optional().default(null),
+    rateLimitWindowMs: z.number().int().positive().nullable().optional().default(null),
+  });
+
+  app.post('/v1/admin/profiles', async (c) => {
+    try {
+      if (!deps.db) {
+        return c.json({ error: 'Database not configured', code: 'NOT_CONFIGURED' }, 500);
+      }
+
+      const body = await c.req.json();
+      const parsed = CreateProfileSchema.safeParse(body);
+
+      if (!parsed.success) {
+        return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
+      }
+
+      const { project, trustLevel, allowedCategories, rateLimitMax, rateLimitWindowMs } = parsed.data;
+
+      const stmt = deps.db.prepare(`
+        INSERT INTO security_profiles (project, trust_level, allowed_categories, rate_limit_max, rate_limit_window_ms, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(project) DO UPDATE SET
+          trust_level = excluded.trust_level,
+          allowed_categories = excluded.allowed_categories,
+          rate_limit_max = excluded.rate_limit_max,
+          rate_limit_window_ms = excluded.rate_limit_window_ms,
+          updated_at = datetime('now')
+      `);
+
+      stmt.run(
+        project,
+        trustLevel,
+        JSON.stringify(allowedCategories),
+        rateLimitMax,
+        rateLimitWindowMs,
+      );
+
+      return c.json({
+        ok: true,
+        project,
+        trustLevel,
+        allowedCategories,
+        rateLimitMax,
+        rateLimitWindowMs,
+      }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.get('/v1/admin/profiles', (c) => {
+    try {
+      if (!deps.db) {
+        return c.json({ error: 'Database not configured', code: 'NOT_CONFIGURED' }, 500);
+      }
+
+      const rows = deps.db.prepare('SELECT * FROM security_profiles ORDER BY project').all() as Array<{
+        id: number;
+        project: string;
+        trust_level: string;
+        allowed_categories: string;
+        rate_limit_max: number | null;
+        rate_limit_window_ms: number | null;
+        created_at: string;
+        updated_at: string;
+      }>;
+
+      const profiles = rows.map((row) => ({
+        id: row.id,
+        project: row.project,
+        trustLevel: row.trust_level,
+        allowedCategories: JSON.parse(row.allowed_categories) as string[],
+        rateLimitMax: row.rate_limit_max,
+        rateLimitWindowMs: row.rate_limit_window_ms,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+
+      return c.json({ profiles });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.delete('/v1/admin/profiles/:project', (c) => {
+    try {
+      if (!deps.db) {
+        return c.json({ error: 'Database not configured', code: 'NOT_CONFIGURED' }, 500);
+      }
+
+      const project = c.req.param('project');
+      const result = deps.db.prepare('DELETE FROM security_profiles WHERE project = ?').run(project);
+
+      if (result.changes === 0) {
+        return c.json({ error: `No profile found for project "${project}"`, code: 'NOT_FOUND' }, 404);
+      }
+
+      return c.json({ ok: true, project, message: `Profile for "${project}" deleted` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── POST /v1/admin/catalog/refresh ────────────────────────
+
+  app.post('/v1/admin/catalog/refresh', (c) => {
+    try {
+      const { freeModelRouter } = deps;
+      if (!freeModelRouter) {
+        return c.json({ error: 'Free model router not configured', code: 'NOT_CONFIGURED' }, 404);
+      }
+
+      const catalog = loadCatalog();
+      if (!catalog) {
+        return c.json({ error: 'Failed to load catalog file', code: 'LOAD_FAILED' }, 500);
+      }
+
+      const entries = importCatalog(catalog, freeModelRouter.getHealthChecker());
+      const registry = freeModelRouter.getRegistry();
+      const imported = registry.importModels(entries);
+
+      return c.json({
+        ok: true,
+        imported,
+        catalogVersion: catalog.version,
+        providers: catalog.providers.length,
+        message: `Catalog refreshed: ${imported} models imported from ${catalog.providers.length} providers`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -19,6 +19,7 @@ import {
   TOOL_CATEGORIES,
   type SecurityProfile,
   type ToolCategory,
+  type ProfileResolver,
 } from './profiles.js';
 
 /** Minimal tool definition shape matching the TOOLS array in mcp.ts. */
@@ -35,29 +36,43 @@ interface ToolDef {
  * - authorize: checks if a specific tool call is allowed
  * - checkRate: enforces per-profile rate limiting
  * - wrapHandlers: intercepts MCP server ListTools/CallTool handlers
+ *
+ * Accepts either a static profile name (string) or a ProfileResolver
+ * function for per-request dynamic resolution. When a resolver is
+ * provided, call `resolveForProject(project)` to get a project-specific
+ * enforcer state before calling filterTools/authorize.
  */
 export class ProfileEnforcer {
   readonly profile: SecurityProfile;
   private readonly rateLimiter: RateLimiter | null;
   private readonly allowedCategories: Set<ToolCategory>;
+  private readonly _resolver: ProfileResolver | null;
 
-  constructor(profileName: string) {
-    const profile = PROFILES[profileName as TrustLevel];
+  constructor(profileNameOrResolver: string | ProfileResolver) {
+    this._resolver = typeof profileNameOrResolver === 'function'
+      ? profileNameOrResolver
+      : null;
 
-    if (!profile) {
+    // Resolve initial profile — string path uses static PROFILES
+    const profile = typeof profileNameOrResolver === 'string'
+      ? PROFILES[profileNameOrResolver as TrustLevel]
+      : null; // resolver mode — no default profile until resolveForProject()
+
+    if (typeof profileNameOrResolver === 'string' && !profile) {
       const valid = Object.keys(PROFILES).join(', ');
       throw new Error(
-        `Unknown security profile "${profileName}". Valid profiles: ${valid}`,
+        `Unknown security profile "${profileNameOrResolver}". Valid profiles: ${valid}`,
       );
     }
 
-    this.profile = profile;
-    this.allowedCategories = new Set(profile.allowedCategories);
+    // For resolver mode, default to 'restricted' until per-request resolution
+    this.profile = profile ?? PROFILES['restricted'];
+    this.allowedCategories = new Set(this.profile.allowedCategories);
 
-    if (profile.rateLimit) {
+    if (this.profile.rateLimit) {
       this.rateLimiter = new RateLimiter({
-        max: profile.rateLimit.max,
-        windowMs: profile.rateLimit.windowMs,
+        max: this.profile.rateLimit.max,
+        windowMs: this.profile.rateLimit.windowMs,
       });
     } else {
       this.rateLimiter = null;
@@ -65,12 +80,27 @@ export class ProfileEnforcer {
 
     logger.info(
       {
-        profile: profile.level,
-        allowedCategories: profile.allowedCategories,
-        rateLimit: profile.rateLimit,
+        profile: this.profile.level,
+        allowedCategories: this.profile.allowedCategories,
+        rateLimit: this.profile.rateLimit,
+        mode: this._resolver ? 'dynamic-resolver' : 'static',
       },
       'Security profile enforcer initialized',
     );
+  }
+
+  /**
+   * Resolve a project-specific profile using the configured resolver.
+   * Falls back to the static default profile if no resolver is set
+   * or the resolver returns null for the given project.
+   *
+   * Returns a SecurityProfile (never null).
+   */
+  resolveForProject(project: string): SecurityProfile {
+    if (!this._resolver) return this.profile;
+
+    const resolved = this._resolver(project);
+    return resolved ?? this.profile;
   }
 
   /**

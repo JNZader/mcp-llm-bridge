@@ -47,6 +47,7 @@ import {
 import { estimateCost, getPriceTable } from '../core/pricing.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 import type { LatencyMeasurer } from '../latency/index.js';
+import type { FreeModelRouter } from '../free-models/router.js';
 import type { InternalLLMRequest } from '../core/internal-model.js';
 
 /**
@@ -529,6 +530,7 @@ export function startHttpServer(
   groupStore?: GroupStore,
   costTracker?: CostTracker,
   latencyMeasurer?: LatencyMeasurer,
+  freeModelRouter?: FreeModelRouter,
   ..._rest: unknown[]
 ): ServerType {
   // Reset start time on server creation
@@ -1250,6 +1252,7 @@ export function startHttpServer(
     groupStore,
     costTracker,
     serverStartTime,
+    freeModelRouter,
   });
 
   // ── Start ──────────────────────────────────────────────

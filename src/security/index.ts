@@ -9,9 +9,11 @@ export {
   TrustLevelSchema,
   SecurityProfileSchema,
   RateLimitConfigSchema,
+  createDbProfileResolver,
   type ToolCategory,
   type SecurityProfile,
   type RateLimitConfig,
+  type ProfileResolver,
 } from './profiles.js';
 
 export { ProfileEnforcer } from './enforcer.js';

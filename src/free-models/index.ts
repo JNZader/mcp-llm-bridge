@@ -6,7 +6,17 @@
  */
 
 export { FreeModelRouter } from './router.js';
-export { FreeModelRegistry, loadUserModels, BUILTIN_FREE_MODELS } from './registry.js';
+export {
+  FreeModelRegistry,
+  loadUserModels,
+  BUILTIN_FREE_MODELS,
+  importCatalog,
+  loadCatalog,
+  importProviderModels,
+  computeStabilityScore,
+  tierToBaseStability,
+  parseContextWindow,
+} from './registry.js';
 export { HealthChecker, checkHealth } from './health.js';
 export { rankModels, scoreLatency, scoreReliability, scoreCapability, computeScore } from './ranker.js';
 export type {
@@ -16,5 +26,8 @@ export type {
   HealthStatus,
   ModelCapability,
   RankedFreeModel,
+  ExternalModelDef,
+  CatalogProvider,
+  ModelCatalog,
 } from './types.js';
 export { DEFAULT_FREE_MODEL_CONFIG } from './types.js';

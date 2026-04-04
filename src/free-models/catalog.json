@@ -1,0 +1,219 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-04-04T00:00:00Z",
+  "source": "https://github.com/vava-nessa/free-coding-models",
+  "providers": [
+    {
+      "sourceKey": "nvidia",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "envKey": "NVIDIA_API_KEY",
+      "models": [
+        { "modelId": "minimaxai/minimax-m2.5", "displayName": "MiniMax M2.5", "tier": "S+", "sweScore": 80.2, "contextWindow": "200k" },
+        { "modelId": "z-ai/glm5", "displayName": "GLM 5", "tier": "S+", "sweScore": 77.8, "contextWindow": "128k" },
+        { "modelId": "moonshotai/kimi-k2.5", "displayName": "Kimi K2.5", "tier": "S+", "sweScore": 76.8, "contextWindow": "128k" },
+        { "modelId": "stepfun-ai/step-3.5-flash", "displayName": "Step 3.5 Flash", "tier": "S+", "sweScore": 74.4, "contextWindow": "256k" },
+        { "modelId": "minimaxai/minimax-m2.1", "displayName": "MiniMax M2.1", "tier": "S+", "sweScore": 74.0, "contextWindow": "200k" },
+        { "modelId": "z-ai/glm4.7", "displayName": "GLM 4.7", "tier": "S+", "sweScore": 73.8, "contextWindow": "200k" },
+        { "modelId": "deepseek-ai/deepseek-v3.2", "displayName": "DeepSeek V3.2", "tier": "S+", "sweScore": 73.1, "contextWindow": "128k" },
+        { "modelId": "mistralai/devstral-2-123b-instruct-2512", "displayName": "Devstral 2 123B", "tier": "S+", "sweScore": 72.2, "contextWindow": "256k" },
+        { "modelId": "qwen/qwen3-coder-480b-a35b-instruct", "displayName": "Qwen3 Coder 480B", "tier": "S+", "sweScore": 70.6, "contextWindow": "256k" },
+        { "modelId": "qwen/qwen3-235b-a22b", "displayName": "Qwen3 235B", "tier": "S+", "sweScore": 70.0, "contextWindow": "128k" },
+        { "modelId": "deepseek-ai/deepseek-v3.1-terminus", "displayName": "DeepSeek V3.1 Terminus", "tier": "S", "sweScore": 68.4, "contextWindow": "128k" },
+        { "modelId": "moonshotai/kimi-k2-instruct", "displayName": "Kimi K2 Instruct", "tier": "S", "sweScore": 65.8, "contextWindow": "128k" },
+        { "modelId": "meta/llama-4-maverick-17b-128e-instruct", "displayName": "Llama 4 Maverick", "tier": "S", "sweScore": 62.0, "contextWindow": "1M" },
+        { "modelId": "deepseek-ai/deepseek-v3.1", "displayName": "DeepSeek V3.1", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "openai/gpt-oss-120b", "displayName": "GPT OSS 120B", "tier": "S", "sweScore": 60.0, "contextWindow": "128k" },
+        { "modelId": "nvidia/llama-3.1-nemotron-ultra-253b-v1", "displayName": "Nemotron Ultra 253B", "tier": "A+", "sweScore": 56.0, "contextWindow": "128k" },
+        { "modelId": "qwen/qwq-32b", "displayName": "QwQ 32B", "tier": "A+", "sweScore": 50.0, "contextWindow": "131k" },
+        { "modelId": "nvidia/llama-3.3-nemotron-super-49b-v1.5", "displayName": "Nemotron Super 49B", "tier": "A", "sweScore": 49.0, "contextWindow": "128k" },
+        { "modelId": "qwen/qwen2.5-coder-32b-instruct", "displayName": "Qwen2.5 Coder 32B", "tier": "A", "sweScore": 46.0, "contextWindow": "32k" },
+        { "modelId": "meta/llama-3.3-70b-instruct", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "groq",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "envKey": "GROQ_API_KEY",
+      "models": [
+        { "modelId": "openai/gpt-oss-120b", "displayName": "GPT OSS 120B", "tier": "S", "sweScore": 60.0, "contextWindow": "128k" },
+        { "modelId": "qwen/qwen3-32b", "displayName": "Qwen3 32B", "tier": "A+", "sweScore": 50.0, "contextWindow": "131k" },
+        { "modelId": "meta-llama/llama-4-scout-17b-16e-preview", "displayName": "Llama 4 Scout", "tier": "A", "sweScore": 44.0, "contextWindow": "131k" },
+        { "modelId": "openai/gpt-oss-20b", "displayName": "GPT OSS 20B", "tier": "A", "sweScore": 42.0, "contextWindow": "128k" },
+        { "modelId": "llama-3.3-70b-versatile", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" },
+        { "modelId": "llama-3.1-8b-instant", "displayName": "Llama 3.1 8B", "tier": "B", "sweScore": 28.8, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "cerebras",
+      "baseUrl": "https://api.cerebras.ai/v1",
+      "envKey": "CEREBRAS_API_KEY",
+      "models": [
+        { "modelId": "zai-glm-4.7", "displayName": "GLM 4.7", "tier": "S+", "sweScore": 73.8, "contextWindow": "200k" },
+        { "modelId": "qwen-3-235b-a22b-instruct-2507", "displayName": "Qwen3 235B", "tier": "S+", "sweScore": 70.0, "contextWindow": "128k" },
+        { "modelId": "gpt-oss-120b", "displayName": "GPT OSS 120B", "tier": "S", "sweScore": 60.0, "contextWindow": "128k" },
+        { "modelId": "qwen-3-32b", "displayName": "Qwen3 32B", "tier": "A+", "sweScore": 50.0, "contextWindow": "128k" },
+        { "modelId": "llama-4-scout-17b-16e-instruct", "displayName": "Llama 4 Scout", "tier": "A", "sweScore": 44.0, "contextWindow": "10M" },
+        { "modelId": "llama3.3-70b", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" },
+        { "modelId": "llama3.1-8b", "displayName": "Llama 3.1 8B", "tier": "B", "sweScore": 28.8, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "sambanova",
+      "baseUrl": "https://api.sambanova.ai/v1",
+      "envKey": "SAMBANOVA_API_KEY",
+      "models": [
+        { "modelId": "MiniMax-M2.5", "displayName": "MiniMax M2.5", "tier": "S+", "sweScore": 74.0, "contextWindow": "160k" },
+        { "modelId": "DeepSeek-V3.2", "displayName": "DeepSeek V3.2", "tier": "S+", "sweScore": 73.1, "contextWindow": "8k" },
+        { "modelId": "DeepSeek-V3.1-Terminus", "displayName": "DeepSeek V3.1 Terminus", "tier": "S", "sweScore": 68.4, "contextWindow": "128k" },
+        { "modelId": "DeepSeek-V3.1", "displayName": "DeepSeek V3.1", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "Llama-4-Maverick-17B-128E-Instruct", "displayName": "Llama 4 Maverick", "tier": "S", "sweScore": 62.0, "contextWindow": "1M" },
+        { "modelId": "DeepSeek-V3-0324", "displayName": "DeepSeek V3 0324", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "DeepSeek-R1-0528", "displayName": "DeepSeek R1 0528", "tier": "S", "sweScore": 61.0, "contextWindow": "128k" },
+        { "modelId": "gpt-oss-120b", "displayName": "GPT OSS 120B", "tier": "S", "sweScore": 60.0, "contextWindow": "128k" },
+        { "modelId": "Qwen3-32B", "displayName": "Qwen3 32B", "tier": "A+", "sweScore": 50.0, "contextWindow": "128k" },
+        { "modelId": "Meta-Llama-3.3-70B-Instruct", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "envKey": "OPENROUTER_API_KEY",
+      "models": [
+        { "modelId": "minimax/minimax-m2.5:free", "displayName": "MiniMax M2.5", "tier": "S+", "sweScore": 74.0, "contextWindow": "197k" },
+        { "modelId": "stepfun/step-3.5-flash:free", "displayName": "Step 3.5 Flash", "tier": "S+", "sweScore": 74.4, "contextWindow": "256k" },
+        { "modelId": "z-ai/glm-4.5-air:free", "displayName": "GLM 4.5 Air", "tier": "S+", "sweScore": 72.0, "contextWindow": "131k" },
+        { "modelId": "qwen/qwen3-coder:free", "displayName": "Qwen3 Coder 480B", "tier": "S+", "sweScore": 70.6, "contextWindow": "262k" },
+        { "modelId": "qwen/qwen3-next-80b-a3b-instruct:free", "displayName": "Qwen3 80B Instruct", "tier": "S", "sweScore": 65.0, "contextWindow": "131k" },
+        { "modelId": "openai/gpt-oss-120b:free", "displayName": "GPT OSS 120B", "tier": "S", "sweScore": 60.0, "contextWindow": "131k" },
+        { "modelId": "nvidia/nemotron-3-super-120b-a12b:free", "displayName": "Nemotron 3 Super", "tier": "A+", "sweScore": 56.0, "contextWindow": "262k" },
+        { "modelId": "openai/gpt-oss-20b:free", "displayName": "GPT OSS 20B", "tier": "A", "sweScore": 42.0, "contextWindow": "131k" },
+        { "modelId": "meta-llama/llama-3.3-70b-instruct:free", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "131k" }
+      ]
+    },
+    {
+      "sourceKey": "together",
+      "baseUrl": "https://api.together.xyz/v1",
+      "envKey": "TOGETHER_API_KEY",
+      "models": [
+        { "modelId": "MiniMaxAI/MiniMax-M2.5", "displayName": "MiniMax M2.5", "tier": "S+", "sweScore": 80.2, "contextWindow": "200k" },
+        { "modelId": "zai-org/GLM-5", "displayName": "GLM 5", "tier": "S+", "sweScore": 77.8, "contextWindow": "128k" },
+        { "modelId": "moonshotai/Kimi-K2.5", "displayName": "Kimi K2.5", "tier": "S+", "sweScore": 76.8, "contextWindow": "128k" },
+        { "modelId": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8", "displayName": "Qwen3 Coder 480B", "tier": "S+", "sweScore": 70.6, "contextWindow": "256k" },
+        { "modelId": "deepseek-ai/DeepSeek-V3.1", "displayName": "DeepSeek V3.1", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "deepseek-ai/DeepSeek-R1", "displayName": "DeepSeek R1", "tier": "S", "sweScore": 61.0, "contextWindow": "128k" },
+        { "modelId": "openai/gpt-oss-120b", "displayName": "GPT OSS 120B", "tier": "S", "sweScore": 60.0, "contextWindow": "128k" },
+        { "modelId": "meta-llama/Llama-3.3-70B-Instruct-Turbo", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "deepinfra",
+      "baseUrl": "https://api.deepinfra.com/v1/openai",
+      "envKey": "DEEPINFRA_API_KEY",
+      "models": [
+        { "modelId": "Qwen/Qwen3-235B-A22B", "displayName": "Qwen3 235B", "tier": "S+", "sweScore": 70.0, "contextWindow": "128k" },
+        { "modelId": "deepseek-ai/DeepSeek-V3-0324", "displayName": "DeepSeek V3 0324", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "nvidia/Nemotron-3-Super", "displayName": "Nemotron 3 Super", "tier": "A+", "sweScore": 56.0, "contextWindow": "128k" },
+        { "modelId": "meta-llama/Meta-Llama-3.1-70B-Instruct", "displayName": "Llama 3.1 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "fireworks",
+      "baseUrl": "https://api.fireworks.ai/inference/v1",
+      "envKey": "FIREWORKS_API_KEY",
+      "models": [
+        { "modelId": "accounts/fireworks/models/qwen3-235b-a22b", "displayName": "Qwen3 235B", "tier": "S+", "sweScore": 70.0, "contextWindow": "128k" },
+        { "modelId": "accounts/fireworks/models/deepseek-v3", "displayName": "DeepSeek V3", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "accounts/fireworks/models/llama4-maverick-instruct-basic", "displayName": "Llama 4 Maverick", "tier": "S", "sweScore": 62.0, "contextWindow": "1M" },
+        { "modelId": "accounts/fireworks/models/deepseek-r1", "displayName": "DeepSeek R1", "tier": "S", "sweScore": 61.0, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "scaleway",
+      "baseUrl": "https://api.scaleway.ai/v1",
+      "envKey": "SCALEWAY_API_KEY",
+      "models": [
+        { "modelId": "devstral-2-123b-instruct-2512", "displayName": "Devstral 2 123B", "tier": "S+", "sweScore": 72.2, "contextWindow": "256k" },
+        { "modelId": "qwen3-235b-a22b-instruct-2507", "displayName": "Qwen3 235B", "tier": "S+", "sweScore": 70.0, "contextWindow": "128k" },
+        { "modelId": "qwen3.5-397b-a17b", "displayName": "Qwen3.5 400B VLM", "tier": "S", "sweScore": 68.0, "contextWindow": "250k" },
+        { "modelId": "mistral/mistral-large-3-675b-instruct-2512", "displayName": "Mistral Large 675B", "tier": "A+", "sweScore": 58.0, "contextWindow": "250k" },
+        { "modelId": "qwen3-coder-30b-a3b-instruct", "displayName": "Qwen3 Coder 30B", "tier": "A+", "sweScore": 55.0, "contextWindow": "32k" },
+        { "modelId": "llama-3.3-70b-instruct", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "hyperbolic",
+      "baseUrl": "https://api.hyperbolic.xyz/v1",
+      "envKey": "HYPERBOLIC_API_KEY",
+      "models": [
+        { "modelId": "qwen/qwen3-coder-480b-a35b-instruct", "displayName": "Qwen3 Coder 480B", "tier": "S+", "sweScore": 70.6, "contextWindow": "256k" },
+        { "modelId": "Qwen/Qwen3-235B-A22B", "displayName": "Qwen3 235B", "tier": "S+", "sweScore": 70.0, "contextWindow": "128k" },
+        { "modelId": "moonshotai/Kimi-K2-Instruct", "displayName": "Kimi K2 Instruct", "tier": "S", "sweScore": 65.8, "contextWindow": "131k" },
+        { "modelId": "deepseek-ai/DeepSeek-V3-0324", "displayName": "DeepSeek V3 0324", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "openai/gpt-oss-120b", "displayName": "GPT OSS 120B", "tier": "S", "sweScore": 60.0, "contextWindow": "128k" },
+        { "modelId": "Qwen/Qwen2.5-Coder-32B-Instruct", "displayName": "Qwen2.5 Coder 32B", "tier": "A", "sweScore": 46.0, "contextWindow": "32k" },
+        { "modelId": "meta-llama/Llama-3.3-70B-Instruct", "displayName": "Llama 3.3 70B", "tier": "A-", "sweScore": 39.5, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "siliconflow",
+      "baseUrl": "https://api.siliconflow.com/v1",
+      "envKey": "SILICONFLOW_API_KEY",
+      "models": [
+        { "modelId": "deepseek-ai/DeepSeek-V3.2", "displayName": "DeepSeek V3.2", "tier": "S+", "sweScore": 73.1, "contextWindow": "128k" },
+        { "modelId": "Qwen/Qwen3-Coder-480B-A35B-Instruct", "displayName": "Qwen3 Coder 480B", "tier": "S+", "sweScore": 70.6, "contextWindow": "256k" },
+        { "modelId": "Qwen/Qwen3-235B-A22B", "displayName": "Qwen3 235B", "tier": "S+", "sweScore": 70.0, "contextWindow": "128k" },
+        { "modelId": "deepseek-ai/DeepSeek-R1", "displayName": "DeepSeek R1", "tier": "S", "sweScore": 61.0, "contextWindow": "128k" },
+        { "modelId": "Qwen/Qwen2.5-Coder-32B-Instruct", "displayName": "Qwen2.5 Coder 32B", "tier": "A", "sweScore": 46.0, "contextWindow": "32k" }
+      ]
+    },
+    {
+      "sourceKey": "googleai",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "envKey": "GOOGLE_AI_API_KEY",
+      "models": [
+        { "modelId": "gemma-3-27b-it", "displayName": "Gemma 3 27B", "tier": "B", "sweScore": 22.0, "contextWindow": "128k" },
+        { "modelId": "gemma-3-12b-it", "displayName": "Gemma 3 12B", "tier": "C", "sweScore": 15.0, "contextWindow": "128k" }
+      ]
+    },
+    {
+      "sourceKey": "codestral",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "envKey": "CODESTRAL_API_KEY",
+      "models": [
+        { "modelId": "codestral-latest", "displayName": "Codestral", "tier": "B+", "sweScore": 34.0, "contextWindow": "256k" }
+      ]
+    },
+    {
+      "sourceKey": "huggingface",
+      "baseUrl": "https://router.huggingface.co/v1",
+      "envKey": "HF_API_KEY",
+      "models": [
+        { "modelId": "deepseek-ai/DeepSeek-V3-0324", "displayName": "DeepSeek V3 0324", "tier": "S", "sweScore": 62.0, "contextWindow": "128k" },
+        { "modelId": "Qwen/Qwen2.5-Coder-32B-Instruct", "displayName": "Qwen2.5 Coder 32B", "tier": "A", "sweScore": 46.0, "contextWindow": "32k" }
+      ]
+    },
+    {
+      "sourceKey": "qwen",
+      "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "envKey": "DASHSCOPE_API_KEY",
+      "models": [
+        { "modelId": "qwen3-coder-480b-a35b-instruct", "displayName": "Qwen3 Coder 480B", "tier": "S+", "sweScore": 70.6, "contextWindow": "256k" },
+        { "modelId": "qwen3-coder-plus", "displayName": "Qwen3 Coder Plus", "tier": "S+", "sweScore": 69.6, "contextWindow": "256k" },
+        { "modelId": "qwen3-235b-a22b-instruct", "displayName": "Qwen3 235B", "tier": "S", "sweScore": 70.0, "contextWindow": "256k" },
+        { "modelId": "qwen3-coder-max", "displayName": "Qwen3 Coder Max", "tier": "S", "sweScore": 67.0, "contextWindow": "256k" },
+        { "modelId": "qwen3-next-80b-a3b-instruct", "displayName": "Qwen3 80B Instruct", "tier": "S", "sweScore": 65.0, "contextWindow": "128k" },
+        { "modelId": "qwen3-32b", "displayName": "Qwen3 32B", "tier": "A+", "sweScore": 50.0, "contextWindow": "128k" },
+        { "modelId": "qwen2.5-coder-32b-instruct", "displayName": "Qwen2.5 Coder 32B", "tier": "A", "sweScore": 46.0, "contextWindow": "32k" }
+      ]
+    },
+    {
+      "sourceKey": "perplexity",
+      "baseUrl": "https://api.perplexity.ai",
+      "envKey": "PERPLEXITY_API_KEY",
+      "models": [
+        { "modelId": "sonar-reasoning-pro", "displayName": "Sonar Reasoning Pro", "tier": "A+", "sweScore": 50.0, "contextWindow": "128k" },
+        { "modelId": "sonar-reasoning", "displayName": "Sonar Reasoning", "tier": "A", "sweScore": 45.0, "contextWindow": "128k" }
+      ]
+    }
+  ]
+}
