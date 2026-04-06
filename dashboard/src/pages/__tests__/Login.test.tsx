@@ -5,6 +5,14 @@ import { MemoryRouter } from "react-router-dom";
 import { Login } from "../Login.tsx";
 import { AuthProvider } from "../../context/AuthContext.tsx";
 
+function mockAuthConfig(githubOauth: boolean) {
+  return vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({ githubOauth }),
+  });
+}
+
 function renderLogin() {
   return render(
     <MemoryRouter initialEntries={["/login"]}>
@@ -28,121 +36,134 @@ describe("Login", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders gateway URL and token inputs", () => {
-    renderLogin();
+  describe("when GitHub OAuth is not configured", () => {
+    beforeEach(() => {
+      globalThis.fetch = mockAuthConfig(false);
+    });
 
-    expect(screen.getByLabelText("Gateway URL")).toBeInTheDocument();
-    expect(screen.getByLabelText("Admin Token")).toBeInTheDocument();
-  });
+    it("renders the admin token input directly", async () => {
+      renderLogin();
+      await waitFor(() => {
+        expect(screen.getByLabelText("Admin Token")).toBeInTheDocument();
+      });
+    });
 
-  it("renders a connect button", () => {
-    renderLogin();
+    it("renders a connect button", async () => {
+      renderLogin();
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+      });
+    });
 
-    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
-  });
+    it("renders the app title", async () => {
+      renderLogin();
+      await waitFor(() => {
+        expect(screen.getByText("MCP LLM Bridge")).toBeInTheDocument();
+      });
+    });
 
-  it("renders the app title", () => {
-    renderLogin();
+    it("shows error on failed connection (network error)", async () => {
+      const authConfigFetch = mockAuthConfig(false);
+      globalThis.fetch = vi
+        .fn()
+        .mockImplementationOnce(authConfigFetch)
+        .mockRejectedValue(new TypeError("fetch failed"));
 
-    expect(screen.getByText("MCP LLM Bridge")).toBeInTheDocument();
-  });
+      const user = userEvent.setup();
+      renderLogin();
 
-  it("shows error on failed connection (network error)", async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
-    const user = userEvent.setup();
+      const tokenInput = await screen.findByLabelText("Admin Token");
+      const button = screen.getByRole("button", { name: "Connect" });
 
-    renderLogin();
+      await user.type(tokenInput, "bad-token");
+      await user.click(button);
 
-    const urlInput = screen.getByLabelText("Gateway URL");
-    const tokenInput = screen.getByLabelText("Admin Token");
-    const button = screen.getByRole("button", { name: "Connect" });
+      await waitFor(() => {
+        expect(
+          screen.getByText(/could not connect to the gateway/i),
+        ).toBeInTheDocument();
+      });
+    });
 
-    await user.clear(urlInput);
-    await user.type(urlInput, "http://localhost:9999");
-    await user.type(tokenInput, "bad-token");
-    await user.click(button);
+    it("shows error on 401 response (invalid token)", async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({ githubOauth: false }) })
+        .mockResolvedValue({ ok: false, status: 401, statusText: "Unauthorized" });
 
-    await waitFor(() => {
-      expect(
-        screen.getByText(/could not connect to the gateway/i),
-      ).toBeInTheDocument();
+      const user = userEvent.setup();
+      renderLogin();
+
+      const tokenInput = await screen.findByLabelText("Admin Token");
+      const button = screen.getByRole("button", { name: "Connect" });
+
+      await user.type(tokenInput, "wrong-token");
+      await user.click(button);
+
+      await waitFor(() => {
+        expect(screen.getByText(/invalid admin token/i)).toBeInTheDocument();
+      });
+    });
+
+    it("shows error on non-401 server error", async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: () => Promise.resolve({ githubOauth: false }) })
+        .mockResolvedValue({ ok: false, status: 500, statusText: "Internal Server Error" });
+
+      const user = userEvent.setup();
+      renderLogin();
+
+      const tokenInput = await screen.findByLabelText("Admin Token");
+      const button = screen.getByRole("button", { name: "Connect" });
+
+      await user.type(tokenInput, "some-token");
+      await user.click(button);
+
+      await waitFor(() => {
+        expect(screen.getByText(/server returned 500/i)).toBeInTheDocument();
+      });
+    });
+
+    it("token input is required", async () => {
+      renderLogin();
+      const tokenInput = await screen.findByLabelText("Admin Token");
+      expect(tokenInput).toBeRequired();
     });
   });
 
-  it("shows error on 401 response (invalid token)", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      statusText: "Unauthorized",
+  describe("when GitHub OAuth is configured", () => {
+    beforeEach(() => {
+      globalThis.fetch = mockAuthConfig(true);
     });
-    const user = userEvent.setup();
 
-    renderLogin();
-
-    const urlInput = screen.getByLabelText("Gateway URL");
-    const tokenInput = screen.getByLabelText("Admin Token");
-    const button = screen.getByRole("button", { name: "Connect" });
-
-    await user.clear(urlInput);
-    await user.type(urlInput, "http://localhost:3456");
-    await user.type(tokenInput, "wrong-token");
-    await user.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText(/invalid admin token/i)).toBeInTheDocument();
+    it("renders the GitHub login button", async () => {
+      renderLogin();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /continue with github/i }),
+        ).toBeInTheDocument();
+      });
     });
-  });
 
-  it("shows error on non-401 server error", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: "Internal Server Error",
+    it("does not show admin token input by default", async () => {
+      renderLogin();
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /continue with github/i }),
+        ).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText("Admin Token")).not.toBeInTheDocument();
     });
-    const user = userEvent.setup();
 
-    renderLogin();
+    it("shows admin token form when 'Use admin token' is clicked", async () => {
+      renderLogin();
+      const user = userEvent.setup();
 
-    const urlInput = screen.getByLabelText("Gateway URL");
-    const tokenInput = screen.getByLabelText("Admin Token");
-    const button = screen.getByRole("button", { name: "Connect" });
+      const toggle = await screen.findByRole("button", { name: /use admin token/i });
+      await user.click(toggle);
 
-    await user.clear(urlInput);
-    await user.type(urlInput, "http://localhost:3456");
-    await user.type(tokenInput, "some-token");
-    await user.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText(/server returned 500/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Enter your ADMIN_TOKEN")).toBeInTheDocument();
     });
-  });
-
-  it("shows loading state while connecting", async () => {
-    // Never resolve the fetch to keep loading state
-    globalThis.fetch = vi.fn().mockReturnValue(new Promise(() => {}));
-    const user = userEvent.setup();
-
-    renderLogin();
-
-    const urlInput = screen.getByLabelText("Gateway URL");
-    const tokenInput = screen.getByLabelText("Admin Token");
-    const button = screen.getByRole("button", { name: "Connect" });
-
-    await user.clear(urlInput);
-    await user.type(urlInput, "http://localhost:3456");
-    await user.type(tokenInput, "some-token");
-    await user.click(button);
-
-    expect(screen.getByText("Connecting...")).toBeInTheDocument();
-  });
-
-  it("requires both fields (HTML validation)", () => {
-    renderLogin();
-
-    const urlInput = screen.getByLabelText("Gateway URL");
-    const tokenInput = screen.getByLabelText("Admin Token");
-
-    expect(urlInput).toBeRequired();
-    expect(tokenInput).toBeRequired();
   });
 });

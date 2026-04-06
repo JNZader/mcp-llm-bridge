@@ -11,6 +11,7 @@ import { Usage } from "./pages/Usage.tsx";
 import { Groups } from "./pages/Groups.tsx";
 import { CircuitBreakers } from "./pages/CircuitBreakers.tsx";
 import { SettingsPage } from "./pages/Settings.tsx";
+import { OAuthCallback } from "./pages/OAuthCallback.tsx";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -30,6 +31,7 @@ createRoot(document.getElementById("root")!).render(
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/oauth/callback" element={<OAuthCallback />} />
             <Route
               element={
                 <ProtectedRoute>

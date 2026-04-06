@@ -4,9 +4,9 @@ import { ApiClient } from "./client.ts";
 import { useAuth } from "../context/AuthContext.tsx";
 
 function useApiClient(): ApiClient | null {
-  const { token, baseUrl, logout } = useAuth();
-  if (!token || !baseUrl) return null;
-  return new ApiClient(baseUrl, token, logout);
+  const { token, logout } = useAuth();
+  if (!token) return null;
+  return new ApiClient(token, logout);
 }
 
 export function useOverview() {

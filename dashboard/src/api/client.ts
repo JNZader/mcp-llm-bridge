@@ -29,8 +29,8 @@ export class ApiClient {
   private token: string;
   private onUnauthorized?: () => void;
 
-  constructor(baseUrl: string, token: string, onUnauthorized?: () => void) {
-    this.baseUrl = baseUrl;
+  constructor(token: string, onUnauthorized?: () => void) {
+    this.baseUrl = typeof window !== "undefined" ? window.location.origin : "";
     this.token = token;
     this.onUnauthorized = onUnauthorized;
   }

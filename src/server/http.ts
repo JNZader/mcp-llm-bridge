@@ -7,7 +7,7 @@
  * Supports per-project scoping via `project` body field or `X-Project` header.
  */
 
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { type ServerType, serve } from "@hono/node-server";
 import type { Context, Next } from "hono";
 import { Hono } from "hono";
@@ -54,6 +54,13 @@ import type { Vault } from "../vault/vault.js";
 import { registerAdminRoutes } from "./admin.js";
 import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
+import {
+	isGithubOauthConfigured,
+	getGithubAuthUrl,
+	exchangeCodeForUser,
+	createDashboardJwt,
+	isUserAllowed,
+} from "../auth/github-oauth.js";
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -83,6 +90,14 @@ function bearerAuth(config: GatewayConfig) {
 
 		// Always allow health checks (Coolify, uptime monitors)
 		if (c.req.method === "GET" && c.req.path === "/health") {
+			return next();
+		}
+
+		// Skip GitHub OAuth routes and auth config (public endpoints)
+		if (c.req.path.startsWith("/auth/github")) {
+			return next();
+		}
+		if (c.req.path === "/v1/admin/auth-config") {
 			return next();
 		}
 
@@ -641,6 +656,61 @@ export function startHttpServer(
 		// Single-tenant mode: existing AUTH_TOKEN flow for all routes
 		app.use("*", bearerAuth(config));
 	}
+
+	// ── GitHub OAuth (public) ────────────────────────────────
+
+	// Redirect user to GitHub for authentication
+	app.get("/auth/github", (c) => {
+		if (!isGithubOauthConfigured()) {
+			return c.json({ error: "GitHub OAuth not configured" }, 503);
+		}
+		const state = randomBytes(16).toString("hex");
+		const origin = new URL(c.req.url).origin;
+		const redirectUri = `${origin}/auth/github/callback`;
+		c.header("Set-Cookie", `gh_oauth_state=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax`);
+		return c.redirect(getGithubAuthUrl(state, redirectUri), 302);
+	});
+
+	// GitHub OAuth callback — exchange code, issue JWT, redirect to frontend
+	app.get("/auth/github/callback", async (c) => {
+		const code = c.req.query("code");
+		const state = c.req.query("state");
+		const cookieHeader = c.req.header("Cookie") ?? "";
+		const storedState = cookieHeader
+			.split(";")
+			.map((p) => p.trim())
+			.find((p) => p.startsWith("gh_oauth_state="))
+			?.split("=")[1];
+
+		// Clear state cookie
+		c.header("Set-Cookie", "gh_oauth_state=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax");
+
+		if (!code || !state || state !== storedState) {
+			return c.redirect(
+				"/#/oauth/callback?error=" + encodeURIComponent("Invalid OAuth state. Please try again."),
+			);
+		}
+
+		try {
+			const user = await exchangeCodeForUser(code);
+			if (!isUserAllowed(user.login)) {
+				return c.redirect(
+					"/#/oauth/callback?error=" +
+						encodeURIComponent(`User "${user.login}" is not allowed. Contact the admin.`),
+				);
+			}
+			const token = createDashboardJwt(user);
+			return c.redirect(`/#/oauth/callback?token=${token}`);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : "GitHub OAuth failed";
+			return c.redirect("/#/oauth/callback?error=" + encodeURIComponent(msg));
+		}
+	});
+
+	// Auth config — public endpoint so the frontend knows which login methods are available
+	app.get("/v1/admin/auth-config", (c) => {
+		return c.json({ githubOauth: isGithubOauthConfigured() });
+	});
 
 	// ── Dashboard ───────────────────────────────────────────
 

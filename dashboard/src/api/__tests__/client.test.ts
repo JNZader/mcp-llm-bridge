@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ApiClient } from "../client.ts";
 
-const BASE_URL = "http://localhost:3456";
+// In jsdom, window.location.origin is "http://localhost"
+const ORIGIN = "http://localhost";
 const TOKEN = "test-admin-token";
 
 function mockFetch(response: Partial<Response> & { json?: () => Promise<unknown> }) {
@@ -33,7 +34,7 @@ describe("ApiClient", () => {
       });
       globalThis.fetch = fetchSpy;
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
       await client.getHealth();
 
       expect(fetchSpy).toHaveBeenCalledOnce();
@@ -49,11 +50,11 @@ describe("ApiClient", () => {
       });
       globalThis.fetch = fetchSpy;
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
       await client.getProviders();
 
       const [url] = fetchSpy.mock.calls[0] as [string];
-      expect(url).toBe(`${BASE_URL}/v1/admin/providers`);
+      expect(url).toBe(`${ORIGIN}/v1/admin/providers`);
     });
   });
 
@@ -66,7 +67,7 @@ describe("ApiClient", () => {
       });
 
       const onUnauthorized = vi.fn();
-      const client = new ApiClient(BASE_URL, TOKEN, onUnauthorized);
+      const client = new ApiClient(TOKEN, onUnauthorized);
 
       await expect(client.getHealth()).rejects.toThrow("Unauthorized");
       expect(onUnauthorized).toHaveBeenCalledOnce();
@@ -80,7 +81,7 @@ describe("ApiClient", () => {
       });
 
       const onUnauthorized = vi.fn();
-      const client = new ApiClient(BASE_URL, TOKEN, onUnauthorized);
+      const client = new ApiClient(TOKEN, onUnauthorized);
 
       await expect(client.getHealth()).rejects.toThrow("Unauthorized");
       expect(onUnauthorized).toHaveBeenCalledOnce();
@@ -91,10 +92,10 @@ describe("ApiClient", () => {
     it("throws descriptive error on network failure", async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
 
       await expect(client.getHealth()).rejects.toThrow(
-        `Network error: could not reach ${BASE_URL}`,
+        `Network error: could not reach ${ORIGIN}`,
       );
     });
   });
@@ -108,7 +109,7 @@ describe("ApiClient", () => {
         json: () => Promise.resolve({ error: "Database connection failed" }),
       });
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
 
       await expect(client.getOverview()).rejects.toThrow("Database connection failed");
     });
@@ -121,7 +122,7 @@ describe("ApiClient", () => {
         json: () => Promise.resolve({}),
       });
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
 
       await expect(client.getOverview()).rejects.toThrow("HTTP 502: Bad Gateway");
     });
@@ -138,7 +139,7 @@ describe("ApiClient", () => {
       };
       globalThis.fetch = mockFetch({ json: () => Promise.resolve(data) });
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
       const result = await client.getOverview();
 
       expect(result).toEqual(data);
@@ -161,11 +162,11 @@ describe("ApiClient", () => {
       };
       globalThis.fetch = mockFetch({ json: () => Promise.resolve(data) });
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
       const result = await client.getProviders();
 
       expect(result.providers).toHaveLength(1);
-      expect(result.providers[0].id).toBe("openai");
+      expect(result.providers[0]!.id).toBe("openai");
     });
   });
 
@@ -181,7 +182,7 @@ describe("ApiClient", () => {
       };
       globalThis.fetch = mockFetch({ json: () => Promise.resolve(data) });
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
       const result = await client.getHealth();
 
       expect(result.status).toBe("ok");
@@ -204,7 +205,7 @@ describe("ApiClient", () => {
       });
       globalThis.fetch = fetchSpy;
 
-      const client = new ApiClient(BASE_URL, TOKEN);
+      const client = new ApiClient(TOKEN);
       await client.getUsageSummary({
         provider: "openai",
         from: "2026-01-01",

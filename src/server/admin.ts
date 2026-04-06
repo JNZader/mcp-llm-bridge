@@ -38,13 +38,31 @@ function tokenEquals(a: string, b: string): boolean {
 /**
  * Admin auth middleware.
  *
- * - If ADMIN_TOKEN env var is set, admin routes require THAT token.
- * - If ADMIN_TOKEN is not set, falls back to the regular AUTH_TOKEN.
- * - If neither is set, auth is disabled (local dev).
+ * Accepts either:
+ * - A GitHub OAuth JWT issued by this server (when GitHub OAuth is configured)
+ * - The ADMIN_TOKEN env var (falls back to AUTH_TOKEN if ADMIN_TOKEN not set)
+ * - Auth is disabled if neither is set (local dev).
  */
 export function adminAuth(config: GatewayConfig) {
   return async (c: Context, next: Next) => {
-    // Read ADMIN_TOKEN at request time (not at init) so it can be changed dynamically
+    // CORS preflight must pass through
+    if (c.req.method === 'OPTIONS') {
+      return next();
+    }
+
+    const authHeader = c.req.header('Authorization');
+    const parts = authHeader?.split(' ');
+    const bearerToken = parts?.length === 2 && parts[0] === 'Bearer' ? parts[1] : null;
+
+    // Accept a valid GitHub OAuth JWT (verifyDashboardJwt returns null if secret not set)
+    if (bearerToken) {
+      const { verifyDashboardJwt } = await import('../auth/github-oauth.js');
+      if (verifyDashboardJwt(bearerToken)) {
+        return next();
+      }
+    }
+
+    // Fall back to static ADMIN_TOKEN (or AUTH_TOKEN if ADMIN_TOKEN not set)
     const adminToken = process.env['ADMIN_TOKEN'];
     const requiredToken = adminToken ?? config.authToken;
 
@@ -53,22 +71,11 @@ export function adminAuth(config: GatewayConfig) {
       return next();
     }
 
-    // CORS preflight must pass through
-    if (c.req.method === 'OPTIONS') {
-      return next();
-    }
-
-    const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
+    if (!bearerToken) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    const parts = authHeader.split(' ');
-    if (parts.length !== 2 || parts[0] !== 'Bearer' || !parts[1]) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    if (!tokenEquals(parts[1], requiredToken)) {
+    if (!tokenEquals(bearerToken, requiredToken)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -98,6 +105,30 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
 
   // Admin auth middleware for all /v1/admin/* routes
   app.use('/v1/admin/*', adminAuth(config));
+
+  // ── GET /v1/admin/me ───────────────────────────────────
+  // Returns GitHub user info if authenticated via OAuth, or {authMethod:'token'} for token auth.
+
+  app.get('/v1/admin/me', async (c) => {
+    const authHeader = c.req.header('Authorization');
+    const parts = authHeader?.split(' ');
+    const bearerToken = parts?.length === 2 && parts[0] === 'Bearer' ? parts[1] : null;
+
+    if (bearerToken) {
+      const { verifyDashboardJwt } = await import('../auth/github-oauth.js');
+      const payload = verifyDashboardJwt(bearerToken);
+      if (payload) {
+        return c.json({
+          authMethod: 'github',
+          login: payload.login,
+          name: payload.name,
+          avatar: payload.avatar,
+        });
+      }
+    }
+
+    return c.json({ authMethod: 'token', login: null, name: 'Admin', avatar: null });
+  });
 
   // ── GET /v1/admin/overview ─────────────────────────────
 

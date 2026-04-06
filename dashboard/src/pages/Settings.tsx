@@ -5,7 +5,7 @@ import { useHealth } from "../api/hooks.ts";
 import { useNavigate } from "react-router-dom";
 
 export function SettingsPage() {
-  const { baseUrl, token, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const { data: health, isLoading } = useHealth();
   const navigate = useNavigate();
   const [showToken, setShowToken] = useState(false);
@@ -26,25 +26,43 @@ export function SettingsPage() {
 
       {/* API Connection */}
       <section className="rounded-lg border border-border bg-card p-4 space-y-4">
-        <h2 className="text-lg font-semibold text-foreground">API Connection</h2>
+        <h2 className="text-lg font-semibold text-foreground">Session</h2>
         <div className="space-y-3">
-          <div>
-            <p className="text-xs text-muted-foreground">Gateway URL</p>
-            <p className="text-sm font-medium text-foreground">{baseUrl ?? "Not connected"}</p>
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground">Admin Token</p>
-            <div className="flex items-center gap-2">
-              <code className="text-sm font-mono text-foreground">
-                {showToken ? token : maskedToken}
-              </code>
-              <button
-                onClick={() => setShowToken(!showToken)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+          {user ? (
+            <div className="flex items-center gap-3">
+              {user.avatar && (
+                <img
+                  src={user.avatar}
+                  alt={user.login}
+                  className="h-8 w-8 rounded-full"
+                />
+              )}
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  {user.name ?? user.login}
+                </p>
+                <p className="text-xs text-muted-foreground">@{user.login} via GitHub</p>
+              </div>
             </div>
+          ) : (
+            <div>
+              <p className="text-xs text-muted-foreground">Auth Token</p>
+              <div className="flex items-center gap-2">
+                <code className="text-sm font-mono text-foreground">
+                  {showToken ? token : maskedToken}
+                </code>
+                <button
+                  onClick={() => setShowToken(!showToken)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          )}
+          <div>
+            <p className="text-xs text-muted-foreground">Gateway</p>
+            <p className="text-sm font-medium text-foreground">{window.location.origin}</p>
           </div>
         </div>
       </section>
