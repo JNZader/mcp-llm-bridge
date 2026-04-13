@@ -69,7 +69,11 @@ const boilerplateRule: RouteRule = {
 function makeConfig(overrides?: Partial<ModelRoutingConfig>): Partial<ModelRoutingConfig> {
   return {
     enabled: true,
-    endpoints: [localEndpoint, cheapEndpoint, expensiveEndpoint],
+    endpoints: [
+      { ...localEndpoint, available: true },
+      { ...cheapEndpoint, available: true },
+      { ...expensiveEndpoint, available: true },
+    ],
     rules: [commitRule, boilerplateRule],
     defaultEndpoint: 'claude-sonnet',
     qualityThreshold: 0.7,
