@@ -96,3 +96,9 @@ export {
   googleStreamTransformer,
 } from './outbound/openai-stream.js';
 export { anthropicStreamTransformer } from './outbound/anthropic-stream.js';
+export {
+  splitPrompt,
+  composeMessages,
+  optimizeMessages,
+} from './three-part-prompt.js';
+export type { ThreePartPrompt, ThreePartOptions } from './three-part-prompt.js';
