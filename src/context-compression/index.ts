@@ -19,3 +19,5 @@ export type {
   CompressionQueueItem,
 } from './types.js';
 export { DEFAULT_COMPRESSOR_CONFIG } from './types.js';
+export { compressOutput, measureCompression } from './output-compression.js';
+export type { OutputCompressionOptions, OutputStrategy } from './output-compression.js';
