@@ -26,6 +26,7 @@ import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
+import { createPageIndex } from '../pageindex/index.js';
 
 /** Tool definitions exposed via MCP. */
 const TOOLS = [
@@ -888,6 +889,11 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
         handleToolCall(name, args, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager),
     );
   }
+
+  // Initialize PageIndex for conversation pagination
+  // Prevents compaction loops with small context models (4K-8K)
+  const { wrapWithPageIndex } = await import('../pageindex/mcp-integration.js');
+  wrapWithPageIndex(server, vault?.getDb?.());
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

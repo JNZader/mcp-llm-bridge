@@ -1,0 +1,42 @@
+# Test Docker Compose for PageIndex
+# Quick validation that PageIndex works in containerized environment
+
+services:
+  mcp-bridge-test:
+    build: .
+    volumes:
+      - ./test-pageindex-data:/root/.llm-gateway
+      - ./src:/app/src:ro  # Mount source for testing
+    environment:
+      - LLM_GATEWAY_PORT=3456
+      - NODE_ENV=test
+      - LLM_GATEWAY_AUTH_TOKEN=test-token-123
+    command: >
+      sh -c "pnpm tsc --noEmit && 
+             echo 'TypeScript check passed' &&
+             pnpm test test/pageindex.test.ts &&
+             echo 'PageIndex tests passed!'"
+    working_dir: /app
+
+  # Quick integration test
+  pageindex-demo:
+    build: .
+    volumes:
+      - ./demo-data:/root/.llm-gateway
+    environment:
+      - LLM_GATEWAY_PORT=3456
+      - LLM_GATEWAY_AUTH_TOKEN=demo-token
+    ports:
+      - "3456:3456"
+    command: >
+      sh -c "echo 'Starting MCP-LLM-Bridge with PageIndex...' &&
+             echo 'Available tools:' &&
+             echo '- conversation_paginate' &&
+             echo '- conversation_get_page' &&
+             echo '- conversation_context' &&
+             echo '- conversation_navigate' &&
+             echo '- conversation_info' &&
+             echo '- conversation_find_relevant' &&
+             echo '- conversation_check_compaction' &&
+             pnpm run serve"
+    working_dir: /app
