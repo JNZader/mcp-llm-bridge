@@ -199,4 +199,131 @@ describe('PageIndex', () => {
       expect(stats.pages).toBeGreaterThan(0);
     });
   });
+
+  describe('Edge Cases', () => {
+    it('should handle empty content', async () => {
+      const result = await service.paginateSession('empty-session', '');
+      
+      expect(result.pages).toBe(1);
+      expect(result.tokens).toBe(0);
+    });
+
+    it('should handle very small content', async () => {
+      const result = await service.paginateSession('small-session', 'Hello world');
+      
+      expect(result.pages).toBe(1);
+      expect(result.tokens).toBeGreaterThan(0);
+    });
+
+    it('should handle special characters in content', async () => {
+      const content = 'Special chars: àáâãäåæçèéêë ñ 中文 🎉 <script>alert("xss")</script>';
+      
+      const result = await service.paginateSession('special-session', content);
+      
+      expect(result.pages).toBe(1);
+      
+      const page = service.getPage('special-session', 1);
+      expect(page?.content).toContain('àáâãäåæçèéêë');
+      expect(page?.content).toContain('中文');
+    });
+
+    it('should handle concurrent sessions', async () => {
+      const content1 = 'Session 1 '.repeat(500);
+      const content2 = 'Session 2 '.repeat(500);
+      
+      const [result1, result2] = await Promise.all([
+        service.paginateSession('concurrent-1', content1),
+        service.paginateSession('concurrent-2', content2)
+      ]);
+      
+      expect(result1.pages).toBeGreaterThan(0);
+      expect(result2.pages).toBeGreaterThan(0);
+      
+      const page1 = service.getPage('concurrent-1', 1);
+      const page2 = service.getPage('concurrent-2', 1);
+      
+      expect(page1?.content).toContain('Session 1');
+      expect(page2?.content).toContain('Session 2');
+    });
+
+    it('should handle very large window size', async () => {
+      const content = Array(5).fill(0).map((_, i) => 
+        `Page ${i}\n${'Text '.repeat(200)}`
+      ).join('\n\n');
+      
+      await service.paginateSession('large-window', content);
+      
+      const context = service.getContext({
+        sessionId: 'large-window',
+        pageNum: 3,
+        windowSize: 100 // Larger than total pages
+      });
+      
+      expect(context.totalInContext).toBeLessThanOrEqual(5);
+    });
+  });
+
+  describe('Integration: Small Model Workflow', () => {
+    it('should handle 4K model workflow end-to-end', async () => {
+      // Simular una conversación larga que excedería 4K tokens
+      const conversation = Array(20).fill(0).map((_, i) => 
+        `## Turn ${i + 1}\nUser: Question about topic ${i}?\nAssistant: Detailed answer with ${'explanation '.repeat(50)}`
+      ).join('\n\n');
+      
+      // Paso 1: Paginar
+      const paginateResult = await service.paginateSession('workflow-session', conversation);
+      expect(paginateResult.pages).toBeGreaterThan(3);
+      expect(paginateResult.tokens).toBeGreaterThan(4000);
+      
+      // Paso 2: Verificar que necesita paginación para modelo 4K
+      const compactionCheck = service.checkCompaction('workflow-session', 4096, 0);
+      expect(compactionCheck.shouldCompact).toBe(true);
+      expect(compactionCheck.suggestedAction).toBe('compact');
+      
+      // Paso 3: Obtener contexto relevante
+      const context = service.getContext({
+        sessionId: 'workflow-session',
+        pageNum: 2,
+        windowSize: 1
+      });
+      expect(context.totalTokens).toBeLessThan(4000 * 0.7); // Menos del 70%
+      
+      // Paso 4: Navegar por páginas
+      let currentPage = service.getPage('workflow-session', 1);
+      let pageCount = 0;
+      
+      while (currentPage && pageCount < 5) {
+        pageCount++;
+        currentPage = service.navigate({
+          sessionId: 'workflow-session',
+          currentPageNum: currentPage.pageNum,
+          direction: 'next'
+        });
+      }
+      
+      expect(pageCount).toBeGreaterThan(1);
+      
+      // Paso 5: Buscar contenido relevante
+      const relevant = service.findRelevantPages('workflow-session', 'explanation', 2);
+      expect(relevant.length).toBeGreaterThan(0);
+    });
+
+    it('should handle multiple model sizes', async () => {
+      const content = 'Word '.repeat(8000); // ~32K chars = ~8K tokens
+      
+      await service.paginateSession('model-sizes', content);
+      
+      // 4K model (pequeño) - debería necesitar paginación
+      const smallModel = service.checkCompaction('model-sizes', 4096, 0);
+      expect(smallModel.shouldCompact).toBe(true);
+      
+      // 8K model (mediano) - debería necesitar paginación
+      const mediumModel = service.checkCompaction('model-sizes', 8192, 0);
+      expect(mediumModel.shouldCompact).toBe(true);
+      
+      // 32K model (grande) - no debería necesitar paginación
+      const largeModel = service.checkCompaction('model-sizes', 32768, 0);
+      expect(largeModel.shouldCompact).toBe(false);
+    });
+  });
 });
