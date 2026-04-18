@@ -137,7 +137,7 @@ describe("createExecution", () => {
 		const exec = createExecution(wf);
 		assert.equal(exec.status, "pending");
 		assert.equal(exec.steps.length, 2);
-		assert.equal(exec.steps[0].toolName, "read");
+		assert.equal(exec.steps[0]?.toolName, "read");
 		assert.ok(exec.steps.every((s) => s.status === "pending"));
 	});
 });

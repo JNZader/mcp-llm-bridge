@@ -1,10 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  ToolCatalog,
-  type ToolEntry,
-  type ToolSource,
-} from '../src/tool-catalog/index.js';
+import { ToolCatalog } from '../src/tool-catalog/index.js';
 
 // ── Registration ──
 
