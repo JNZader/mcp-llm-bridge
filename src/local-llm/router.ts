@@ -7,8 +7,8 @@
  * get offloaded. Complex reasoning stays with Claude.
  */
 
-import type { TaskClassification, OffloadTask } from './types.js';
-import { OFFLOAD_TASK } from './types.js';
+import type { TaskClassification } from './types.js';
+import type { TaskType } from '../classification/index.js';
 
 /**
  * Pattern definitions for each offloadable task type.
@@ -16,7 +16,7 @@ import { OFFLOAD_TASK } from './types.js';
  * beyond which we assume the task is too complex to offload.
  */
 interface TaskPattern {
-  task: OffloadTask;
+  task: TaskType;
   /** Keywords that suggest this task type (case-insensitive). */
   keywords: string[];
   /** Maximum prompt length in chars for this task type. */
@@ -27,7 +27,7 @@ interface TaskPattern {
 
 const TASK_PATTERNS: TaskPattern[] = [
   {
-    task: OFFLOAD_TASK.COMMIT_MESSAGE,
+    task: 'commit-message',
     keywords: [
       'commit message', 'git commit', 'write a commit',
       'conventional commit', 'commit msg',
@@ -36,7 +36,7 @@ const TASK_PATTERNS: TaskPattern[] = [
     baseConfidence: 0.95,
   },
   {
-    task: OFFLOAD_TASK.BOILERPLATE,
+    task: 'boilerplate',
     keywords: [
       'boilerplate', 'scaffold', 'template', 'stub',
       'generate interface', 'create skeleton', 'type definition',
@@ -46,7 +46,7 @@ const TASK_PATTERNS: TaskPattern[] = [
     baseConfidence: 0.85,
   },
   {
-    task: OFFLOAD_TASK.FORMAT_CONVERSION,
+    task: 'format-conversion',
     keywords: [
       'convert to json', 'convert to yaml', 'convert to csv',
       'json to', 'yaml to', 'csv to', 'xml to',
@@ -56,7 +56,7 @@ const TASK_PATTERNS: TaskPattern[] = [
     baseConfidence: 0.90,
   },
   {
-    task: OFFLOAD_TASK.STYLE_CHECK,
+    task: 'style-check',
     keywords: [
       'lint', 'style check', 'formatting', 'code style',
       'naming convention', 'eslint', 'prettier',
@@ -66,7 +66,7 @@ const TASK_PATTERNS: TaskPattern[] = [
     baseConfidence: 0.80,
   },
   {
-    task: OFFLOAD_TASK.SUMMARIZATION,
+    task: 'summarization',
     keywords: [
       'summarize', 'summary', 'tldr', 'tl;dr',
       'brief overview', 'key points',
@@ -75,7 +75,7 @@ const TASK_PATTERNS: TaskPattern[] = [
     baseConfidence: 0.75,
   },
   {
-    task: OFFLOAD_TASK.TRANSLATION,
+    task: 'translation',
     keywords: [
       'translate to', 'translate from', 'translation',
       'convert to english', 'convert to spanish',
@@ -111,7 +111,7 @@ export function classifyForOffload(prompt: string): TaskClassification {
   const hasComplexMarker = COMPLEX_TASK_KEYWORDS.some((kw) => lower.includes(kw));
   if (hasComplexMarker) {
     return {
-      task: OFFLOAD_TASK.NOT_OFFLOADABLE,
+      task: 'not-offloadable',
       confidence: 0.95,
       shouldOffload: false,
       reason: 'Complex reasoning task detected — requires primary model',
@@ -135,7 +135,7 @@ export function classifyForOffload(prompt: string): TaskClassification {
 
   if (!bestMatch) {
     return {
-      task: OFFLOAD_TASK.NOT_OFFLOADABLE,
+      task: 'not-offloadable',
       confidence: 0.6,
       shouldOffload: false,
       reason: 'No offloadable task pattern matched',

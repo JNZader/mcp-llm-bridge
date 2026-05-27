@@ -6,7 +6,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { classifyForOffload, meetsOffloadThreshold } from '../../src/local-llm/router.js';
-import { OFFLOAD_TASK } from '../../src/local-llm/types.js';
 
 // ── classifyForOffload ──────────────────────────────────────
 
@@ -14,93 +13,93 @@ describe('classifyForOffload', () => {
   // Commit message tasks
   it('classifies commit message requests', () => {
     const result = classifyForOffload('Write a commit message for these changes');
-    assert.equal(result.task, OFFLOAD_TASK.COMMIT_MESSAGE);
+    assert.equal(result.task, 'commit-message');
     assert.equal(result.shouldOffload, true);
     assert.ok(result.confidence >= 0.9);
   });
 
   it('classifies conventional commit requests', () => {
     const result = classifyForOffload('Generate a conventional commit for this diff');
-    assert.equal(result.task, OFFLOAD_TASK.COMMIT_MESSAGE);
+    assert.equal(result.task, 'commit-message');
     assert.equal(result.shouldOffload, true);
   });
 
   // Boilerplate tasks
   it('classifies boilerplate generation', () => {
     const result = classifyForOffload('Generate boilerplate for a new React component');
-    assert.equal(result.task, OFFLOAD_TASK.BOILERPLATE);
+    assert.equal(result.task, 'boilerplate');
     assert.equal(result.shouldOffload, true);
   });
 
   it('classifies scaffold requests', () => {
     const result = classifyForOffload('Scaffold a new Express router');
-    assert.equal(result.task, OFFLOAD_TASK.BOILERPLATE);
+    assert.equal(result.task, 'boilerplate');
     assert.equal(result.shouldOffload, true);
   });
 
   // Format conversion tasks
   it('classifies JSON conversion', () => {
     const result = classifyForOffload('Convert to JSON: name=foo, age=42');
-    assert.equal(result.task, OFFLOAD_TASK.FORMAT_CONVERSION);
+    assert.equal(result.task, 'format-conversion');
     assert.equal(result.shouldOffload, true);
   });
 
   it('classifies YAML to JSON conversion', () => {
     const result = classifyForOffload('Convert this YAML to JSON format');
-    assert.equal(result.task, OFFLOAD_TASK.FORMAT_CONVERSION);
+    assert.equal(result.task, 'format-conversion');
     assert.equal(result.shouldOffload, true);
   });
 
   // Style check tasks
   it('classifies lint requests', () => {
     const result = classifyForOffload('Check this code for lint errors');
-    assert.equal(result.task, OFFLOAD_TASK.STYLE_CHECK);
+    assert.equal(result.task, 'style-check');
     assert.equal(result.shouldOffload, true);
   });
 
   // Summarization tasks
   it('classifies summarization requests', () => {
     const result = classifyForOffload('Summarize this README for me');
-    assert.equal(result.task, OFFLOAD_TASK.SUMMARIZATION);
+    assert.equal(result.task, 'summarization');
     assert.equal(result.shouldOffload, true);
   });
 
   // Translation tasks
   it('classifies translation requests', () => {
     const result = classifyForOffload('Translate to Spanish: Hello, world');
-    assert.equal(result.task, OFFLOAD_TASK.TRANSLATION);
+    assert.equal(result.task, 'translation');
     assert.equal(result.shouldOffload, true);
   });
 
   // Complex tasks — should NOT offload
   it('rejects architecture discussions', () => {
     const result = classifyForOffload('Help me architect a microservices system');
-    assert.equal(result.task, OFFLOAD_TASK.NOT_OFFLOADABLE);
+    assert.equal(result.task, 'not-offloadable');
     assert.equal(result.shouldOffload, false);
   });
 
   it('rejects security audits', () => {
     const result = classifyForOffload('Perform a security audit of this auth module');
-    assert.equal(result.task, OFFLOAD_TASK.NOT_OFFLOADABLE);
+    assert.equal(result.task, 'not-offloadable');
     assert.equal(result.shouldOffload, false);
   });
 
   it('rejects debugging requests', () => {
     const result = classifyForOffload('Debug this failing test case');
-    assert.equal(result.task, OFFLOAD_TASK.NOT_OFFLOADABLE);
+    assert.equal(result.task, 'not-offloadable');
     assert.equal(result.shouldOffload, false);
   });
 
   it('rejects code review requests', () => {
     const result = classifyForOffload('Do a code review of this PR');
-    assert.equal(result.task, OFFLOAD_TASK.NOT_OFFLOADABLE);
+    assert.equal(result.task, 'not-offloadable');
     assert.equal(result.shouldOffload, false);
   });
 
   // Unrecognized prompts
   it('returns not-offloadable for generic prompts', () => {
     const result = classifyForOffload('How does JavaScript handle closures?');
-    assert.equal(result.task, OFFLOAD_TASK.NOT_OFFLOADABLE);
+    assert.equal(result.task, 'not-offloadable');
     assert.equal(result.shouldOffload, false);
   });
 
@@ -109,7 +108,7 @@ describe('classifyForOffload', () => {
     const longPrompt = 'Write a commit message for: ' + 'x'.repeat(6000);
     const result = classifyForOffload(longPrompt);
     // Should not match commit-message due to maxPromptLength guard
-    assert.notEqual(result.task, OFFLOAD_TASK.COMMIT_MESSAGE);
+    assert.notEqual(result.task, 'commit-message');
   });
 });
 
@@ -118,7 +117,7 @@ describe('classifyForOffload', () => {
 describe('meetsOffloadThreshold', () => {
   it('passes when confidence exceeds threshold', () => {
     const classification = {
-      task: OFFLOAD_TASK.COMMIT_MESSAGE as const,
+      task: 'commit-message' as const,
       confidence: 0.95,
       shouldOffload: true,
       reason: 'test',
@@ -128,7 +127,7 @@ describe('meetsOffloadThreshold', () => {
 
   it('fails when confidence below threshold', () => {
     const classification = {
-      task: OFFLOAD_TASK.SUMMARIZATION as const,
+      task: 'summarization' as const,
       confidence: 0.5,
       shouldOffload: true,
       reason: 'test',
@@ -138,7 +137,7 @@ describe('meetsOffloadThreshold', () => {
 
   it('fails when shouldOffload is false regardless of confidence', () => {
     const classification = {
-      task: OFFLOAD_TASK.NOT_OFFLOADABLE as const,
+      task: 'not-offloadable' as const,
       confidence: 0.95,
       shouldOffload: false,
       reason: 'test',
@@ -148,7 +147,7 @@ describe('meetsOffloadThreshold', () => {
 
   it('passes at exact threshold', () => {
     const classification = {
-      task: OFFLOAD_TASK.BOILERPLATE as const,
+      task: 'boilerplate' as const,
       confidence: 0.7,
       shouldOffload: true,
       reason: 'test',

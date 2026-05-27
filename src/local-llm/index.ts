@@ -10,17 +10,16 @@
 
 // Types
 export {
-  OFFLOAD_TASK,
   DEFAULT_LOCAL_LLM_CONFIG,
   type LocalLLMBackend,
   type ConnectionStatus,
-  type OffloadTask,
   type LocalModel,
   type DetectionResult,
   type TaskClassification,
   type LocalLLMResponse,
   type LocalLLMConfig,
 } from './types.js';
+export { type TaskType } from '../classification/index.js';
 
 // Detection
 export {

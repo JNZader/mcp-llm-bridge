@@ -12,18 +12,7 @@ export type LocalLLMBackend = 'ollama' | 'lm-studio';
 /** Connection status for a local LLM runtime. */
 export type ConnectionStatus = 'connected' | 'disconnected' | 'error';
 
-/** Task categories for offloading decisions. */
-export const OFFLOAD_TASK = {
-  BOILERPLATE: 'boilerplate',
-  COMMIT_MESSAGE: 'commit-message',
-  FORMAT_CONVERSION: 'format-conversion',
-  STYLE_CHECK: 'style-check',
-  SUMMARIZATION: 'summarization',
-  TRANSLATION: 'translation',
-  NOT_OFFLOADABLE: 'not-offloadable',
-} as const;
-
-export type OffloadTask = (typeof OFFLOAD_TASK)[keyof typeof OFFLOAD_TASK];
+import type { TaskType } from '../classification/index.js';
 
 /**
  * A detected local LLM model available for offloading.
@@ -64,7 +53,7 @@ export interface DetectionResult {
  */
 export interface TaskClassification {
   /** Detected task type. */
-  task: OffloadTask;
+  task: TaskType;
   /** Confidence score 0-1. */
   confidence: number;
   /** Whether this task should be offloaded to a local LLM. */
