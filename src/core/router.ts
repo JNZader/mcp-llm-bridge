@@ -31,6 +31,7 @@ import type { FreeModelRouter } from '../free-models/router.js';
 import type { LatencyMeasurer } from '../latency/measurer.js';
 import type { ModelRouter } from '../model-routing/router.js';
 import type { ApprovalStore } from '../approval/index.js';
+import { optimizeMessages } from '../transformers/three-part-prompt.js';
 
 /**
  * Minimal interface for a local LLM client.
@@ -75,6 +76,14 @@ export function resetCircuitBreakerV2(): void {
  */
 export function useTransformers(): boolean {
   return process.env['USE_TRANSFORMERS'] === 'true';
+}
+
+/**
+ * Check if three-part prompt optimization is enabled.
+ * Default: true.
+ */
+export function optimizeMessagesEnabled(): boolean {
+  return process.env['OPTIMIZE_MESSAGES_ENABLED'] !== 'false';
 }
 
 export class Router {
@@ -326,11 +335,16 @@ export class Router {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
     }
 
+    // Apply three-part prompt optimization to message array
+    const optimizedRequest: InternalLLMRequest = optimizeMessagesEnabled()
+      ? { ...request, messages: optimizeMessages(request.messages) }
+      : request;
+
     const registry = this._transformerRegistry;
     const startTime = Date.now();
 
-    const model = request.model ?? '';
-    const clientId = request.metadata?.['clientId'] as string | undefined;
+    const model = optimizedRequest.model ?? '';
+    const clientId = optimizedRequest.metadata?.['clientId'] as string | undefined;
 
     // 1. Check session stickiness
     if (this._sessionStore && clientId && model) {
@@ -367,8 +381,8 @@ export class Router {
     if (!orderedCandidates) {
       const resolveRequest: GenerateRequest = {
         prompt: '',
-        model: request.model,
-        provider: request.metadata?.['provider'] as string | undefined,
+        model: optimizedRequest.model,
+        provider: optimizedRequest.metadata?.['provider'] as string | undefined,
       };
       orderedCandidates = await this.resolveCandidates(resolveRequest);
     }
@@ -395,7 +409,7 @@ export class Router {
 
     for (const provider of availableCandidates) {
       try {
-        const result = await this.tryProvider(provider, request, registry, startTime);
+        const result = await this.tryProvider(provider, optimizedRequest, registry, startTime);
 
         // Pin session on success if stickiness is enabled
         if (this._sessionStore && clientId && model && matchedGroup?.stickyTTL) {
@@ -437,8 +451,13 @@ export class Router {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
     }
 
+    // Apply three-part prompt optimization
+    const optimizedRequest: InternalLLMRequest = optimizeMessagesEnabled()
+      ? { ...request, messages: optimizeMessages(request.messages) }
+      : request;
+
     const registry = this._transformerRegistry;
-    const model = request.model ?? '';
+    const model = optimizedRequest.model ?? '';
 
     // Resolve ordered candidates (same logic as generateFromInternal)
     let orderedCandidates: LLMProvider[] | null = null;
@@ -453,8 +472,8 @@ export class Router {
     if (!orderedCandidates) {
       const resolveRequest: GenerateRequest = {
         prompt: '',
-        model: request.model,
-        provider: request.metadata?.['provider'] as string | undefined,
+        model: optimizedRequest.model,
+        provider: optimizedRequest.metadata?.['provider'] as string | undefined,
       };
       orderedCandidates = await this.resolveCandidates(resolveRequest);
     }
