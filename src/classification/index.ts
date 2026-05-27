@@ -32,6 +32,9 @@ export interface ClassificationResult {
   reason?: string;
 }
 
+/** Alias for backward compatibility with consumers that use TaskClassification. */
+export type TaskClassification = ClassificationResult;
+
 /** Configuration for tuning heuristic thresholds. */
 export interface ClassifierConfig {
   /** Token count threshold for large-context classification (default: 100_000). */
