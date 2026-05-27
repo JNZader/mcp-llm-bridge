@@ -7,6 +7,7 @@ import {
   Users,
   ShieldAlert,
   Settings,
+  Zap,
   Menu,
   X,
   LogOut,
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { to: "/usage", label: "Usage", icon: BarChart3 },
   { to: "/groups", label: "Groups", icon: Users },
   { to: "/circuit-breakers", label: "Circuit Breakers", icon: ShieldAlert },
+  { to: "/wiring-sprint", label: "Wiring Sprint", icon: Zap },
   { to: "/settings", label: "Settings", icon: Settings },
 ] as const;
 

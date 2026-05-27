@@ -146,3 +146,32 @@ export function useResetCircuitBreaker() {
     },
   });
 }
+
+// ── Wiring Sprint ────────────────────────────────────
+
+export function useCompressionStats() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["compression-stats"],
+    queryFn: () => client!.getCompressionStats(),
+    enabled: !!client,
+  });
+}
+
+export function useLocalModels() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["local-models"],
+    queryFn: () => client!.getLocalModels(),
+    enabled: !!client,
+  });
+}
+
+export function useSecurityProfile() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["security-profile"],
+    queryFn: () => client!.getSecurityProfile(),
+    enabled: !!client,
+  });
+}

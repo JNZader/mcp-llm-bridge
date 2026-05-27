@@ -12,6 +12,9 @@ import type {
   UsageQueryResponse,
   ResetCBResponse,
   ModelsResponse,
+  CompressionStatsResponse,
+  LocalModelsResponse,
+  SecurityProfileResponse,
 } from "./types.ts";
 
 interface UsageQueryParams {
@@ -161,10 +164,23 @@ export class ApiClient {
     if (params?.project) searchParams.set("project", params.project);
     if (params?.from) searchParams.set("from", params.from);
     if (params?.to) searchParams.set("to", params.to);
-    if (params?.groupBy) searchParams.set("groupBy", params.groupBy);
     if (params?.limit) searchParams.set("limit", String(params.limit));
 
     const qs = searchParams.toString();
     return this.request(`/v1/usage${qs ? `?${qs}` : ""}`);
+  }
+
+  // ── Wiring Sprint ─────────────────────────────────
+
+  getCompressionStats(): Promise<CompressionStatsResponse> {
+    return this.request("/v1/compression/stats");
+  }
+
+  getLocalModels(): Promise<LocalModelsResponse> {
+    return this.request("/v1/local/models");
+  }
+
+  getSecurityProfile(): Promise<SecurityProfileResponse> {
+    return this.request("/v1/admin/security-profile");
   }
 }

@@ -11,6 +11,7 @@ import { Usage } from "./pages/Usage.tsx";
 import { Groups } from "./pages/Groups.tsx";
 import { CircuitBreakers } from "./pages/CircuitBreakers.tsx";
 import { SettingsPage } from "./pages/Settings.tsx";
+import { WiringSprintPage } from "./pages/WiringSprint.tsx";
 import { OAuthCallback } from "./pages/OAuthCallback.tsx";
 import "./index.css";
 
@@ -44,6 +45,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="usage" element={<Usage />} />
               <Route path="groups" element={<Groups />} />
               <Route path="circuit-breakers" element={<CircuitBreakers />} />
+              <Route path="wiring-sprint" element={<WiringSprintPage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Routes>

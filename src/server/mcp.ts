@@ -600,7 +600,8 @@ async function _handleToolCall(
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     // ── Approval flow gate for destructive tools ────────────
-    if (approvalStore && securityProfile && securityProfile !== 'local-dev') {
+    const approvalFlowsEnabled = process.env['APPROVAL_FLOWS_ENABLED'] !== 'false';
+    if (approvalFlowsEnabled && approvalStore && securityProfile && securityProfile !== 'local-dev') {
       const category = TOOL_CATEGORIES[toolName];
       if (category === 'destructive' && requiresApproval(toolName, APPROVAL_DEFAULT_CONFIG)) {
         const request = approvalStore.create({

@@ -131,6 +131,16 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
     return c.json({ authMethod: 'token', login: null, name: 'Admin', avatar: null });
   });
 
+  // ── GET /v1/admin/security-profile ─────────────────────
+
+  app.get('/v1/admin/security-profile', (c) => {
+    return c.json({
+      profile: config.securityProfile ?? 'local-dev',
+      allowedCategories: ['destructive', 'read', 'generate', 'admin'],
+      rateLimit: null,
+    });
+  });
+
   // ── GET /v1/admin/overview ─────────────────────────────
 
   app.get('/v1/admin/overview', async (c) => {

@@ -247,6 +247,36 @@ export interface ApiError {
   field?: string;
 }
 
+// ── Wiring Sprint ─────────────────────────────────────
+
+export interface CompressionStatsResponse {
+  totalCalls: number;
+  compressedCalls: number;
+  avgRatio: number;
+  totalSavingsChars: number;
+}
+
+export interface LocalModel {
+  backend: string;
+  status: string;
+  models: Array<{
+    id: string;
+    name: string;
+    parameterSize?: number;
+    loaded: boolean;
+  }>;
+}
+
+export interface LocalModelsResponse {
+  backends: LocalModel[];
+}
+
+export interface SecurityProfileResponse {
+  profile: string;
+  allowedCategories: string[];
+  rateLimit: { max: number; windowMs: number } | null;
+}
+
 // ── Re-exports for convenience ──────────────────────────
 
 export { PROVIDER_TYPE, CIRCUIT_STATE, BALANCER_STRATEGY };
