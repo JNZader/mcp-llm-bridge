@@ -85,10 +85,16 @@ If you set `LLM_GATEWAY_AUTH_TOKEN`, add `Authorization: Bearer <token>` to ever
 12. [Docker Deployment](#docker-deployment)
 13. [MCP Server](#mcp-server)
 14. [Configuration](#configuration)
-15. [Architecture](#architecture)
-16. [Security](#security)
-17. [Development](#development)
-18. [License](#license)
+15. [Security Profiles](#security-profiles)
+16. [Approval Flows](#approval-flows)
+17. [Three-Part Prompt](#three-part-prompt)
+18. [RTK Output Compression](#rtk-output-compression)
+19. [Local LLM Offloading](#local-llm-offloading)
+20. [HF Auto-Discovery](#hf-auto-discovery)
+21. [Architecture](#architecture)
+22. [Security](#security)
+23. [Development](#development)
+24. [License](#license)
 
 ## Quick Start
 
@@ -1086,6 +1092,210 @@ If you lose the master key, stored credentials are unrecoverable. Back it up in 
 
 If that file does not exist, bridge routing is disabled.
 
+## Security Profiles
+
+Security profiles enforce trust-level-based access control on both MCP tools and HTTP endpoints. Three profiles are built-in:
+
+| Profile | Allowed Categories | Rate Limit |
+|---------|-------------------|------------|
+| `local-dev` | all (destructive, read, generate, admin) | none |
+| `restricted` | read + generate only | 100 req / 15 min |
+| `open` | generate only | 10 req / 15 min |
+
+### Configuration
+
+Set via environment variable:
+
+```bash
+LLM_GATEWAY_SECURITY_PROFILE=restricted
+```
+
+Default is `local-dev` (backward compatible — no restrictions).
+
+### HTTP Enforcement
+
+Under `restricted` or `open`, the gateway blocks destructive HTTP endpoints (e.g., `POST /v1/credentials`) and returns:
+
+```json
+{ "error": "Access denied: endpoint blocked by security profile", "code": "SECURITY_PROFILE_DENIED" }
+```
+
+Read endpoints (`GET /v1/providers`, `GET /v1/models`) remain open under `restricted`.
+
+### MCP Enforcement
+
+Under non-`local-dev` profiles, `ListTools` returns only tools in the allowed categories. `CallTool` is authorized before execution. Rate limiting is applied per profile.
+
+## Approval Flows
+
+Destructive MCP tools can be paused for explicit human approval when the security profile is not `local-dev`.
+
+### How It Works
+
+1. Client calls a destructive tool (e.g., `vault_store`).
+2. If approval is required, the gateway returns an `approvalRequired` payload with a `requestId`.
+3. Admin reviews pending requests via `GET /v1/approvals` or `approval_list` MCP tool.
+4. Admin approves or denies via `POST /v1/approvals/:id/approve` or `approval_approve` MCP tool.
+5. Original tool executes only after approval.
+
+### Auto-Approve List
+
+Read-only tools (`file_read`, `search`, `list`, `vault_list`) bypass approval automatically.
+
+### HTTP Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/approvals` | GET | List pending approval requests |
+| `/v1/approvals/:id/approve` | POST | Approve a request |
+| `/v1/approvals/:id/deny` | POST | Deny a request |
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `approval_list` | List pending requests |
+| `approval_approve` | Approve by request ID |
+| `approval_deny` | Deny by request ID |
+
+## Three-Part Prompt
+
+The three-part prompt pattern separates prompts into `system` (role/constraints), `context` (background data), and `instruction` (the actual task). Research shows measurable quality improvement, especially with smaller models.
+
+### HTTP API
+
+Both `/v1/generate` and `/v1/chat/completions` accept the three fields:
+
+```bash
+curl -X POST http://localhost:3456/v1/generate \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -d '{
+    "system": "You are a code reviewer.",
+    "context": "We use Zod 4 and Hono.",
+    "instruction": "Review this schema for edge cases."
+  }'
+```
+
+Legacy flat `prompt` is still accepted and auto-detected when `system`/`context`/`instruction` are absent.
+
+### MCP Schema
+
+The `llm_generate` tool exposes `system`, `context`, and `instruction` as optional fields alongside the legacy `prompt`:
+
+```json
+{
+  "system": "You are a helpful assistant.",
+  "context": "The project uses TypeScript.",
+  "instruction": "Explain strict mode benefits."
+}
+```
+
+### Enable/Disable
+
+```bash
+OPTIMIZE_MESSAGES_ENABLED=true   # default: true
+```
+
+## RTK Output Compression
+
+RTK-style compression strips redundant content from tool call results before passing them to LLMs. This saves token budget on large structured outputs.
+
+### Strategies
+
+1. **Filter** — remove noise fields (`created_at`, `id`, `etag`, etc.)
+2. **Group** — merge repeated similar entries into count + sample
+3. **Truncate** — enforce max length on string values
+4. **Deduplicate** — remove exact-duplicate array entries
+
+### Configuration
+
+```bash
+ENABLE_OUTPUT_COMPRESSION=true   # default: true
+```
+
+### Analytics Endpoint
+
+```bash
+curl http://localhost:3456/v1/compression/stats \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+Response:
+
+```json
+{ "totalCalls": 42, "compressedCalls": 42, "avgRatio": 0.65, "totalSavingsChars": 15200 }
+```
+
+## Local LLM Offloading
+
+Offloadable tasks (summarization, formatting, classification) can be routed to local runtimes (Ollama, LM Studio) instead of cloud providers, saving 86–95% of API token cost.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOCAL_LLM_ENABLED` | `false` | Enable local LLM routing |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
+| `LM_STUDIO_URL` | `http://localhost:1234` | LM Studio API endpoint |
+
+### Detection
+
+At startup, the gateway probes both backends. Models are listed at:
+
+```bash
+curl http://localhost:3456/v1/local/models \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+```
+
+### Fallback
+
+If the local LLM fails or the task is not offloadable, the gateway falls back to cloud providers automatically and emits a metric.
+
+### MCP Tool
+
+| Tool | Description |
+|------|-------------|
+| `local_llm_generate` | Generate via local LLM with offload detection |
+
+## HF Auto-Discovery
+
+At startup (when enabled), the gateway scans local backends and enriches detected models with HuggingFace metadata (tags, pipeline type, recommended tasks).
+
+### Configuration
+
+```bash
+AUTO_DISCOVER_MODELS=true   # default: false
+HF_TOKEN=hf_xxxxxxxxxx       # optional, for private repos
+```
+
+### Admin Endpoint
+
+Trigger discovery on demand:
+
+```bash
+curl -X POST http://localhost:3456/v1/admin/discover \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{ "hfToken": "optional-override" }'
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "backendsScanned": ["ollama", "lm-studio"],
+  "models": [...],
+  "enrichedCount": 3,
+  "unenrichedCount": 1
+}
+```
+
+### Cache
+
+Enriched metadata is persisted to SQLite (`hf_model_cache` table) so subsequent startups are fast even without HF API access.
+
 ## Architecture
 
 ```text
@@ -1105,17 +1315,22 @@ Clients (GHAGGA, OpenCode, curl, LangChain, any OpenAI-compatible tool)
 |  - /v1/files CRUD                  - usage_*                      |
 |  - /v1/groups CRUD                 - circuit_breaker_*            |
 |  - /metrics /health                - group tools                  |
+|  - /v1/compression/stats           - approval_*                   |
+|  - /v1/local/models                - local_llm_generate           |
+|  - /v1/admin/discover              - discover_models              |
 +-------------------------------------------------------------------+
 |  Bridge routing         | Context compression | Code search        |
 |  Provider groups        | Cost tracking       | CRDT state         |
+|  Security profiles      | Approval flows      | Local LLM          |
+|  HF discovery           | Three-part prompt   | Output compression |
 +-------------------------+---------------------+--------------------+
 | Router (model -> provider)       | Vault (AES-256-GCM + SQLite)   |
 +-------------------------+---------------------+--------------------+
     |                                                  |
     v                                                  v
- API providers                                   CLI providers
- Anthropic, OpenAI, Google, Groq, OpenRouter     OpenCode, Claude,
-                                                  Gemini, Codex, Qwen, Copilot
+  API providers                                   CLI providers
+  Anthropic, OpenAI, Google, Groq, OpenRouter     OpenCode, Claude,
+                                                   Gemini, Codex, Qwen, Copilot
 ```
 
 ### Design Notes
