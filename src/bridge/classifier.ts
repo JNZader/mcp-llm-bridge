@@ -7,7 +7,8 @@
  * recursive and defeat the purpose).
  */
 
-import type { TaskType, ClassifierConfig } from './types.js';
+import type { TaskType } from '../classification/index.js';
+import type { ClassifierConfig } from './types.js';
 
 /** Default keywords that indicate code review tasks. */
 const DEFAULT_CODE_REVIEW_KEYWORDS = [

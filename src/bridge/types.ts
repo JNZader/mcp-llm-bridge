@@ -5,8 +5,7 @@
  * different LLM backends (CLI subscriptions).
  */
 
-/** Known task types for heuristic classification. */
-export type TaskType = 'large-context' | 'code-review' | 'fast-completion' | 'default';
+import type { TaskType } from '../classification/index.js';
 
 /** A single route mapping a task type to a provider. */
 export interface BridgeRoute {

@@ -10,6 +10,9 @@ export { loadBridgeConfig } from './config.js';
 export { classify, estimateTokens } from './classifier.js';
 export type {
   TaskType,
+  ClassificationResult,
+} from '../classification/index.js';
+export type {
   BridgeConfig,
   BridgeConfigRaw,
   BridgeResponse,
