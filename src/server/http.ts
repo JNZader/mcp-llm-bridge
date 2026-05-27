@@ -56,6 +56,7 @@ import { registerAdminRoutes } from "./admin.js";
 import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
 import { securityProfileMiddleware } from "../security/enforcer.js";
+import { optimizeMessages } from "../transformers/three-part-prompt.js";
 import {
 	isGithubOauthConfigured,
 	getGithubAuthUrl,
@@ -806,11 +807,44 @@ export function startHttpServer(
 			const headerProject = c.req.header("X-Project") ?? undefined;
 			const project = resolveProject(validated.project, headerProject);
 
+			// Build prompt and system from three-part fields or flat prompt
+			let prompt = validated.prompt ?? '';
+			let system = validated.system;
+
+			if (validated.context || validated.instruction) {
+				// User explicitly provided three-part fields — compose them
+				const parts: string[] = [];
+				if (validated.context) {
+					parts.push(`[Context]\n${validated.context}`);
+				}
+				if (validated.instruction) {
+					parts.push(`[Instruction]\n${validated.instruction}`);
+				}
+				prompt = parts.join('\n\n');
+			} else if (prompt && !system) {
+				// Auto-optimize flat prompt if no system message exists
+				const messages = [{ role: 'user' as const, content: prompt }];
+				const optimized = optimizeMessages(messages);
+				if (
+					optimized.length > 1 &&
+					optimized[0]?.role === 'system' &&
+					typeof optimized[0].content === 'string'
+				) {
+					system = optimized[0].content;
+					const rest = optimized
+						.slice(1)
+						.map((m) => (typeof m.content === 'string' ? m.content : ''))
+						.filter(Boolean)
+						.join('\n\n');
+					prompt = rest;
+				}
+			}
+
 			const result = await router.generate({
-				prompt: validated.prompt,
+				prompt,
 				model: validated.model,
 				provider: validated.provider,
-				system: validated.system,
+				system,
 				maxTokens: validated.maxTokens,
 				strict: validated.strict,
 				project,
@@ -854,33 +888,47 @@ export function startHttpServer(
 				throw error;
 			}
 
+			// Apply three-part prompt optimization to message array
+			const internalMessages = validated.messages.map((m) => ({
+				role: m.role as 'system' | 'user' | 'assistant',
+				content: m.content,
+			}));
+			const optimizedMessages = optimizeMessages(internalMessages);
+
 			// ── Streaming path ──────────────────────────────────────
 			if (validated.stream) {
-				return handleStreamingRequest(c, validated, router, costTracker, vault);
+				return handleStreamingRequest(
+					c,
+					{ ...validated, messages: optimizedMessages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })) },
+				router,
+				costTracker,
+				vault,
+			);
 			}
 
 			// Extract system messages → concatenate as system prompt
-			const systemMessages = validated.messages
-				.filter((m) => m.role === "system")
-				.map((m) => m.content);
+			const systemMessages = optimizedMessages
+				.filter((m) => m.role === 'system')
+				.map((m) => (typeof m.content === 'string' ? m.content : ''))
+				.filter(Boolean);
 			const system =
-				systemMessages.length > 0 ? systemMessages.join("\n") : undefined;
+				systemMessages.length > 0 ? systemMessages.join('\n') : undefined;
 
 			// Extract conversation messages → last user message is the main prompt
-			const conversationMessages = validated.messages.filter(
-				(m) => m.role !== "system",
+			const conversationMessages = optimizedMessages.filter(
+				(m) => m.role !== 'system',
 			);
 			const lastUserMessage = [...conversationMessages]
 				.reverse()
-				.find((m) => m.role === "user");
+				.find((m) => m.role === 'user');
 
 			if (!lastUserMessage) {
 				return c.json(
 					{
 						error: {
-							message: "At least one user message is required",
-							type: "invalid_request_error",
-							param: "messages",
+							message: 'At least one user message is required',
+							type: 'invalid_request_error',
+							param: 'messages',
 							code: null,
 						},
 					},
@@ -890,15 +938,15 @@ export function startHttpServer(
 
 			// Build prompt: include conversation context if there are earlier messages
 			const earlierMessages = conversationMessages.slice(0, -1);
-			let prompt = lastUserMessage.content;
+			let prompt = typeof lastUserMessage.content === 'string' ? lastUserMessage.content : '';
 			if (earlierMessages.length > 0) {
 				const context = earlierMessages
-					.map((m) => `${m.role}: ${m.content}`)
-					.join("\n");
-				prompt = `${context}\nuser: ${lastUserMessage.content}`;
+					.map((m) => `${m.role}: ${typeof m.content === 'string' ? m.content : ''}`)
+					.join('\n');
+				prompt = `${context}\nuser: ${prompt}`;
 			}
 
-			const headerProject = c.req.header("X-Project") ?? undefined;
+			const headerProject = c.req.header('X-Project') ?? undefined;
 
 			const result = await router.generate({
 				prompt,

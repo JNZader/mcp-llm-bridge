@@ -10,15 +10,20 @@ import { MAX_PROMPT_LENGTH } from './constants.js';
 /** Generate request schema. */
 export const generateRequestSchema = z.object({
   prompt: z.string()
-    .min(1, 'prompt is required')
-    .max(MAX_PROMPT_LENGTH, `prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`),
+    .max(MAX_PROMPT_LENGTH, `prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`)
+    .optional(),
+  context: z.string().optional(),
+  instruction: z.string().optional(),
   model: z.string().optional(),
   provider: z.string().optional(),
   system: z.string().optional(),
   maxTokens: z.number().int().positive().optional(),
   strict: z.boolean().optional(),
   project: z.string().optional(),
-});
+}).refine(
+  (data) => data.prompt || data.context || data.instruction || data.system,
+  { message: 'At least one of prompt, context, instruction, or system must be provided' },
+);
 
 /** Chat message schema. */
 export const chatMessageSchema = z.object({
