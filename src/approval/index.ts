@@ -33,8 +33,19 @@ export interface ApprovalConfig {
 
 export const DEFAULT_CONFIG: ApprovalConfig = {
 	defaultTimeoutMs: 5 * 60 * 1000, // 5 minutes
-	requireApprovalFor: ["file_write", "shell_exec", "network_request", "db_write"],
-	autoApproveFor: ["file_read", "search", "list"],
+	requireApprovalFor: [
+		"vault_store",
+		"vault_delete",
+		"vault_store_file",
+		"vault_delete_file",
+		"create_group",
+		"delete_group",
+		"file_write",
+		"shell_exec",
+		"network_request",
+		"db_write",
+	],
+	autoApproveFor: ["file_read", "search", "list", "vault_list", "vault_list_files"],
 };
 
 // ── Store ──

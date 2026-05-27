@@ -21,6 +21,7 @@ import {
   type ToolCategory,
   type ProfileResolver,
 } from './profiles.js';
+import { ROUTE_CATEGORIES, isAdminRoute } from './http-categories.js';
 
 /** Minimal tool definition shape matching the TOOLS array in mcp.ts. */
 interface ToolDef {
@@ -47,6 +48,11 @@ export class ProfileEnforcer {
   private readonly rateLimiter: RateLimiter | null;
   private readonly allowedCategories: Set<ToolCategory>;
   private readonly _resolver: ProfileResolver | null;
+
+  /** Get the set of allowed categories for the active profile. */
+  get allowedCategoriesSet(): Set<ToolCategory> {
+    return this.allowedCategories;
+  }
 
   constructor(profileNameOrResolver: string | ProfileResolver) {
     this._resolver = typeof profileNameOrResolver === 'function'
@@ -223,4 +229,78 @@ export class ProfileEnforcer {
   destroy(): void {
     this.rateLimiter?.destroy();
   }
+}
+
+// ── HTTP Middleware Factory ────────────────────────────────
+
+import type { Context, Next } from 'hono';
+
+/**
+ * Create Hono middleware that enforces security profile rules on HTTP routes.
+ *
+ * - Skips `local-dev` profile (all routes allowed)
+ * - Skips `/health`, `/auth/*`, `/v1/admin/*` (public/admin routes)
+ * - Maps the request method+path to a category via ROUTE_CATEGORIES
+ * - Returns 403 with `code: "SECURITY_PROFILE_DENIED"` for blocked routes
+ *
+ * @param profileName - Security profile name (defaults to 'local-dev')
+ */
+export function securityProfileMiddleware(
+  profileName?: TrustLevel,
+): (c: Context, next: Next) => Promise<Response | void> {
+  const profile = profileName ?? 'local-dev';
+
+  if (profile === 'local-dev') {
+    // No enforcement — pass through immediately
+    return async (_c, next) => next();
+  }
+
+  const enforcer = new ProfileEnforcer(profile);
+
+  return async (c: Context, next: Next): Promise<Response | void> => {
+    const path = c.req.path;
+    const method = c.req.method;
+
+    // Skip public routes
+    if (path === '/health') return next();
+    if (path.startsWith('/auth/')) return next();
+    if (isAdminRoute(path)) return next();
+
+    // Build lookup key: method-specific first, then path-only
+    const methodKey = `${method} ${path}`;
+    let category = ROUTE_CATEGORIES[methodKey];
+
+    if (!category) {
+      category = ROUTE_CATEGORIES[path];
+    }
+
+    if (!category) {
+      // Unknown route — blocked by default (safe-by-default)
+      logger.warn(
+        { path, method, profile },
+        'Route not found in ROUTE_CATEGORIES — blocked by default',
+      );
+      return c.json(
+        {
+          error: 'Access denied: endpoint blocked by security profile',
+          code: 'SECURITY_PROFILE_DENIED',
+          profile,
+        },
+        403,
+      );
+    }
+
+    if (!enforcer.allowedCategoriesSet.has(category)) {
+      return c.json(
+        {
+          error: 'Access denied: endpoint blocked by security profile',
+          code: 'SECURITY_PROFILE_DENIED',
+          profile,
+        },
+        403,
+      );
+    }
+
+    return next();
+  };
 }

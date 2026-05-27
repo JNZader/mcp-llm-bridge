@@ -245,6 +245,92 @@ describe('Vault MCP operations', () => {
   });
 });
 
+// ── Approval flow tests ─────────────────────────────────────
+
+import { ApprovalStore, requiresApproval } from '../src/approval/index.js';
+
+describe('MCP approval flow', () => {
+  it('requiresApproval identifies destructive tools', () => {
+    assert.equal(requiresApproval('vault_store'), true);
+    assert.equal(requiresApproval('vault_delete'), true);
+    assert.equal(requiresApproval('vault_store_file'), true);
+    assert.equal(requiresApproval('vault_delete_file'), true);
+    assert.equal(requiresApproval('create_group'), true);
+    assert.equal(requiresApproval('delete_group'), true);
+  });
+
+  it('requiresApproval allows read and generate tools', () => {
+    assert.equal(requiresApproval('vault_list'), false);
+    assert.equal(requiresApproval('llm_generate'), false);
+    assert.equal(requiresApproval('llm_models'), false);
+    assert.equal(requiresApproval('circuit_breaker_stats'), false);
+  });
+
+  it('ApprovalStore tracks pending requests', () => {
+    const store = new ApprovalStore();
+    store.create({ toolName: 'vault_store', toolArgs: {}, requester: 'test', reason: 'test' });
+    store.create({ toolName: 'shell_exec', toolArgs: {}, requester: 'test', reason: 'test' });
+
+    const pending = store.getPending();
+    assert.equal(pending.length, 2);
+    assert.ok(pending.every(r => r.status === 'pending'));
+  });
+
+  it('ApprovalStore.approve resolves request', () => {
+    const store = new ApprovalStore();
+    const req = store.create({ toolName: 'vault_store', toolArgs: {}, requester: 'test', reason: 'test' });
+
+    const updated = store.approve(req.id, 'admin');
+    assert.ok(updated);
+    assert.equal(updated!.status, 'approved');
+    assert.equal(updated!.resolvedBy, 'admin');
+    assert.ok(updated!.resolvedAt);
+
+    // No longer pending
+    assert.equal(store.getPending().length, 0);
+  });
+
+  it('ApprovalStore.deny resolves request', () => {
+    const store = new ApprovalStore();
+    const req = store.create({ toolName: 'vault_store', toolArgs: {}, requester: 'test', reason: 'test' });
+
+    const updated = store.deny(req.id, 'admin');
+    assert.ok(updated);
+    assert.equal(updated!.status, 'denied');
+    assert.equal(updated!.resolvedBy, 'admin');
+
+    // No longer pending
+    assert.equal(store.getPending().length, 0);
+  });
+
+  it('ApprovalStore.getPending filters expired requests', () => {
+    const store = new ApprovalStore();
+    store.create({
+      toolName: 'vault_store',
+      toolArgs: {},
+      requester: 'test',
+      reason: 'test',
+      timeoutMs: 1, // 1ms timeout
+    });
+
+    // Wait for expiry
+    const start = Date.now();
+    while (Date.now() - start < 50) { /* spin */ }
+
+    const pending = store.getPending();
+    assert.equal(pending.length, 0);
+  });
+
+  it('approving already-approved request returns null', () => {
+    const store = new ApprovalStore();
+    const req = store.create({ toolName: 'vault_store', toolArgs: {}, requester: 'test', reason: 'test' });
+    store.approve(req.id, 'admin');
+
+    const second = store.approve(req.id, 'admin');
+    assert.equal(second, null);
+  });
+});
+
 // ── Version tests ───────────────────────────────────────────
 
 describe('MCP server configuration', () => {

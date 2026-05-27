@@ -26,7 +26,10 @@ import { VERSION } from '../core/constants.js';
 import { logger } from '../core/logger.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
+import { TOOL_CATEGORIES } from '../security/profiles.js';
 import { createPageIndex } from '../pageindex/index.js';
+import type { ApprovalStore } from '../approval/index.js';
+import { requiresApproval, DEFAULT_CONFIG as APPROVAL_DEFAULT_CONFIG } from '../approval/index.js';
 
 /** Tool definitions exposed via MCP. */
 const TOOLS = [
@@ -447,6 +450,42 @@ const TOOLS = [
       required: ['op'],
     },
   },
+  {
+    name: 'approval_list',
+    description: 'List pending approval requests.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'approval_approve',
+    description: 'Approve a pending request by ID.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Approval request ID',
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'approval_deny',
+    description: 'Deny a pending request by ID.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Approval request ID',
+        },
+      },
+      required: ['id'],
+    },
+  },
 ] as const;
 
 /**
@@ -462,8 +501,35 @@ async function handleToolCall(
   bridge?: BridgeOrchestrator | null,
   codeSearch?: CodeSearchService | null,
   stateManager?: StateManager | null,
+  approvalStore?: ApprovalStore | null,
+  securityProfile?: TrustLevel,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
+    // ── Approval flow gate for destructive tools ────────────
+    if (approvalStore && securityProfile && securityProfile !== 'local-dev') {
+      const category = TOOL_CATEGORIES[toolName];
+      if (category === 'destructive' && requiresApproval(toolName, APPROVAL_DEFAULT_CONFIG)) {
+        const request = approvalStore.create({
+          toolName,
+          toolArgs: args,
+          requester: 'mcp-client',
+          reason: `Destructive tool "${toolName}" requires approval under "${securityProfile}" profile`,
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              approvalRequired: true,
+              requestId: request.id,
+              toolName,
+              reason: request.reason,
+            }),
+          }],
+          isError: false,
+        };
+      }
+    }
+
     switch (toolName) {
       case 'llm_generate': {
         const request = {
@@ -831,6 +897,61 @@ async function handleToolCall(
         }
       }
 
+      case 'approval_list': {
+        if (!approvalStore) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval store not configured' }) }],
+            isError: true,
+          };
+        }
+        const pending = approvalStore.getPending();
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ requests: pending, count: pending.length }) }],
+        };
+      }
+
+      case 'approval_approve': {
+        if (!approvalStore) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval store not configured' }) }],
+            isError: true,
+          };
+        }
+        const id = args['id'] as string;
+        const resolvedBy = args['resolvedBy'] as string | undefined ?? 'mcp-client';
+        const updated = approvalStore.approve(id, resolvedBy);
+        if (!updated) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval request not found or already resolved' }) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify(updated) }],
+        };
+      }
+
+      case 'approval_deny': {
+        if (!approvalStore) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval store not configured' }) }],
+            isError: true,
+          };
+        }
+        const id = args['id'] as string;
+        const resolvedBy = args['resolvedBy'] as string | undefined ?? 'mcp-client';
+        const updated = approvalStore.deny(id, resolvedBy);
+        if (!updated) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval request not found or already resolved' }) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: 'text', text: JSON.stringify(updated) }],
+        };
+      }
+
       default:
         return {
           content: [
@@ -854,7 +975,7 @@ async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -872,7 +993,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager);
+    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile);
   });
 
   // Apply security profile enforcement — overwrites handlers above with
@@ -886,7 +1007,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
       server,
       TOOLS,
       (name, args) =>
-        handleToolCall(name, args, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager),
+        handleToolCall(name, args, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile),
     );
   }
 

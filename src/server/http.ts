@@ -47,13 +47,15 @@ import {
 	validateFileStore,
 	validateGenerateRequest,
 } from "../core/schemas.js";
-import type { GatewayConfig } from "../core/types.js";
+import type { GatewayConfig, TrustLevel } from "../core/types.js";
+import type { ApprovalStore } from "../approval/index.js";
 import type { FreeModelRouter } from "../free-models/router.js";
 import type { LatencyMeasurer } from "../latency/index.js";
 import type { Vault } from "../vault/vault.js";
 import { registerAdminRoutes } from "./admin.js";
 import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
+import { securityProfileMiddleware } from "../security/enforcer.js";
 import {
 	isGithubOauthConfigured,
 	getGithubAuthUrl,
@@ -585,6 +587,8 @@ export function startHttpServer(
 	freeModelRouter?: FreeModelRouter,
 	db?: Database.Database,
 	comparisonService?: ComparisonService,
+	securityProfile?: TrustLevel,
+	approvalStore?: ApprovalStore,
 	..._rest: unknown[]
 ): ServerType {
 	// Reset start time on server creation
@@ -656,6 +660,13 @@ export function startHttpServer(
 		// Single-tenant mode: existing AUTH_TOKEN flow for all routes
 		app.use("*", bearerAuth(config));
 	}
+
+	// ── Security Profile Enforcement ───────────────────────
+	//
+	// Apply to all /v1/* routes. The middleware skips public routes
+	// (/health, /auth/*, /v1/admin/*) internally.
+	//
+	app.use("/v1/*", securityProfileMiddleware(securityProfile ?? 'local-dev'));
 
 	// ── GitHub OAuth (public) ────────────────────────────────
 
@@ -1587,6 +1598,56 @@ export function startHttpServer(
 					offset,
 				});
 				return c.json({ results, count: results.length });
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return c.json({ error: message }, 500);
+			}
+		});
+	}
+
+	// ── Approval Management ───────────────────────────────
+
+	if (approvalStore) {
+		app.get("/v1/approvals", (c) => {
+			try {
+				const pending = approvalStore.getPending();
+				return c.json({ requests: pending, count: pending.length });
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return c.json({ error: message }, 500);
+			}
+		});
+
+		app.post("/v1/approvals/:id/approve", (c) => {
+			try {
+				const id = c.req.param("id");
+				const resolvedBy = c.req.header("X-User-Id") ?? 'admin';
+				const updated = approvalStore.approve(id, resolvedBy);
+				if (!updated) {
+					return c.json(
+						{ error: "Approval request not found or already resolved", code: "NOT_FOUND" },
+						404,
+					);
+				}
+				return c.json(updated);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return c.json({ error: message }, 500);
+			}
+		});
+
+		app.post("/v1/approvals/:id/deny", (c) => {
+			try {
+				const id = c.req.param("id");
+				const resolvedBy = c.req.header("X-User-Id") ?? 'admin';
+				const updated = approvalStore.deny(id, resolvedBy);
+				if (!updated) {
+					return c.json(
+						{ error: "Approval request not found or already resolved", code: "NOT_FOUND" },
+						404,
+					);
+				}
+				return c.json(updated);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return c.json({ error: message }, 500);

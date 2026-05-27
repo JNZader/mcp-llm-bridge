@@ -359,3 +359,17 @@ describe('CORS headers', () => {
     });
   });
 });
+
+// ── Security Profile Enforcement (default local-dev) ─────
+
+describe('Security profile middleware — default local-dev', () => {
+  it('allows all endpoints without securityProfile param', async () => {
+    // The global test server was created without a securityProfile argument,
+    // so it defaults to local-dev (all endpoints allowed)
+    const res = await request('POST', '/v1/credentials', {
+      provider: 'test-security',
+      apiKey: 'test-key-12345',
+    });
+    assert.equal(res.status, 201);
+  });
+});
