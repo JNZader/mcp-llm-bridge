@@ -40,6 +40,8 @@ export const ROUTE_CATEGORIES: Record<string, ToolCategory> = {
   '/v1/circuit-breaker/config': 'read',
   '/v1/circuit-breaker/stats': 'read',
   '/v1/approvals': 'read',         // GET — read
+  '/v1/compression/stats': 'read',  // GET — read
+  '/v1/local/models': 'read',       // GET — read
 
   // ── destructive (method-specific overrides) ────────────
   'POST /v1/credentials': 'destructive',

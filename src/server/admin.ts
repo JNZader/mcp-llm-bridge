@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { ToolCategorySchema, TrustLevelSchema } from '../security/profiles.js';
 import { loadCatalog, importCatalog } from '../free-models/registry.js';
 import { createApiKey, revokeApiKey, listApiKeys } from '../auth/keys.js';
+import { discoverModels } from '../model-discovery/discovery.js';
 
 // ── Admin Auth Middleware ─────────────────────────────────
 
@@ -464,6 +465,40 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         catalogVersion: catalog.version,
         providers: catalog.providers.length,
         message: `Catalog refreshed: ${imported} models imported from ${catalog.providers.length} providers`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── POST /v1/admin/discover ─────────────────────────────
+
+  app.post('/v1/admin/discover', async (c) => {
+    try {
+      const body = await c.req.json().catch(() => ({}));
+      const hfToken = body['hfToken'] ?? process.env['HF_TOKEN'];
+
+      const result = await discoverModels(
+        {
+          hfToken,
+          enabled: true,
+        },
+        {
+          ollamaUrl: process.env['OLLAMA_URL'] ?? 'http://localhost:11434',
+          lmStudioUrl: process.env['LM_STUDIO_URL'] ?? 'http://localhost:1234',
+        },
+        deps.db,
+      );
+
+      return c.json({
+        ok: true,
+        models: result.models,
+        backendsScanned: result.backendsScanned,
+        enrichedCount: result.enrichedCount,
+        unenrichedCount: result.unenrichedCount,
+        errors: result.errors,
+        timestamp: result.timestamp,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

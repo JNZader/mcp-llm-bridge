@@ -211,4 +211,13 @@ export function initializeDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_comparison_project ON comparison_results(project);
     CREATE INDEX IF NOT EXISTS idx_comparison_created ON comparison_results(created_at);
   `);
+
+  // ── HF Model Cache table (Sprint 3: Auto-Discovery) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS hf_model_cache (
+      hf_model_id     TEXT PRIMARY KEY,
+      metadata        TEXT NOT NULL,
+      fetched_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }

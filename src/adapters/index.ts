@@ -31,6 +31,8 @@ export {
   CopilotCliAdapter,
 };
 
+export { LocalLLMProvider } from '../local-llm/provider.js';
+
 export { parseOpenCodeOutput } from './cli-opencode.js';
 
 /**

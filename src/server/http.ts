@@ -57,6 +57,7 @@ import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
 import { securityProfileMiddleware } from "../security/enforcer.js";
 import { optimizeMessages } from "../transformers/three-part-prompt.js";
+import { detectLocalLLMs } from "../local-llm/detector.js";
 import {
 	isGithubOauthConfigured,
 	getGithubAuthUrl,
@@ -890,7 +891,7 @@ export function startHttpServer(
 
 			// Apply three-part prompt optimization to message array
 			const internalMessages = validated.messages.map((m) => ({
-				role: m.role as 'system' | 'user' | 'assistant',
+				role: m.role as 'system' | 'user' | 'assistant' | 'tool',
 				content: m.content,
 			}));
 			const optimizedMessages = optimizeMessages(internalMessages);
@@ -899,11 +900,11 @@ export function startHttpServer(
 			if (validated.stream) {
 				return handleStreamingRequest(
 					c,
-					{ ...validated, messages: optimizedMessages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })) },
+					{ ...validated, messages: optimizedMessages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })) as { role: 'system' | 'user' | 'assistant'; content: string }[] },
 				router,
 				costTracker,
 				vault,
-			);
+				);
 			}
 
 			// Extract system messages → concatenate as system prompt
@@ -1025,6 +1026,23 @@ export function startHttpServer(
 				},
 				500,
 			);
+		}
+	});
+
+	// ── Local Models ───────────────────────────────────────
+
+	app.get("/v1/local/models", async (c) => {
+		try {
+			const results = await detectLocalLLMs();
+			const backends = results.map((r) => ({
+				backend: r.backend,
+				status: r.status,
+				models: r.models,
+			}));
+			return c.json({ backends });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 500);
 		}
 	});
 

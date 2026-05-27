@@ -55,6 +55,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   // generate
   llm_generate: 'generate',
   llm_models: 'generate',
+  local_llm_generate: 'generate',
 
   // destructive
   vault_store: 'destructive',
@@ -63,6 +64,8 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   vault_delete_file: 'destructive',
   create_group: 'destructive',
   delete_group: 'destructive',
+  approval_approve: 'destructive',
+  approval_deny: 'destructive',
 
   // read
   vault_list: 'read',
@@ -72,6 +75,8 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   usage_summary: 'read',
   usage_query: 'read',
   code_search: 'read',
+  approval_list: 'read',
+  discover_models: 'read',
 
   // admin
   configure_circuit_breaker: 'admin',

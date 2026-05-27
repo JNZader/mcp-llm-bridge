@@ -16,6 +16,7 @@ import { HFClient } from './hf-client.js';
 import { resolveHFModelId, inferCapabilities, recommendTasks } from './resolver.js';
 import type { EnrichedModel, DiscoveryResult, ModelDiscoveryConfig } from './types.js';
 import { DEFAULT_DISCOVERY_CONFIG } from './types.js';
+import type Database from 'better-sqlite3';
 
 /**
  * Run a full model discovery scan.
@@ -26,9 +27,10 @@ import { DEFAULT_DISCOVERY_CONFIG } from './types.js';
 export async function discoverModels(
   discoveryConfig?: Partial<ModelDiscoveryConfig>,
   llmConfig?: Partial<LocalLLMConfig>,
+  db?: Database.Database,
 ): Promise<DiscoveryResult> {
   const config = { ...DEFAULT_DISCOVERY_CONFIG, ...discoveryConfig };
-  const hfClient = new HFClient(config);
+  const hfClient = new HFClient(config, db);
   const errors: string[] = [];
 
   // 1. Detect local models
@@ -116,7 +118,7 @@ function inferCapabilitiesFromName(modelId: string): string[] {
  * All local models are "free" in terms of API cost, but larger
  * models have higher compute cost.
  */
-function determineLocalCostTier(parameterSize?: number): CostTier {
+function determineLocalCostTier(_parameterSize?: number): CostTier {
   // All local models are free (no API cost)
   return COST_TIER.FREE;
 }

@@ -75,8 +75,8 @@ describe('MCP llm_generate tool schema', () => {
 
     // prompt should no longer be strictly required when context/instruction are present
     // The schema is flexible — prompt is optional
-    assert.ok(!schema.required.includes('context'), 'context should not be required');
-    assert.ok(!schema.required.includes('instruction'), 'instruction should not be required');
+    assert.ok(!(schema.required as readonly string[]).includes('context'), 'context should not be required');
+    assert.ok(!(schema.required as readonly string[]).includes('instruction'), 'instruction should not be required');
   });
 });
 

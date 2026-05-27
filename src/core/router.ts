@@ -32,6 +32,8 @@ import type { LatencyMeasurer } from '../latency/measurer.js';
 import type { ModelRouter } from '../model-routing/router.js';
 import type { ApprovalStore } from '../approval/index.js';
 import { optimizeMessages } from '../transformers/three-part-prompt.js';
+import { LocalLLMError } from '../local-llm/client.js';
+import { classifyForOffload } from '../local-llm/router.js';
 
 /**
  * Minimal interface for a local LLM client.
@@ -231,12 +233,24 @@ export class Router {
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const startTime = Date.now();
-    const candidates = await this.resolveCandidates(request);
+    let candidates = await this.resolveCandidates(request);
 
     if (candidates.length === 0) {
       throw new Error(
         'No providers available. Store API credentials via vault_store or install a CLI tool.',
       );
+    }
+
+    // ── Sprint 3: Insert local-llm as first candidate when offloadable ──
+    if (!request.provider && !request.strict) {
+      const classification = classifyForOffload(request.prompt);
+      if (classification.shouldOffload) {
+        const localIndex = candidates.findIndex((p) => p.id === 'local-llm');
+        if (localIndex > 0) {
+          const localProvider = candidates[localIndex]!;
+          candidates = [localProvider, ...candidates.filter((_, i) => i !== localIndex)];
+        }
+      }
     }
 
     // Filter out providers with open circuit breakers (V2 with per-model granularity)
@@ -293,7 +307,34 @@ export class Router {
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
         this.recordUsage(provider.id, model, 0, 0, latencyMs, false, request.project, message);
-        logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
+
+        // ── Sprint 3: Specific metric/log for LocalLLMError fallback ──
+        if (error instanceof LocalLLMError) {
+          logger.warn(
+            { provider: provider.id, model, backend: error.backend, error: message },
+            'Local LLM failed — falling back to cloud provider',
+          );
+          // Emit metric for local-llm fallback
+          if (this._costTracker) {
+            try {
+              this._costTracker.record({
+                provider: 'local-llm-fallback',
+                model: model,
+                tokensIn: 0,
+                tokensOut: 0,
+                latencyMs: Date.now() - startTime,
+                success: false,
+                project: request.project,
+                errorMessage: `local-llm-fallback: ${message}`,
+              });
+            } catch {
+              // Non-blocking metric emission
+            }
+          }
+        } else {
+          logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
+        }
+
         errors.push(`${provider.id}: ${message}`);
         continue;
       }

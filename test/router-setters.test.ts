@@ -44,7 +44,7 @@ describe('Router setters', () => {
 
   it('setApprovalStore stores and retrieves ApprovalStore', () => {
     const router = new Router();
-    const approvalStore = new ApprovalStore({});
+    const approvalStore = new ApprovalStore();
 
     assert.equal(router.approvalStore, null);
 
@@ -66,7 +66,7 @@ describe('Router setters', () => {
         fallbackUsed: false,
       }),
     };
-    const approvalStore = new ApprovalStore({});
+    const approvalStore = new ApprovalStore();
 
     router.setModelRouter(modelRouter);
     router.setLocalLLMClient(localClient);
