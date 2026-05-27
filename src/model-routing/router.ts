@@ -16,7 +16,7 @@ import type {
   CostTier,
 } from './types.js';
 import { COST_TIER_ORDER, compareCostTiers, DEFAULT_MODEL_ROUTING_CONFIG } from './types.js';
-import type { TaskClassification } from '../local-llm/types.js';
+import type { TaskClassification } from '../classification/index.js';
 
 /**
  * ModelRouter manages rule-based routing with quality tracking.

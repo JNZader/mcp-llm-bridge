@@ -6,7 +6,7 @@
  * Extends local-llm offloading with multi-model routing.
  */
 
-import type { OffloadTask } from '../local-llm/types.js';
+import type { TaskType } from '../classification/index.js';
 
 /** Cost tier for model pricing. */
 export const COST_TIER = {
@@ -59,7 +59,7 @@ export interface RouteRule {
   /** Unique rule identifier. */
   id: string;
   /** Task type pattern to match (from local-llm classification). */
-  taskPattern: OffloadTask | '*';
+  taskPattern: TaskType | '*';
   /** Optional keyword patterns for finer matching. */
   keywordPatterns?: string[];
   /** Ordered list of preferred model endpoint IDs. */
@@ -95,7 +95,7 @@ export interface QualityFeedback {
   /** Model endpoint ID that produced the response. */
   endpointId: string;
   /** Task pattern that was routed. */
-  taskPattern: OffloadTask | '*';
+  taskPattern: TaskType | '*';
   /** Whether the response met quality expectations. */
   acceptable: boolean;
   /** Response latency in ms. */
@@ -111,7 +111,7 @@ export interface QualityStats {
   /** Model endpoint ID. */
   endpointId: string;
   /** Task pattern. */
-  taskPattern: OffloadTask | '*';
+  taskPattern: TaskType | '*';
   /** Total number of requests. */
   totalRequests: number;
   /** Number of acceptable responses. */

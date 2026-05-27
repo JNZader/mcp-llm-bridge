@@ -7,7 +7,6 @@ import assert from 'node:assert/strict';
 
 import { ModelRouter, rankEndpointsByCost } from '../../src/model-routing/router.js';
 import { COST_TIER } from '../../src/model-routing/types.js';
-import { OFFLOAD_TASK } from '../../src/local-llm/types.js';
 import type { ModelEndpoint, RouteRule, ModelRoutingConfig } from '../../src/model-routing/types.js';
 
 // ── Fixtures ──────────────────────────────────────────────
@@ -50,7 +49,7 @@ const expensiveEndpoint: ModelEndpoint = {
 
 const commitRule: RouteRule = {
   id: 'commit-rule',
-  taskPattern: OFFLOAD_TASK.COMMIT_MESSAGE,
+  taskPattern: 'commit-message',
   preferredModels: ['local-llama', 'groq-llama'],
   maxCostTier: COST_TIER.CHEAP,
   minQuality: 'medium',
@@ -59,7 +58,7 @@ const commitRule: RouteRule = {
 
 const boilerplateRule: RouteRule = {
   id: 'boilerplate-rule',
-  taskPattern: OFFLOAD_TASK.BOILERPLATE,
+  taskPattern: 'boilerplate',
   preferredModels: ['local-llama'],
   maxCostTier: COST_TIER.FREE,
   minQuality: 'low',
@@ -94,7 +93,7 @@ describe('ModelRouter', () => {
   describe('route', () => {
     it('routes commit messages to local model (cheapest match)', () => {
       const decision = router.route({
-        task: OFFLOAD_TASK.COMMIT_MESSAGE,
+        task: 'commit-message',
         confidence: 0.95,
         shouldOffload: true,
         reason: 'test',
@@ -110,7 +109,7 @@ describe('ModelRouter', () => {
       router.setEndpointAvailability('local-llama', false);
 
       const decision = router.route({
-        task: OFFLOAD_TASK.COMMIT_MESSAGE,
+        task: 'commit-message',
         confidence: 0.95,
         shouldOffload: true,
         reason: 'test',
@@ -126,7 +125,7 @@ describe('ModelRouter', () => {
       router.setEndpointAvailability('groq-llama', false);
 
       const decision = router.route({
-        task: OFFLOAD_TASK.COMMIT_MESSAGE,
+        task: 'commit-message',
         confidence: 0.95,
         shouldOffload: true,
         reason: 'test',
@@ -141,7 +140,7 @@ describe('ModelRouter', () => {
       router.setEndpointAvailability('local-llama', false);
 
       const decision = router.route({
-        task: OFFLOAD_TASK.BOILERPLATE,
+        task: 'boilerplate',
         confidence: 0.85,
         shouldOffload: true,
         reason: 'test',
@@ -152,7 +151,7 @@ describe('ModelRouter', () => {
 
     it('routes unrecognized tasks to default endpoint', () => {
       const decision = router.route({
-        task: OFFLOAD_TASK.NOT_OFFLOADABLE,
+        task: 'not-offloadable',
         confidence: 0.5,
         shouldOffload: false,
         reason: 'test',
@@ -166,7 +165,7 @@ describe('ModelRouter', () => {
     it('respects cost tier limits on rules', () => {
       // Boilerplate rule maxCostTier is FREE, only local-llama qualifies
       const decision = router.route({
-        task: OFFLOAD_TASK.BOILERPLATE,
+        task: 'boilerplate',
         confidence: 0.85,
         shouldOffload: true,
         reason: 'test',
@@ -183,7 +182,7 @@ describe('ModelRouter', () => {
       for (let i = 0; i < 10; i++) {
         router.recordFeedback({
           endpointId: 'local-llama',
-          taskPattern: OFFLOAD_TASK.COMMIT_MESSAGE,
+          taskPattern: 'commit-message',
           acceptable: false,
           latencyMs: 100,
           timestamp: new Date().toISOString(),
@@ -191,7 +190,7 @@ describe('ModelRouter', () => {
       }
 
       const decision = router.route({
-        task: OFFLOAD_TASK.COMMIT_MESSAGE,
+        task: 'commit-message',
         confidence: 0.95,
         shouldOffload: true,
         reason: 'test',
@@ -205,20 +204,20 @@ describe('ModelRouter', () => {
     it('returns quality stats for tracked endpoint', () => {
       router.recordFeedback({
         endpointId: 'local-llama',
-        taskPattern: OFFLOAD_TASK.COMMIT_MESSAGE,
+        taskPattern: 'commit-message',
         acceptable: true,
         latencyMs: 200,
         timestamp: new Date().toISOString(),
       });
       router.recordFeedback({
         endpointId: 'local-llama',
-        taskPattern: OFFLOAD_TASK.COMMIT_MESSAGE,
+        taskPattern: 'commit-message',
         acceptable: false,
         latencyMs: 300,
         timestamp: new Date().toISOString(),
       });
 
-      const stats = router.getQualityStats('local-llama', OFFLOAD_TASK.COMMIT_MESSAGE);
+      const stats = router.getQualityStats('local-llama', 'commit-message');
       assert.ok(stats);
       assert.equal(stats.totalRequests, 2);
       assert.equal(stats.acceptableCount, 1);
@@ -227,7 +226,7 @@ describe('ModelRouter', () => {
     });
 
     it('returns null for untracked endpoint', () => {
-      const stats = router.getQualityStats('unknown', OFFLOAD_TASK.COMMIT_MESSAGE);
+      const stats = router.getQualityStats('unknown', 'commit-message');
       assert.equal(stats, null);
     });
   });
