@@ -239,3 +239,31 @@ export function measureCompression(original: string, compressed: string): number
   if (original.length === 0) return 1;
   return compressed.length / original.length;
 }
+
+/** In-memory compression analytics tracker. */
+export const compressionStats = {
+  totalCalls: 0,
+  compressedCalls: 0,
+  totalOriginalChars: 0,
+  totalCompressedChars: 0,
+  ratios: [] as number[],
+
+  record(original: string, compressed: string) {
+    this.totalCalls++;
+    this.compressedCalls++;
+    this.totalOriginalChars += original.length;
+    this.totalCompressedChars += compressed.length;
+    this.ratios.push(measureCompression(original, compressed));
+  },
+
+  getSummary() {
+    return {
+      totalCalls: this.totalCalls,
+      compressedCalls: this.compressedCalls,
+      avgRatio: this.ratios.length > 0
+        ? this.ratios.reduce((a, b) => a + b, 0) / this.ratios.length
+        : 1,
+      totalSavingsChars: this.totalOriginalChars - this.totalCompressedChars,
+    };
+  },
+};

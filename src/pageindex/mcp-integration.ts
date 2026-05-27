@@ -15,8 +15,13 @@ import { logger } from '../core/logger.js';
  */
 export function wrapWithPageIndex(
   server: Server,
-  dbPath?: string
+  dbPath?: string | object
 ): void {
+  // Skip if no DB path provided or not a string (e.g., in tests or when vault DB is unavailable)
+  if (typeof dbPath !== 'string') {
+    return;
+  }
+
   // Initialize PageIndex
   const pageIndex = createPageIndex(dbPath);
   

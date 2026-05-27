@@ -1703,6 +1703,18 @@ export function startHttpServer(
 		});
 	}
 
+	// ── Compression Analytics ────────────────────────────
+
+	app.get("/v1/compression/stats", async (c) => {
+		try {
+			const { compressionStats } = await import("../context-compression/output-compression.js");
+			return c.json(compressionStats.getSummary());
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 500);
+		}
+	});
+
 	// ── Admin Dashboard API ────────────────────────────────
 
 	registerAdminRoutes(app, {

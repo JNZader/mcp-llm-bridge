@@ -30,23 +30,43 @@ import { TOOL_CATEGORIES } from '../security/profiles.js';
 import { createPageIndex } from '../pageindex/index.js';
 import type { ApprovalStore } from '../approval/index.js';
 import { requiresApproval, DEFAULT_CONFIG as APPROVAL_DEFAULT_CONFIG } from '../approval/index.js';
+import { compressOutput, compressionStats } from '../context-compression/output-compression.js';
+
+/**
+ * Check if output compression is enabled for MCP tool responses.
+ * Default: true.
+ */
+function outputCompressionEnabled(): boolean {
+  return process.env['ENABLE_OUTPUT_COMPRESSION'] !== 'false';
+}
+
+/** Compression threshold in characters. Outputs exceeding this are compressed. */
+const COMPRESSION_THRESHOLD = 1000;
 
 /** Tool definitions exposed via MCP. */
-const TOOLS = [
+export const TOOLS = [
   {
     name: 'llm_generate',
     description:
-      'Generate text using an LLM. Routes to the best available provider with automatic fallback.',
+      'Generate text using an LLM. Routes to the best available provider with automatic fallback. Supports three-part prompts (system/context/instruction) for improved quality.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         prompt: {
           type: 'string',
-          description: 'The user prompt to send to the LLM',
+          description: 'The user prompt to send to the LLM (legacy flat format). Use context+instruction for better results.',
         },
         system: {
           type: 'string',
-          description: 'Optional system prompt',
+          description: 'Optional system prompt — role, personality, constraints',
+        },
+        context: {
+          type: 'string',
+          description: 'Background information, data, or documents for the task',
+        },
+        instruction: {
+          type: 'string',
+          description: 'The actual task or question to perform',
         },
         provider: {
           type: 'string',
@@ -490,8 +510,37 @@ const TOOLS = [
 
 /**
  * Handle a tool call by dispatching to the appropriate router/vault method.
+ * Exported for testing.
  */
-async function handleToolCall(
+/**
+ * Apply RTK-style output compression to a tool result when enabled.
+ */
+function compressToolResult(
+  result: { content: Array<{ type: 'text'; text: string }>; isError?: boolean },
+): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
+  if (!outputCompressionEnabled() || !result.content || result.content.length === 0) {
+    return result;
+  }
+
+  const first = result.content[0];
+  if (!first || first.type !== 'text') return result;
+
+  if (first.text.length > COMPRESSION_THRESHOLD) {
+    const compressed = compressOutput(first.text) as string;
+    compressionStats.record(first.text, compressed);
+    return {
+      ...result,
+      content: [{ ...first, text: compressed }, ...result.content.slice(1)],
+    };
+  }
+
+  return result;
+}
+
+/**
+ * Internal handler — contains all tool logic.
+ */
+async function _handleToolCall(
   toolName: string,
   args: Record<string, unknown>,
   router: Router,
@@ -532,9 +581,22 @@ async function handleToolCall(
 
     switch (toolName) {
       case 'llm_generate': {
+        let prompt = args['prompt'] as string | undefined;
+        const system = args['system'] as string | undefined;
+        const context = args['context'] as string | undefined;
+        const instruction = args['instruction'] as string | undefined;
+
+        // Build prompt from three-part fields if provided
+        if (context || instruction) {
+          const parts: string[] = [];
+          if (context) parts.push(`[Context]\n${context}`);
+          if (instruction) parts.push(`[Instruction]\n${instruction}`);
+          prompt = parts.join('\n\n') ?? prompt ?? '';
+        }
+
         const request = {
-          prompt: args['prompt'] as string,
-          system: args['system'] as string | undefined,
+          prompt: prompt ?? '',
+          system,
           provider: args['provider'] as string | undefined,
           model: args['model'] as string | undefined,
           maxTokens: args['maxTokens'] as number | undefined,
@@ -967,6 +1029,38 @@ async function handleToolCall(
       isError: true,
     };
   }
+}
+
+/**
+ * Exported handleToolCall — wraps the internal handler with output compression.
+ */
+export async function handleToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+  router: Router,
+  vault: Vault,
+  groupStore?: GroupStore,
+  costTracker?: CostTracker,
+  bridge?: BridgeOrchestrator | null,
+  codeSearch?: CodeSearchService | null,
+  stateManager?: StateManager | null,
+  approvalStore?: ApprovalStore | null,
+  securityProfile?: TrustLevel,
+): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+  const result = await _handleToolCall(
+    toolName,
+    args,
+    router,
+    vault,
+    groupStore,
+    costTracker,
+    bridge,
+    codeSearch,
+    stateManager,
+    approvalStore,
+    securityProfile,
+  );
+  return compressToolResult(result);
 }
 
 /**
