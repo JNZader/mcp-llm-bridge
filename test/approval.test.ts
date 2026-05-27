@@ -98,4 +98,32 @@ describe('requiresApproval', () => {
 	it('unknown tools do not require approval by default', () => {
 		assert.equal(requiresApproval('unknown_tool'), false);
 	});
+
+	it('uses correct requireApprovalFor property name (no typo)', () => {
+		// This test verifies the typo landmine is fixed:
+		// the function must reference requireApprovalFor (with 'l'), not requireApproveFor
+		const customConfig = {
+			defaultTimeoutMs: 5000,
+			requireApprovalFor: ['custom_dangerous_tool'],
+			autoApproveFor: [],
+		};
+		assert.equal(requiresApproval('custom_dangerous_tool', customConfig), true);
+		assert.equal(requiresApproval('safe_tool', customConfig), false);
+	});
+
+	it('autoApproveFor takes precedence over requireApprovalFor', () => {
+		const config = {
+			defaultTimeoutMs: 5000,
+			requireApprovalFor: ['vault_list'],
+			autoApproveFor: ['vault_list'],
+		};
+		// autoApproveFor should win — vault_list should NOT require approval
+		assert.equal(requiresApproval('vault_list', config), false);
+	});
+
+	it('DEFAULT_CONFIG has no requireApproveFor typo property', () => {
+		// Ensure the Object.defineProperty hack is removed
+		assert.equal('requireApproveFor' in DEFAULT_CONFIG, false);
+		assert.equal('requireApprovalFor' in DEFAULT_CONFIG, true);
+	});
 });

@@ -119,12 +119,5 @@ export function requiresApproval(
 		return false;
 	}
 	// Check require-approval patterns
-	return config.requireApproveFor.some((p) => toolName.includes(p));
+	return config.requireApprovalFor.some((p) => toolName.includes(p));
 }
-
-// Fix typo in property name access
-Object.defineProperty(DEFAULT_CONFIG, "requireApproveFor", {
-	get() {
-		return this.requireApprovalFor;
-	},
-});
