@@ -58,6 +58,7 @@ before(async () => {
     undefined,
     undefined,
     undefined,
+    undefined, // analyticsAggregator
     config.securityProfile,
     approvalStore,
   ) as unknown as http.Server;

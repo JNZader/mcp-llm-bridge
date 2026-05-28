@@ -10,9 +10,9 @@ export function normalizeOpenAIRequest(request: unknown): CanonicalRequest {
   const req = request as CanonicalRequest;
 
   // Validate required fields
-  if (!req.model) {
-    throw new Error('Missing required field: model');
-  }
+  // Note: model is optional in the gateway schema (router can auto-select),
+  // so we normalize to empty string rather than throwing.
+  const model = req.model ?? '';
 
   if (!req.messages || !Array.isArray(req.messages) || req.messages.length === 0) {
     throw new Error('Missing or invalid field: messages');
@@ -25,7 +25,7 @@ export function normalizeOpenAIRequest(request: unknown): CanonicalRequest {
   }));
 
   return {
-    model: req.model,
+    model,
     messages: normalizedMessages,
     temperature: req.temperature,
     max_tokens: req.max_tokens,

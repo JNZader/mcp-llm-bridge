@@ -80,6 +80,7 @@ before(async () => {
 		undefined, // latencyMeasurer
 		undefined, // freeModelRouter
 		db,
+		undefined, // analyticsAggregator
 		comparisonService,
 	) as unknown as http.Server;
 

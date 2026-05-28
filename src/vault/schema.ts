@@ -152,10 +152,18 @@ export function initializeDb(db: Database.Database): void {
       allowed_categories  TEXT NOT NULL DEFAULT '[]',
       rate_limit_max      INTEGER,
       rate_limit_window_ms INTEGER,
+      sandbox             INTEGER NOT NULL DEFAULT 0,
       created_at          TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Migrate: add sandbox column if missing (backward compatibility)
+  const spColumns = db.pragma('table_info(security_profiles)') as Array<{ name: string }>;
+  const hasSandbox = spColumns.some((col) => col.name === 'sandbox');
+  if (!hasSandbox) {
+    db.exec(`ALTER TABLE security_profiles ADD COLUMN sandbox INTEGER NOT NULL DEFAULT 0`);
+  }
 
   // ── API keys table (Phase 7: Per-User Auth) ──
   db.exec(`

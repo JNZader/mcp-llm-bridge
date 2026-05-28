@@ -48,10 +48,16 @@ export class ProfileEnforcer {
   private readonly rateLimiter: RateLimiter | null;
   private readonly allowedCategories: Set<ToolCategory>;
   private readonly _resolver: ProfileResolver | null;
+  private readonly dynamicToolCategories: Map<string, ToolCategory> = new Map();
 
   /** Get the set of allowed categories for the active profile. */
   get allowedCategoriesSet(): Set<ToolCategory> {
     return this.allowedCategories;
+  }
+
+  /** Get whether the active profile runs in sandbox mode. */
+  get sandbox(): boolean {
+    return this.profile.sandbox;
   }
 
   constructor(profileNameOrResolver: string | ProfileResolver) {
@@ -96,6 +102,14 @@ export class ProfileEnforcer {
   }
 
   /**
+   * Register a dynamically loaded tool with its security category.
+   * This makes async-loaded tools visible to filterTools() and authorize().
+   */
+  registerDynamicTool(name: string, category: ToolCategory): void {
+    this.dynamicToolCategories.set(name, category);
+  }
+
+  /**
    * Resolve a project-specific profile using the configured resolver.
    * Falls back to the static default profile if no resolver is set
    * or the resolver returns null for the given project.
@@ -114,7 +128,7 @@ export class ProfileEnforcer {
    */
   filterTools(tools: readonly ToolDef[]): ToolDef[] {
     return tools.filter((tool) => {
-      const category = TOOL_CATEGORIES[tool.name];
+      const category = TOOL_CATEGORIES[tool.name] ?? this.dynamicToolCategories.get(tool.name);
       if (!category) {
         // Unknown tools are blocked by default (safe-by-default)
         logger.warn(
@@ -132,7 +146,7 @@ export class ProfileEnforcer {
    * Returns true if allowed, false if denied.
    */
   authorize(toolName: string): boolean {
-    const category = TOOL_CATEGORIES[toolName];
+    const category = TOOL_CATEGORIES[toolName] ?? this.dynamicToolCategories.get(toolName);
 
     if (!category || !this.allowedCategories.has(category)) {
       logger.warn(

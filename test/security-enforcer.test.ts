@@ -50,6 +50,7 @@ describe('ProfileEnforcer constructor', () => {
     for (const level of ['local-dev', 'restricted', 'open']) {
       const e = createEnforcer(level);
       assert.equal(e.profile.level, level);
+      assert.equal(e.sandbox, false, `${level} profile should have sandbox false`);
     }
   });
 });
@@ -142,6 +143,35 @@ describe('ProfileEnforcer.authorize', () => {
     const enforcer = createEnforcer('open');
     assert.equal(enforcer.authorize('llm_generate'), true);
     assert.equal(enforcer.authorize('llm_models'), true);
+  });
+
+  it('allows registered dynamic tools in local-dev', () => {
+    const enforcer = createEnforcer('local-dev');
+    enforcer.registerDynamicTool('dynamic_read_tool', 'read');
+    assert.equal(enforcer.authorize('dynamic_read_tool'), true);
+  });
+
+  it('blocks dynamic tools in restricted when category is blocked', () => {
+    const enforcer = createEnforcer('restricted');
+    enforcer.registerDynamicTool('dynamic_admin_tool', 'admin');
+    assert.equal(enforcer.authorize('dynamic_admin_tool'), false);
+  });
+
+  it('filterTools includes registered dynamic tools when allowed', () => {
+    const enforcer = createEnforcer('restricted');
+    enforcer.registerDynamicTool('dynamic_read_tool', 'read');
+    const tools = [toolDef('dynamic_read_tool')];
+    const filtered = enforcer.filterTools(tools);
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0]!.name, 'dynamic_read_tool');
+  });
+
+  it('filterTools excludes registered dynamic tools when category blocked', () => {
+    const enforcer = createEnforcer('open');
+    enforcer.registerDynamicTool('dynamic_read_tool', 'read');
+    const tools = [toolDef('dynamic_read_tool')];
+    const filtered = enforcer.filterTools(tools);
+    assert.equal(filtered.length, 0);
   });
 });
 
@@ -297,6 +327,7 @@ describe('CI Guard: TOOL_CATEGORIES coverage', () => {
     const expectedToolNames = [
       'llm_generate',
       'llm_models',
+      'local_llm_generate',
       'vault_store',
       'vault_list',
       'vault_delete',
@@ -313,6 +344,17 @@ describe('CI Guard: TOOL_CATEGORIES coverage', () => {
       'code_search',
       'index_codebase',
       'shared_state',
+      'approval_list',
+      'approval_approve',
+      'approval_deny',
+      'discover_models',
+      'conversation_paginate',
+      'conversation_get_page',
+      'conversation_context',
+      'conversation_navigate',
+      'conversation_info',
+      'conversation_find_relevant',
+      'conversation_check_compaction',
     ];
 
     const categoryToolNames = Object.keys(TOOL_CATEGORIES);

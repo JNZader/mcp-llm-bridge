@@ -88,51 +88,51 @@ describe('CodeSearchService', () => {
     setupTestDir();
   });
 
-  it('indexes a directory and returns chunk count', () => {
-    const chunks = service.indexDirectory({ rootDir: TEST_DIR });
+  it('indexes a directory and returns chunk count', async () => {
+    const chunks = await service.indexDirectory({ rootDir: TEST_DIR });
     assert.ok(chunks > 0, `Expected chunks > 0, got ${chunks}`);
   });
 
-  it('searches for functions by name', () => {
-    service.indexDirectory({ rootDir: TEST_DIR });
-    const results = service.search({ query: 'authenticate', scope: TEST_DIR });
+  it('searches for functions by name', async () => {
+    await service.indexDirectory({ rootDir: TEST_DIR });
+    const results = await service.search({ query: 'authenticate', scope: TEST_DIR });
 
     assert.ok(results.length > 0, 'Should find authenticate');
     assert.equal(results[0]!.name, 'authenticate');
   });
 
-  it('searches for classes', () => {
-    service.indexDirectory({ rootDir: TEST_DIR });
-    const results = service.search({ query: 'HttpServer', scope: TEST_DIR });
+  it('searches for classes', async () => {
+    await service.indexDirectory({ rootDir: TEST_DIR });
+    const results = await service.search({ query: 'HttpServer', scope: TEST_DIR });
 
     assert.ok(results.length > 0, 'Should find HttpServer');
     assert.equal(results[0]!.name, 'HttpServer');
     assert.equal(results[0]!.kind, 'class');
   });
 
-  it('searches for interfaces', () => {
-    service.indexDirectory({ rootDir: TEST_DIR });
-    const results = service.search({ query: 'LoggerConfig', scope: TEST_DIR });
+  it('searches for interfaces', async () => {
+    await service.indexDirectory({ rootDir: TEST_DIR });
+    const results = await service.search({ query: 'LoggerConfig', scope: TEST_DIR });
 
     assert.ok(results.length > 0, 'Should find LoggerConfig');
     assert.equal(results[0]!.name, 'LoggerConfig');
     assert.equal(results[0]!.kind, 'interface');
   });
 
-  it('returns empty for empty query', () => {
-    service.indexDirectory({ rootDir: TEST_DIR });
-    const results = service.search({ query: '', scope: TEST_DIR });
+  it('returns empty for empty query', async () => {
+    await service.indexDirectory({ rootDir: TEST_DIR });
+    const results = await service.search({ query: '', scope: TEST_DIR });
     assert.equal(results.length, 0);
   });
 
-  it('respects limit option', () => {
-    service.indexDirectory({ rootDir: TEST_DIR });
-    const results = service.search({ query: 'function', scope: TEST_DIR, limit: 2 });
+  it('respects limit option', async () => {
+    await service.indexDirectory({ rootDir: TEST_DIR });
+    const results = await service.search({ query: 'function', scope: TEST_DIR, limit: 2 });
     assert.ok(results.length <= 2, 'Should respect limit');
   });
 
-  it('reindex forces fresh index', () => {
-    service.indexDirectory({ rootDir: TEST_DIR });
+  it('reindex forces fresh index', async () => {
+    await service.indexDirectory({ rootDir: TEST_DIR });
     const count1 = service.indexSize;
 
     // Add a file
@@ -142,31 +142,31 @@ describe('CodeSearchService', () => {
     );
 
     // Normal index would skip (TTL cache)
-    service.indexDirectory({ rootDir: TEST_DIR });
+    await service.indexDirectory({ rootDir: TEST_DIR });
     const count2 = service.indexSize;
     assert.equal(count2, count1, 'Should use cached index');
 
     // Reindex forces refresh
-    service.reindex(TEST_DIR);
+    await service.reindex(TEST_DIR);
     const count3 = service.indexSize;
     assert.ok(count3 > count1, 'Reindex should find new file');
   });
 
-  it('auto-indexes on first search if scope provided', () => {
+  it('auto-indexes on first search if scope provided', async () => {
     // Don't manually index — search should auto-index
-    const results = service.search({ query: 'authenticate', scope: TEST_DIR });
+    const results = await service.search({ query: 'authenticate', scope: TEST_DIR });
     assert.ok(results.length > 0, 'Should auto-index and find results');
   });
 
-  it('ignores node_modules by default', () => {
+  it('ignores node_modules by default', async () => {
     mkdirSync(join(TEST_DIR, 'node_modules', 'pkg'), { recursive: true });
     writeFileSync(
       join(TEST_DIR, 'node_modules', 'pkg', 'index.ts'),
       'export function secretPkg() { return true; }',
     );
 
-    service.indexDirectory({ rootDir: TEST_DIR });
-    const results = service.search({ query: 'secretPkg', scope: TEST_DIR });
+    await service.indexDirectory({ rootDir: TEST_DIR });
+    const results = await service.search({ query: 'secretPkg', scope: TEST_DIR });
     assert.equal(results.length, 0, 'Should not index node_modules');
   });
 });

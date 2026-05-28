@@ -5,10 +5,11 @@
  * Following Red → Green → Refactor cycle
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
 import {
   LoadBalancer,
-  LoadBalanceMode,
   LOAD_BALANCE_MODE,
   ProviderCandidate,
   RoundRobinStrategy,
@@ -37,10 +38,10 @@ describe('LoadBalancer', () => {
         balancer.select(candidates),
       ];
 
-      expect(results[0]?.id).toBe('a');
-      expect(results[1]?.id).toBe('b');
-      expect(results[2]?.id).toBe('c');
-      expect(results[3]?.id).toBe('a'); // cycles back
+      assert.strictEqual(results[0]?.id, 'a');
+      assert.strictEqual(results[1]?.id, 'b');
+      assert.strictEqual(results[2]?.id, 'c');
+      assert.strictEqual(results[3]?.id, 'a'); // cycles back
     });
 
     it('should reset counter on mode switch', () => {
@@ -60,7 +61,7 @@ describe('LoadBalancer', () => {
 
       // Should start from beginning again
       const result = balancer.select(candidates);
-      expect(result?.id).toBe('a');
+      assert.strictEqual(result?.id, 'a');
     });
   });
 
@@ -79,8 +80,8 @@ describe('LoadBalancer', () => {
         if (result) selections.add(result.id);
       }
 
-      expect(selections.has('a')).toBe(true);
-      expect(selections.has('b')).toBe(true);
+      assert.ok(selections.has('a'));
+      assert.ok(selections.has('b'));
     });
 
     it('should select from single candidate', () => {
@@ -90,7 +91,7 @@ describe('LoadBalancer', () => {
       ];
 
       const result = balancer.select(candidates);
-      expect(result?.id).toBe('only');
+      assert.strictEqual(result?.id, 'only');
     });
   });
 
@@ -104,7 +105,7 @@ describe('LoadBalancer', () => {
       ];
 
       const result = balancer.select(candidates);
-      expect(result?.id).toBe('b'); // lowest priority number
+      assert.strictEqual(result?.id, 'b'); // lowest priority number
     });
 
     it('should skip unhealthy candidates', () => {
@@ -115,7 +116,7 @@ describe('LoadBalancer', () => {
       ];
 
       const result = balancer.select(candidates);
-      expect(result?.id).toBe('b');
+      assert.strictEqual(result?.id, 'b');
     });
 
     it('should fallback to higher priority when lower is unhealthy', () => {
@@ -127,7 +128,7 @@ describe('LoadBalancer', () => {
       ];
 
       const result = balancer.select(candidates);
-      expect(result?.id).toBe('c');
+      assert.strictEqual(result?.id, 'c');
     });
 
     it('should treat undefined priority as lowest (999)', () => {
@@ -138,7 +139,7 @@ describe('LoadBalancer', () => {
       ];
 
       const result = balancer.select(candidates);
-      expect(result?.id).toBe('a'); // b has priority 999 (lowest)
+      assert.strictEqual(result?.id, 'a'); // b has priority 999 (lowest)
     });
 
     it('should return null when all unhealthy', () => {
@@ -149,7 +150,7 @@ describe('LoadBalancer', () => {
       ];
 
       const result = balancer.select(candidates);
-      expect(result).toBeNull();
+      assert.strictEqual(result, null);
     });
   });
 
@@ -170,8 +171,8 @@ describe('LoadBalancer', () => {
       }
 
       // Allow 30% tolerance (statistical variance)
-      expect(countA).toBeGreaterThan(180);
-      expect(countB).toBeGreaterThan(30);
+      assert.ok(countA > 180, `Expected countA > 180, got ${countA}`);
+      assert.ok(countB > 30, `Expected countB > 30, got ${countB}`);
     });
 
     it('should use default weight of 1 when not specified', () => {
@@ -189,8 +190,8 @@ describe('LoadBalancer', () => {
       }
 
       // Should be roughly 50% with tolerance
-      expect(countA).toBeGreaterThan(60);
-      expect(countA).toBeLessThan(140);
+      assert.ok(countA > 60, `Expected countA > 60, got ${countA}`);
+      assert.ok(countA < 140, `Expected countA < 140, got ${countA}`);
     });
 
     it('should handle zero weight candidates', () => {
@@ -207,7 +208,7 @@ describe('LoadBalancer', () => {
         if (result?.id === 'b') countB++;
       }
 
-      expect(countB).toBe(100);
+      assert.strictEqual(countB, 100);
     });
   });
 
@@ -215,7 +216,7 @@ describe('LoadBalancer', () => {
     it('should return null for empty candidates', () => {
       const balancer = new LoadBalancer();
       const result = balancer.select([]);
-      expect(result).toBeNull();
+      assert.strictEqual(result, null);
     });
 
     it('should filter to healthy candidates only', () => {
@@ -229,7 +230,7 @@ describe('LoadBalancer', () => {
       // Should only ever select the healthy one
       for (let i = 0; i < 50; i++) {
         const result = balancer.select(candidates);
-        expect(result?.id).toBe('healthy');
+        assert.strictEqual(result?.id, 'healthy');
       }
     });
 
@@ -241,37 +242,37 @@ describe('LoadBalancer', () => {
       ];
 
       const result = balancer.select(candidates);
-      expect(result).toBeNull();
+      assert.strictEqual(result, null);
     });
 
     it('should switch modes dynamically', () => {
       const balancer = new LoadBalancer(LOAD_BALANCE_MODE.ROUND_ROBIN);
-      expect(balancer.getMode()).toBe(LOAD_BALANCE_MODE.ROUND_ROBIN);
+      assert.strictEqual(balancer.getMode(), LOAD_BALANCE_MODE.ROUND_ROBIN);
 
       balancer.setMode(LOAD_BALANCE_MODE.RANDOM);
-      expect(balancer.getMode()).toBe(LOAD_BALANCE_MODE.RANDOM);
+      assert.strictEqual(balancer.getMode(), LOAD_BALANCE_MODE.RANDOM);
     });
 
     it('should get available modes', () => {
       const balancer = new LoadBalancer();
       const modes = balancer.getAvailableModes();
 
-      expect(modes).toContain(LOAD_BALANCE_MODE.ROUND_ROBIN);
-      expect(modes).toContain(LOAD_BALANCE_MODE.RANDOM);
-      expect(modes).toContain(LOAD_BALANCE_MODE.FAILOVER);
-      expect(modes).toContain(LOAD_BALANCE_MODE.WEIGHTED);
-      expect(modes).toHaveLength(4);
+      assert.ok(modes.includes(LOAD_BALANCE_MODE.ROUND_ROBIN));
+      assert.ok(modes.includes(LOAD_BALANCE_MODE.RANDOM));
+      assert.ok(modes.includes(LOAD_BALANCE_MODE.FAILOVER));
+      assert.ok(modes.includes(LOAD_BALANCE_MODE.WEIGHTED));
+      assert.strictEqual(modes.length, 4);
     });
 
     it('should check if mode is supported', () => {
       const balancer = new LoadBalancer();
 
-      expect(balancer.isModeSupported('round_robin')).toBe(true);
-      expect(balancer.isModeSupported('random')).toBe(true);
-      expect(balancer.isModeSupported('failover')).toBe(true);
-      expect(balancer.isModeSupported('weighted')).toBe(true);
-      expect(balancer.isModeSupported('invalid')).toBe(false);
-      expect(balancer.isModeSupported('')).toBe(false);
+      assert.strictEqual(balancer.isModeSupported('round_robin'), true);
+      assert.strictEqual(balancer.isModeSupported('random'), true);
+      assert.strictEqual(balancer.isModeSupported('failover'), true);
+      assert.strictEqual(balancer.isModeSupported('weighted'), true);
+      assert.strictEqual(balancer.isModeSupported('invalid'), false);
+      assert.strictEqual(balancer.isModeSupported(''), false);
     });
 
     it('should provide selection details', () => {
@@ -282,10 +283,10 @@ describe('LoadBalancer', () => {
 
       const result = balancer.selectWithDetails(candidates);
 
-      expect(result).not.toBeNull();
-      expect(result?.candidate.id).toBe('a');
-      expect(result?.strategy).toBe(LOAD_BALANCE_MODE.ROUND_ROBIN);
-      expect(result?.timestamp).toBeGreaterThan(0);
+      assert.notStrictEqual(result, null);
+      assert.strictEqual(result?.candidate.id, 'a');
+      assert.strictEqual(result?.strategy, LOAD_BALANCE_MODE.ROUND_ROBIN);
+      assert.ok(result?.timestamp && result.timestamp > 0);
     });
 
     it('should update configuration', () => {
@@ -294,8 +295,8 @@ describe('LoadBalancer', () => {
       balancer.updateConfig({ maxRetries: 10 });
 
       const config = balancer.getConfig();
-      expect(config.maxRetries).toBe(10);
-      expect(config.mode).toBe(LOAD_BALANCE_MODE.ROUND_ROBIN);
+      assert.strictEqual(config.maxRetries, 10);
+      assert.strictEqual(config.mode, LOAD_BALANCE_MODE.ROUND_ROBIN);
     });
 
     it('should handle mode change via updateConfig', () => {
@@ -303,8 +304,8 @@ describe('LoadBalancer', () => {
 
       balancer.updateConfig({ mode: LOAD_BALANCE_MODE.RANDOM });
 
-      expect(balancer.getMode()).toBe(LOAD_BALANCE_MODE.RANDOM);
-      expect(balancer.getConfig().mode).toBe(LOAD_BALANCE_MODE.RANDOM);
+      assert.strictEqual(balancer.getMode(), LOAD_BALANCE_MODE.RANDOM);
+      assert.strictEqual(balancer.getConfig().mode, LOAD_BALANCE_MODE.RANDOM);
     });
   });
 });
@@ -318,9 +319,9 @@ describe('Strategy Classes', () => {
         { id: 'b', provider: 'p2', keyId: 'k2', model: 'm1', healthy: true },
       ];
 
-      expect(strategy.select(candidates)?.id).toBe('a');
-      expect(strategy.select(candidates)?.id).toBe('b');
-      expect(strategy.select(candidates)?.id).toBe('a');
+      assert.strictEqual(strategy.select(candidates)?.id, 'a');
+      assert.strictEqual(strategy.select(candidates)?.id, 'b');
+      assert.strictEqual(strategy.select(candidates)?.id, 'a');
     });
 
     it('should reset counter', () => {
@@ -334,12 +335,12 @@ describe('Strategy Classes', () => {
       strategy.select(candidates);
       strategy.reset();
 
-      expect(strategy.select(candidates)?.id).toBe('a');
+      assert.strictEqual(strategy.select(candidates)?.id, 'a');
     });
 
     it('should return null for empty array', () => {
       const strategy = new RoundRobinStrategy();
-      expect(strategy.select([])).toBeNull();
+      assert.strictEqual(strategy.select([]), null);
     });
   });
 
@@ -357,13 +358,13 @@ describe('Strategy Classes', () => {
         if (result) selections.add(result.id);
       }
 
-      expect(selections.has('a')).toBe(true);
-      expect(selections.has('b')).toBe(true);
+      assert.ok(selections.has('a'));
+      assert.ok(selections.has('b'));
     });
 
     it('should return null for empty array', () => {
       const strategy = new RandomStrategy();
-      expect(strategy.select([])).toBeNull();
+      assert.strictEqual(strategy.select([]), null);
     });
   });
 
@@ -375,12 +376,12 @@ describe('Strategy Classes', () => {
         { id: 'b', provider: 'p2', keyId: 'k2', model: 'm1', priority: 1, healthy: true },
       ];
 
-      expect(strategy.select(candidates)?.id).toBe('b');
+      assert.strictEqual(strategy.select(candidates)?.id, 'b');
     });
 
     it('should return null for empty array', () => {
       const strategy = new FailoverStrategy();
-      expect(strategy.select([])).toBeNull();
+      assert.strictEqual(strategy.select([]), null);
     });
   });
 
@@ -398,12 +399,12 @@ describe('Strategy Classes', () => {
         if (result?.id === 'a') countA++;
       }
 
-      expect(countA).toBeGreaterThan(180);
+      assert.ok(countA > 180, `Expected countA > 180, got ${countA}`);
     });
 
     it('should return null for empty array', () => {
       const strategy = new WeightedStrategy();
-      expect(strategy.select([])).toBeNull();
+      assert.strictEqual(strategy.select([]), null);
     });
   });
 });
@@ -411,64 +412,67 @@ describe('Strategy Classes', () => {
 describe('createStrategy', () => {
   it('should create RoundRobinStrategy', () => {
     const strategy = createStrategy(LOAD_BALANCE_MODE.ROUND_ROBIN);
-    expect(strategy).toBeInstanceOf(RoundRobinStrategy);
+    assert.ok(strategy instanceof RoundRobinStrategy);
   });
 
   it('should create RandomStrategy', () => {
     const strategy = createStrategy(LOAD_BALANCE_MODE.RANDOM);
-    expect(strategy).toBeInstanceOf(RandomStrategy);
+    assert.ok(strategy instanceof RandomStrategy);
   });
 
   it('should create FailoverStrategy', () => {
     const strategy = createStrategy(LOAD_BALANCE_MODE.FAILOVER);
-    expect(strategy).toBeInstanceOf(FailoverStrategy);
+    assert.ok(strategy instanceof FailoverStrategy);
   });
 
   it('should create WeightedStrategy', () => {
     const strategy = createStrategy(LOAD_BALANCE_MODE.WEIGHTED);
-    expect(strategy).toBeInstanceOf(WeightedStrategy);
+    assert.ok(strategy instanceof WeightedStrategy);
   });
 
   it('should throw for invalid mode', () => {
-    expect(() => createStrategy('invalid' as LoadBalanceMode)).toThrow('Unknown load balance mode');
+    assert.throws(
+      () => createStrategy('invalid' as any),
+      /Unknown load balance mode/
+    );
   });
 });
 
 describe('getStrategyDescription', () => {
   it('should describe round_robin', () => {
     const desc = getStrategyDescription(LOAD_BALANCE_MODE.ROUND_ROBIN);
-    expect(desc).toContain('sequentially');
+    assert.ok(desc.includes('sequentially'));
   });
 
   it('should describe random', () => {
     const desc = getStrategyDescription(LOAD_BALANCE_MODE.RANDOM);
-    expect(desc).toContain('Randomly');
+    assert.ok(desc.includes('Randomly'));
   });
 
   it('should describe failover', () => {
     const desc = getStrategyDescription(LOAD_BALANCE_MODE.FAILOVER);
-    expect(desc).toContain('priority');
+    assert.ok(desc.includes('priority'));
   });
 
   it('should describe weighted', () => {
     const desc = getStrategyDescription(LOAD_BALANCE_MODE.WEIGHTED);
-    expect(desc).toContain('weight');
+    assert.ok(desc.includes('weight'));
   });
 });
 
 describe('isLoadBalanceMode', () => {
   it('should validate valid modes', () => {
-    expect(isLoadBalanceMode('round_robin')).toBe(true);
-    expect(isLoadBalanceMode('random')).toBe(true);
-    expect(isLoadBalanceMode('failover')).toBe(true);
-    expect(isLoadBalanceMode('weighted')).toBe(true);
+    assert.strictEqual(isLoadBalanceMode('round_robin'), true);
+    assert.strictEqual(isLoadBalanceMode('random'), true);
+    assert.strictEqual(isLoadBalanceMode('failover'), true);
+    assert.strictEqual(isLoadBalanceMode('weighted'), true);
   });
 
   it('should reject invalid modes', () => {
-    expect(isLoadBalanceMode('invalid')).toBe(false);
-    expect(isLoadBalanceMode('')).toBe(false);
-    expect(isLoadBalanceMode(null)).toBe(false);
-    expect(isLoadBalanceMode(undefined)).toBe(false);
-    expect(isLoadBalanceMode(123)).toBe(false);
+    assert.strictEqual(isLoadBalanceMode('invalid'), false);
+    assert.strictEqual(isLoadBalanceMode(''), false);
+    assert.strictEqual(isLoadBalanceMode(null as any), false);
+    assert.strictEqual(isLoadBalanceMode(undefined as any), false);
+    assert.strictEqual(isLoadBalanceMode(123 as any), false);
   });
 });

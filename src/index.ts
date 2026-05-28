@@ -29,6 +29,7 @@ import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
 import { Router } from "./core/router.js";
 import { SessionStore } from "./core/session.js";
+import { SessionManager } from "./session/index.js";
 import { registry } from "./core/transformer.js";
 import { StateManager } from "./crdt/index.js";
 import {
@@ -40,7 +41,12 @@ import { LatencyMeasurer } from "./latency/index.js";
 import { startHttpServer } from "./server/http.js";
 import { startMcpServer } from "./server/mcp.js";
 import { Vault } from "./vault/index.js";
+import { migrate } from "./db/migrate.js";
+import { createPageIndex } from "./pageindex/index.js";
+import { PageIndexTools } from "./pageindex/tools.js";
 import { discoverModels } from "./model-discovery/index.js";
+import { AnalyticsAggregator } from "./analytics/index.js";
+import { RequestLogger } from "./logging/index.js";
 
 // Populate the transformer registry with all inbound/outbound transformers
 import "./transformers/index.js";
@@ -59,6 +65,12 @@ const router = new Router();
 // Expose the DB for multi-tenant auth and HF cache (Sprint 3)
 const db = vault.getDb();
 
+// Run pending migrations on the vault database
+await migrate({ dbPath: config.dbPath });
+
+// Initialize request logger
+const requestLogger = new RequestLogger(db);
+
 // Register all adapters
 for (const adapter of createAllAdapters(vault)) {
 	router.register(adapter);
@@ -67,6 +79,10 @@ for (const adapter of createAllAdapters(vault)) {
 // Initialize cost tracker (uses same DB path as vault)
 const costTracker = new CostTracker({ dbPath: config.dbPath });
 router.setCostTracker(costTracker);
+
+// Initialize analytics aggregator
+const analyticsAggregator = new AnalyticsAggregator();
+router.setAnalyticsAggregator(analyticsAggregator);
 
 // Wire up transformer registry for the new pipeline
 router.setTransformerRegistry(registry);
@@ -78,6 +94,9 @@ router.setGroupStore(groupStore);
 // Initialize session store (in-memory with TTL sweep)
 const sessionStore = new SessionStore();
 router.setSessionStore(sessionStore);
+
+// Initialize session manager (session affinity for sticky routing)
+const sessionManager = new SessionManager();
 
 // Initialize context compression service (background pre-computation)
 const compressor = new CompressorService();
@@ -115,6 +134,19 @@ if (latencyRoutingEnabled) {
 	logger.info("Latency-based routing enabled");
 }
 
+// ── Model Routing ───────────────────────────────────────
+const modelRoutingEnabled = process.env["MODEL_ROUTING_ENABLED"] === "true";
+if (modelRoutingEnabled) {
+	const { bootstrapModelRouter } = await import("./model-routing/index.js");
+	const modelRouter = bootstrapModelRouter(router.providers);
+	if (modelRouter) {
+		router.setModelRouter(modelRouter);
+		logger.info("Model routing enabled");
+	} else {
+		logger.warn("Model routing config missing or disabled");
+	}
+}
+
 // Initialize bridge orchestrator (opt-in via bridge.yaml config)
 const bridgeConfig = loadBridgeConfig();
 const bridge = bridgeConfig
@@ -127,6 +159,10 @@ if (bridge) {
 // ── Approval Store ──────────────────────────────────────
 const approvalStore = new ApprovalStore();
 router.setApprovalStore(approvalStore);
+
+// ── PageIndex ───────────────────────────────────────────
+const pageIndex = createPageIndex(config.dbPath);
+const pageIndexTools = new PageIndexTools(pageIndex.service);
 
 // ── Local LLM Provider ────────────────────────────────────
 const localLLMEnabled = process.env["LOCAL_LLM_ENABLED"] === "true";
@@ -235,9 +271,12 @@ if (mode === "serve") {
 		latencyMeasurer,
 		freeModelRouter,
 		db,
+		analyticsAggregator,
 		comparisonService,
 		config.securityProfile,
 		approvalStore,
+		sessionManager,
+		requestLogger,
 	);
 } else {
 	// MCP stdio (default — backward compatible)
@@ -251,6 +290,7 @@ if (mode === "serve") {
 		stateManager,
 		config.securityProfile,
 		approvalStore,
+		pageIndexTools,
 	);
 	if (mode === "--http") {
 		startHttpServer(
@@ -262,9 +302,12 @@ if (mode === "serve") {
 			latencyMeasurer,
 			freeModelRouter,
 			db,
+			analyticsAggregator,
 			comparisonService,
 			config.securityProfile,
 			approvalStore,
+			sessionManager,
+			requestLogger,
 		);
 	}
 }

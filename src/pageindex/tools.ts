@@ -8,6 +8,151 @@
 import { PageIndexService } from './service.js';
 import { PageDirection } from './types.js';
 
+export const PAGEINDEX_TOOL_DEFINITIONS = [
+  {
+    name: 'conversation_paginate',
+    description: 'Divide a long conversation into navigable pages. Use this when conversation exceeds safe context limits.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Unique session identifier'
+        },
+        content: {
+          type: 'string',
+          description: 'Full conversation content to paginate'
+        }
+      },
+      required: ['session_id', 'content']
+    }
+  },
+  {
+    name: 'conversation_get_page',
+    description: 'Get a specific page from a paginated conversation',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session identifier'
+        },
+        page_num: {
+          type: 'number',
+          description: 'Page number (1-based)'
+        }
+      },
+      required: ['session_id', 'page_num']
+    }
+  },
+  {
+    name: 'conversation_context',
+    description: 'Get a page with surrounding context pages. Use this for reading with context.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session identifier'
+        },
+        page_num: {
+          type: 'number',
+          description: 'Target page number'
+        },
+        window_size: {
+          type: 'number',
+          description: 'Number of pages before and after (default: 1)',
+          default: 1
+        }
+      },
+      required: ['session_id', 'page_num']
+    }
+  },
+  {
+    name: 'conversation_navigate',
+    description: 'Navigate to next, previous, first, or last page',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session identifier'
+        },
+        current_page_num: {
+          type: 'number',
+          description: 'Current page number'
+        },
+        direction: {
+          type: 'string',
+          enum: ['next', 'prev', 'first', 'last'],
+          description: 'Navigation direction'
+        }
+      },
+      required: ['session_id', 'current_page_num', 'direction']
+    }
+  },
+  {
+    name: 'conversation_info',
+    description: 'Get info about a paginated conversation: total pages, total tokens, etc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session identifier'
+        }
+      },
+      required: ['session_id']
+    }
+  },
+  {
+    name: 'conversation_find_relevant',
+    description: 'Find pages relevant to a query using keyword matching',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session identifier'
+        },
+        query: {
+          type: 'string',
+          description: 'Search query (keywords)'
+        },
+        max_pages: {
+          type: 'number',
+          description: 'Maximum pages to return (default: 2)',
+          default: 2
+        }
+      },
+      required: ['session_id', 'query']
+    }
+  },
+  {
+    name: 'conversation_check_compaction',
+    description: 'Check if conversation needs compaction for given model context limit',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session_id: {
+          type: 'string',
+          description: 'Session identifier'
+        },
+        model_max_tokens: {
+          type: 'number',
+          description: 'Model context window size (e.g., 4096)'
+        },
+        additional_tokens: {
+          type: 'number',
+          description: 'Additional tokens to be added (default: 0)',
+          default: 0
+        }
+      },
+      required: ['session_id', 'model_max_tokens']
+    }
+  }
+] as const;
+
 export class PageIndexTools {
   private service: PageIndexService;
 
@@ -18,151 +163,12 @@ export class PageIndexTools {
   /**
    * Tool definitions for MCP
    */
+  static getToolDefinitions() {
+    return [...PAGEINDEX_TOOL_DEFINITIONS];
+  }
+
   getToolDefinitions() {
-    return [
-      {
-        name: 'conversation_paginate',
-        description: 'Divide a long conversation into navigable pages. Use this when conversation exceeds safe context limits.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            session_id: {
-              type: 'string',
-              description: 'Unique session identifier'
-            },
-            content: {
-              type: 'string',
-              description: 'Full conversation content to paginate'
-            }
-          },
-          required: ['session_id', 'content']
-        }
-      },
-      {
-        name: 'conversation_get_page',
-        description: 'Get a specific page from a paginated conversation',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            session_id: {
-              type: 'string',
-              description: 'Session identifier'
-            },
-            page_num: {
-              type: 'number',
-              description: 'Page number (1-based)'
-            }
-          },
-          required: ['session_id', 'page_num']
-        }
-      },
-      {
-        name: 'conversation_context',
-        description: 'Get a page with surrounding context pages. Use this for reading with context.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            session_id: {
-              type: 'string',
-              description: 'Session identifier'
-            },
-            page_num: {
-              type: 'number',
-              description: 'Target page number'
-            },
-            window_size: {
-              type: 'number',
-              description: 'Number of pages before and after (default: 1)',
-              default: 1
-            }
-          },
-          required: ['session_id', 'page_num']
-        }
-      },
-      {
-        name: 'conversation_navigate',
-        description: 'Navigate to next, previous, first, or last page',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            session_id: {
-              type: 'string',
-              description: 'Session identifier'
-            },
-            current_page_num: {
-              type: 'number',
-              description: 'Current page number'
-            },
-            direction: {
-              type: 'string',
-              enum: ['next', 'prev', 'first', 'last'],
-              description: 'Navigation direction'
-            }
-          },
-          required: ['session_id', 'current_page_num', 'direction']
-        }
-      },
-      {
-        name: 'conversation_info',
-        description: 'Get info about a paginated conversation: total pages, total tokens, etc.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            session_id: {
-              type: 'string',
-              description: 'Session identifier'
-            }
-          },
-          required: ['session_id']
-        }
-      },
-      {
-        name: 'conversation_find_relevant',
-        description: 'Find pages relevant to a query using keyword matching',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            session_id: {
-              type: 'string',
-              description: 'Session identifier'
-            },
-            query: {
-              type: 'string',
-              description: 'Search query (keywords)'
-            },
-            max_pages: {
-              type: 'number',
-              description: 'Maximum pages to return (default: 2)',
-              default: 2
-            }
-          },
-          required: ['session_id', 'query']
-        }
-      },
-      {
-        name: 'conversation_check_compaction',
-        description: 'Check if conversation needs compaction for given model context limit',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            session_id: {
-              type: 'string',
-              description: 'Session identifier'
-            },
-            model_max_tokens: {
-              type: 'number',
-              description: 'Model context window size (e.g., 4096)'
-            },
-            additional_tokens: {
-              type: 'number',
-              description: 'Additional tokens to be added (default: 0)',
-              default: 0
-            }
-          },
-          required: ['session_id', 'model_max_tokens']
-        }
-      }
-    ];
+    return PageIndexTools.getToolDefinitions();
   }
 
   /**

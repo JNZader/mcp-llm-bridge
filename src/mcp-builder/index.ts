@@ -213,14 +213,29 @@ export class McpServerBuilder {
   private version: string = '1.0.0';
 
   constructor(
-    private readonly name: string,
-    private readonly description: string,
+    private readonly name: string = 'mcp-server',
+    private readonly description: string = 'MCP server',
   ) {}
 
   /** Set the server version. */
   setVersion(version: string): this {
     this.version = version;
     return this;
+  }
+
+  /** Fluent convenience method to add a tool. */
+  tool(
+    name: string,
+    description: string,
+    properties: Record<string, { type: string }>,
+    handler: ToolHandler,
+  ): this {
+    return this.addTool({
+      name,
+      description,
+      inputSchema: { type: 'object', properties },
+      handler,
+    });
   }
 
   /** Add a tool to the server. */

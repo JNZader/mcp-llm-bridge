@@ -23,6 +23,12 @@ import { ToolCategorySchema, TrustLevelSchema } from '../security/profiles.js';
 import { loadCatalog, importCatalog } from '../free-models/registry.js';
 import { createApiKey, revokeApiKey, listApiKeys } from '../auth/keys.js';
 import { discoverModels } from '../model-discovery/discovery.js';
+import type { SessionManager } from '../session/session-manager.js';
+import {
+  ModelSyncManager,
+  isProviderType,
+  PROVIDER_TYPE,
+} from '../model-sync/index.js';
 
 // ── Admin Auth Middleware ─────────────────────────────────
 
@@ -96,6 +102,8 @@ export interface AdminDeps {
   db?: Database.Database;
   /** Optional free model router for catalog operations. */
   freeModelRouter?: import('../free-models/router.js').FreeModelRouter;
+  /** Optional session manager for sticky session metrics. */
+  sessionManager?: SessionManager;
 }
 
 /**
@@ -284,6 +292,21 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
     }
   });
 
+  // ── GET /v1/admin/sessions ───────────────────────────────
+
+  app.get('/v1/admin/sessions', (c) => {
+    try {
+      const sessionManager = deps.sessionManager;
+      if (!sessionManager) {
+        return c.json({ error: 'Session manager not available', code: 'NOT_CONFIGURED' }, 503);
+      }
+      return c.json(sessionManager.getDashboardMetrics());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
   // ── POST /v1/admin/reset-circuit-breaker/:provider ────
 
   app.post('/v1/admin/reset-circuit-breaker/:provider', (c) => {
@@ -346,6 +369,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
     allowedCategories: z.array(ToolCategorySchema).min(1),
     rateLimitMax: z.number().int().positive().nullable().optional().default(null),
     rateLimitWindowMs: z.number().int().positive().nullable().optional().default(null),
+    sandbox: z.boolean().optional().default(false),
   });
 
   app.post('/v1/admin/profiles', async (c) => {
@@ -361,16 +385,17 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
       }
 
-      const { project, trustLevel, allowedCategories, rateLimitMax, rateLimitWindowMs } = parsed.data;
+      const { project, trustLevel, allowedCategories, rateLimitMax, rateLimitWindowMs, sandbox } = parsed.data;
 
       const stmt = deps.db.prepare(`
-        INSERT INTO security_profiles (project, trust_level, allowed_categories, rate_limit_max, rate_limit_window_ms, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        INSERT INTO security_profiles (project, trust_level, allowed_categories, rate_limit_max, rate_limit_window_ms, sandbox, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(project) DO UPDATE SET
           trust_level = excluded.trust_level,
           allowed_categories = excluded.allowed_categories,
           rate_limit_max = excluded.rate_limit_max,
           rate_limit_window_ms = excluded.rate_limit_window_ms,
+          sandbox = excluded.sandbox,
           updated_at = datetime('now')
       `);
 
@@ -380,6 +405,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         JSON.stringify(allowedCategories),
         rateLimitMax,
         rateLimitWindowMs,
+        sandbox ? 1 : 0,
       );
 
       return c.json({
@@ -389,6 +415,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         allowedCategories,
         rateLimitMax,
         rateLimitWindowMs,
+        sandbox,
       }, 201);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -409,6 +436,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         allowed_categories: string;
         rate_limit_max: number | null;
         rate_limit_window_ms: number | null;
+        sandbox: number;
         created_at: string;
         updated_at: string;
       }>;
@@ -420,6 +448,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         allowedCategories: JSON.parse(row.allowed_categories) as string[],
         rateLimitMax: row.rate_limit_max,
         rateLimitWindowMs: row.rate_limit_window_ms,
+        sandbox: Boolean(row.sandbox),
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }));
@@ -509,6 +538,130 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         unenrichedCount: result.unenrichedCount,
         errors: result.errors,
         timestamp: result.timestamp,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── POST /v1/admin/models/sync ───────────────────────────
+
+  const DEFAULT_PROVIDER_BASE_URLS: Record<string, string> = {
+    [PROVIDER_TYPE.OPENAI]: 'https://api.openai.com/v1',
+    [PROVIDER_TYPE.GROQ]: 'https://api.groq.com/openai/v1',
+    [PROVIDER_TYPE.OPENROUTER]: 'https://openrouter.ai/api/v1',
+    [PROVIDER_TYPE.ANTHROPIC]: 'https://api.anthropic.com/v1',
+    [PROVIDER_TYPE.GEMINI]: 'https://generativelanguage.googleapis.com/v1beta',
+  };
+
+  app.post('/v1/admin/models/sync', async (c) => {
+    try {
+      if (!deps.db) {
+        return c.json({ error: 'Database not configured', code: 'NOT_CONFIGURED' }, 500);
+      }
+
+      const body = await c.req.json().catch(() => ({}));
+      const provider = body['provider'];
+
+      if (!isProviderType(provider)) {
+        return c.json(
+          {
+            error: `Invalid or unsupported provider: ${provider}`,
+            code: 'VALIDATION_ERROR',
+            supportedProviders: Object.values(PROVIDER_TYPE),
+          },
+          400,
+        );
+      }
+
+      // Resolve baseUrl: body → env → default
+      const baseUrl =
+        body['baseUrl'] ??
+        process.env[`${provider.toUpperCase()}_BASE_URL`] ??
+        DEFAULT_PROVIDER_BASE_URLS[provider];
+
+      // Resolve apiKey: body → vault → env
+      let apiKey: string | undefined = body['apiKey'];
+      if (!apiKey) {
+        const envKey = process.env[`${provider.toUpperCase()}_API_KEY`];
+        if (envKey) {
+          apiKey = envKey;
+        } else {
+          try {
+            apiKey = deps.vault.getDecrypted(provider, 'default');
+          } catch {
+            // vault doesn't have this credential
+          }
+        }
+      }
+
+      if (!apiKey) {
+        return c.json(
+          {
+            error: `No API key found for provider: ${provider}. Provide apiKey in body, set ${provider.toUpperCase()}_API_KEY env var, or store in vault.`,
+            code: 'MISSING_CREDENTIALS',
+          },
+          400,
+        );
+      }
+
+      const matchRegex = body['matchRegex'] ?? undefined;
+      const autoSyncIntervalMs = body['autoSyncIntervalMs'] ?? 24 * 60 * 60 * 1000;
+
+      const syncManager = new ModelSyncManager(deps.db);
+      const result = await syncManager.syncProvider({
+        provider,
+        baseUrl,
+        apiKey,
+        matchRegex,
+        autoSyncIntervalMs,
+      });
+
+      return c.json({
+        ok: true,
+        provider: result.provider,
+        synced: result.modelsFound.length,
+        models: result.modelsFound,
+        added: result.modelsAdded,
+        removed: result.modelsRemoved,
+        timestamp: result.timestamp,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── GET /v1/admin/models/sync/history ───────────────────
+
+  app.get('/v1/admin/models/sync/history', (c) => {
+    try {
+      if (!deps.db) {
+        return c.json({ error: 'Database not configured', code: 'NOT_CONFIGURED' }, 500);
+      }
+
+      const provider = c.req.query('provider') ?? undefined;
+      const limitStr = c.req.query('limit');
+      const limit = limitStr ? parseInt(limitStr, 10) : 100;
+
+      const syncManager = new ModelSyncManager(deps.db);
+      const history = syncManager.getSyncHistory(
+        provider && isProviderType(provider) ? provider : undefined,
+        isNaN(limit) ? 100 : Math.max(1, limit),
+      );
+
+      return c.json({
+        history: history.map((h) => ({
+          id: h.id,
+          provider: h.provider,
+          syncedAt: h.syncedAt,
+          modelsFound: h.modelsFound,
+          modelsAdded: h.modelsAdded,
+          modelsRemoved: h.modelsRemoved,
+          error: h.error,
+        })),
+        count: history.length,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -24,6 +24,9 @@ describe('SecurityProfileSchema', () => {
       rateLimit: { max: 100, windowMs: 900_000 },
     });
     assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.sandbox, false, 'default sandbox should be false');
+    }
   });
 
   it('accepts a valid profile with null rate limit', () => {
@@ -33,6 +36,22 @@ describe('SecurityProfileSchema', () => {
       rateLimit: null,
     });
     assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.sandbox, false, 'default sandbox should be false');
+    }
+  });
+
+  it('accepts a profile with sandbox true', () => {
+    const result = SecurityProfileSchema.safeParse({
+      level: 'restricted',
+      allowedCategories: ['read'],
+      rateLimit: null,
+      sandbox: true,
+    });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.sandbox, true);
+    }
   });
 
   it('rejects unknown trust level', () => {
@@ -104,9 +123,9 @@ describe('ToolCategorySchema', () => {
 // ── TOOL_CATEGORIES map ────────────────────────────────────
 
 describe('TOOL_CATEGORIES', () => {
-  it('has exactly 18 tools mapped', () => {
+  it('has exactly 23 tools mapped', () => {
     const count = Object.keys(TOOL_CATEGORIES).length;
-    assert.equal(count, 18, `Expected 18 tools, got ${count}`);
+    assert.equal(count, 23, `Expected 23 tools, got ${count}`);
   });
 
   it('maps every tool to a valid category', () => {
@@ -123,6 +142,7 @@ describe('TOOL_CATEGORIES', () => {
     const expectedTools = [
       'llm_generate',
       'llm_models',
+      'local_llm_generate',
       'vault_store',
       'vault_delete',
       'vault_store_file',
@@ -132,10 +152,14 @@ describe('TOOL_CATEGORIES', () => {
       'list_groups',
       'create_group',
       'delete_group',
+      'approval_approve',
+      'approval_deny',
       'circuit_breaker_stats',
       'usage_summary',
       'usage_query',
       'code_search',
+      'approval_list',
+      'discover_models',
       'configure_circuit_breaker',
       'index_codebase',
       'shared_state',
@@ -158,28 +182,31 @@ describe('PROFILES', () => {
     assert.ok('open' in PROFILES);
   });
 
-  it('local-dev allows all categories with no rate limit', () => {
+  it('local-dev allows all categories with no rate limit and sandbox false', () => {
     const p = PROFILES['local-dev'];
     assert.deepEqual(
       [...p.allowedCategories].sort(),
       ['admin', 'destructive', 'generate', 'read'],
     );
     assert.equal(p.rateLimit, null);
+    assert.equal(p.sandbox, false);
   });
 
-  it('restricted allows read + generate with rate limit', () => {
+  it('restricted allows read + generate with rate limit and sandbox false', () => {
     const p = PROFILES['restricted'];
     assert.deepEqual([...p.allowedCategories].sort(), ['generate', 'read']);
     assert.notEqual(p.rateLimit, null);
     assert.equal(p.rateLimit!.max, 100);
     assert.equal(p.rateLimit!.windowMs, 15 * 60 * 1000);
+    assert.equal(p.sandbox, false);
   });
 
-  it('open allows only generate with stricter rate limit', () => {
+  it('open allows only generate with stricter rate limit and sandbox false', () => {
     const p = PROFILES['open'];
     assert.deepEqual([...p.allowedCategories], ['generate']);
     assert.notEqual(p.rateLimit, null);
     assert.equal(p.rateLimit!.max, 10);
     assert.equal(p.rateLimit!.windowMs, 15 * 60 * 1000);
+    assert.equal(p.sandbox, false);
   });
 });

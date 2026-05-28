@@ -1,0 +1,117 @@
+{
+  "enabled": false,
+  "endpoints": [
+    {
+      "id": "anthropic-claude-3.7-sonnet",
+      "providerId": "anthropic",
+      "model": "claude-3-7-sonnet-latest",
+      "costTier": "standard",
+      "capabilities": [
+        "chat",
+        "completion",
+        "code",
+        "analysis",
+        "reasoning"
+      ],
+      "maxTokens": 128000
+    },
+    {
+      "id": "openai-gpt-4.1",
+      "providerId": "openai",
+      "model": "gpt-4.1",
+      "costTier": "expensive",
+      "capabilities": [
+        "chat",
+        "completion",
+        "code",
+        "analysis",
+        "reasoning"
+      ],
+      "maxTokens": 128000
+    },
+    {
+      "id": "openai-gpt-4.1-mini",
+      "providerId": "openai",
+      "model": "gpt-4.1-mini",
+      "costTier": "standard",
+      "capabilities": [
+        "chat",
+        "completion",
+        "code"
+      ],
+      "maxTokens": 128000
+    },
+    {
+      "id": "opencode-cli-default",
+      "providerId": "opencode-cli",
+      "model": "opencode-cli",
+      "costTier": "free",
+      "capabilities": [
+        "chat",
+        "completion",
+        "code"
+      ],
+      "maxTokens": 8192
+    }
+  ],
+  "rules": [
+    {
+      "id": "rule-code-generation",
+      "taskType": "code",
+      "preferredEndpoints": [
+        "anthropic-claude-3.7-sonnet",
+        "openai-gpt-4.1"
+      ],
+      "maxCostTier": "expensive",
+      "minQuality": "high",
+      "allowFallback": true
+    },
+    {
+      "id": "rule-analysis",
+      "taskType": "analysis",
+      "preferredEndpoints": [
+        "anthropic-claude-3.7-sonnet",
+        "openai-gpt-4.1"
+      ],
+      "maxCostTier": "expensive",
+      "minQuality": "high",
+      "allowFallback": true
+    },
+    {
+      "id": "rule-chat",
+      "taskType": "chat",
+      "preferredEndpoints": [
+        "openai-gpt-4.1-mini",
+        "opencode-cli-default"
+      ],
+      "maxCostTier": "standard",
+      "minQuality": "medium",
+      "allowFallback": true
+    },
+    {
+      "id": "rule-reasoning",
+      "taskType": "reasoning",
+      "preferredEndpoints": [
+        "openai-gpt-4.1",
+        "anthropic-claude-3.7-sonnet"
+      ],
+      "maxCostTier": "expensive",
+      "minQuality": "critical",
+      "allowFallback": true
+    },
+    {
+      "id": "rule-default",
+      "taskType": "*",
+      "preferredEndpoints": [
+        "opencode-cli-default",
+        "openai-gpt-4.1-mini"
+      ],
+      "maxCostTier": "standard",
+      "minQuality": "low",
+      "allowFallback": true
+    }
+  ],
+  "defaultEndpoint": "opencode-cli-default",
+  "qualityThreshold": 0.7,
+  "qualityWindowSize": 50
+}

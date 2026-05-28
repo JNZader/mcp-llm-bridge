@@ -35,6 +35,12 @@ import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
 import { discoverModels } from '../model-discovery/discovery.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
+import { McpDefinitionAdapter } from '../mcp-builder/adapter.js';
+import { loadPlugins } from '../mcp-builder/loader.js';
+import { PageIndexTools, PAGEINDEX_TOOL_DEFINITIONS } from '../pageindex/tools.js';
+
+/** Adapter for dynamic MCP tools loaded from plugin directory. */
+export let dynamicToolAdapter: McpDefinitionAdapter | undefined;
 
 /**
  * Check if output compression is enabled for MCP tool responses.
@@ -400,6 +406,12 @@ export const TOOLS = [
           type: 'boolean',
           description: 'Follow imports to find related code chunks (default: false)',
         },
+        mode: {
+          type: 'string',
+          enum: ['keyword', 'vector', 'hybrid'],
+          default: 'keyword',
+          description: 'Search strategy: keyword (exact/prefix/fuzzy), vector (semantic similarity), or hybrid (RRF fusion of all)',
+        },
       },
       required: ['query'],
     },
@@ -551,6 +563,7 @@ export const TOOLS = [
       },
     },
   },
+  ...PAGEINDEX_TOOL_DEFINITIONS,
 ] as const;
 
 /**
@@ -597,6 +610,8 @@ async function _handleToolCall(
   stateManager?: StateManager | null,
   approvalStore?: ApprovalStore | null,
   securityProfile?: TrustLevel,
+  enforcer?: ProfileEnforcer,
+  pageIndexTools?: PageIndexTools,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   try {
     // ── Approval flow gate for destructive tools ────────────
@@ -870,15 +885,28 @@ async function _handleToolCall(
             isError: true,
           };
         }
-        const results = codeSearch.search({
-          query: searchQuery,
-          scope: (args['scope'] as string | undefined) ?? process.cwd(),
-          limit: args['limit'] as number | undefined,
-          followImports: args['followImports'] as boolean | undefined,
-        });
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ results, count: results.length }) }],
-        };
+        const mode = (args['mode'] as 'keyword' | 'vector' | 'hybrid' | undefined) ?? 'keyword';
+        try {
+          const results = await codeSearch.search({
+            query: searchQuery,
+            scope: (args['scope'] as string | undefined) ?? process.cwd(),
+            limit: args['limit'] as number | undefined,
+            followImports: args['followImports'] as boolean | undefined,
+            mode,
+          });
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ results, count: results.length }) }],
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (mode === 'vector' || mode === 'hybrid') {
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ error: `Embedder failed in ${mode} mode: ${message}`, results: [] }) }],
+              isError: true,
+            };
+          }
+          throw error;
+        }
       }
 
       case 'index_codebase': {
@@ -889,7 +917,7 @@ async function _handleToolCall(
           };
         }
         const rootDir = (args['rootDir'] as string | undefined) ?? process.cwd();
-        const chunks = codeSearch.reindex(rootDir);
+        const chunks = await codeSearch.reindex(rootDir);
         return {
           content: [{ type: 'text', text: JSON.stringify({ indexed: true, rootDir, chunks }) }],
         };
@@ -1182,13 +1210,63 @@ async function _handleToolCall(
         }
       }
 
-      default:
+      case 'conversation_paginate':
+      case 'conversation_get_page':
+      case 'conversation_context':
+      case 'conversation_navigate':
+      case 'conversation_info':
+      case 'conversation_find_relevant':
+      case 'conversation_check_compaction': {
+        if (!pageIndexTools) {
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ error: 'PageIndex not available' }) }],
+            isError: true,
+          };
+        }
+        const result = await pageIndexTools.handleToolCall(toolName, args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result) }],
+          isError: !result.success,
+        };
+      }
+
+      default: {
+        if (enforcer && !enforcer.authorize(toolName)) {
+          return {
+            content: [
+              { type: 'text', text: JSON.stringify({ error: `Tool '${toolName}' denied by security profile` }) },
+            ],
+            isError: true,
+          };
+        }
+
+        const dynamicTool = dynamicToolAdapter?.getTool(toolName);
+        if (dynamicTool) {
+          try {
+            const result = await dynamicTool.handler(args);
+            const content = result.content.map((item) => {
+              if (item.type === 'text') return item;
+              return { type: 'text' as const, text: `[image: ${item.mimeType}]` };
+            });
+            return {
+              content,
+              ...(result.isError ? { isError: true } : {}),
+            };
+          } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            return {
+              content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
+              isError: true,
+            };
+          }
+        }
         return {
           content: [
             { type: 'text', text: JSON.stringify({ error: `Unknown tool: ${toolName}` }) },
           ],
           isError: true,
         };
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1214,6 +1292,8 @@ export async function handleToolCall(
   stateManager?: StateManager | null,
   approvalStore?: ApprovalStore | null,
   securityProfile?: TrustLevel,
+  enforcer?: ProfileEnforcer,
+  pageIndexTools?: PageIndexTools,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const result = await _handleToolCall(
     toolName,
@@ -1227,6 +1307,8 @@ export async function handleToolCall(
     stateManager,
     approvalStore,
     securityProfile,
+    enforcer,
+    pageIndexTools,
   );
   return compressToolResult(result);
 }
@@ -1237,7 +1319,7 @@ export async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore): Promise<Server> {
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore, pageIndexTools?: PageIndexTools): Promise<Server> {
   const server = new Server(
     {
       name: 'mcp-llm-bridge',
@@ -1250,12 +1332,15 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
 
   // Default handlers (no security filtering)
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...TOOLS],
+    tools: [
+      ...TOOLS,
+      ...(dynamicToolAdapter?.getToolListEntries() ?? []),
+    ],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile);
+    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile, enforcer, pageIndexTools);
   });
 
   // Apply security profile enforcement — overwrites handlers above with
@@ -1269,14 +1354,38 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
       server,
       TOOLS,
       (name, args) =>
-        handleToolCall(name, args, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile),
+        handleToolCall(name, args, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile, enforcer, pageIndexTools),
     );
   }
 
-  // Initialize PageIndex for conversation pagination
-  // Prevents compaction loops with small context models (4K-8K)
-  const { wrapWithPageIndex } = await import('../pageindex/mcp-integration.js');
-  wrapWithPageIndex(server, vault?.getDb?.());
+  // Dynamic plugin loading
+  const dynamicServersEnabled = process.env.MCP_DYNAMIC_SERVERS === 'true';
+  const pluginsDir = process.env.MCP_SERVERS_DIR || './mcp-servers';
+
+  if (dynamicServersEnabled) {
+    dynamicToolAdapter = new McpDefinitionAdapter();
+    loadPlugins(pluginsDir).then((plugins) => {
+      for (const plugin of plugins) {
+        dynamicToolAdapter!.register(server, plugin.definition);
+        console.log(`[MCP] Loaded dynamic server: ${plugin.name} (${plugin.definition.tools.length} tools)`);
+      }
+
+      // Register dynamic tools with enforcer and update ListTools handler
+      if (enforcer && dynamicToolAdapter) {
+        for (const name of dynamicToolAdapter.getToolNames()) {
+          enforcer.registerDynamicTool(name, 'read');
+        }
+        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+          tools: enforcer.filterTools([
+            ...TOOLS,
+            ...(dynamicToolAdapter?.getToolListEntries() ?? []),
+          ]),
+        }));
+      }
+    }).catch((e) => {
+      console.error('[MCP] Failed to load dynamic servers:', e);
+    });
+  }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

@@ -51,6 +51,8 @@ export interface SearchOptions {
   limit?: number;
   /** Follow imports to find related chunks (default: false). */
   followImports?: boolean;
+  /** Search mode: keyword (default), vector, or hybrid. */
+  mode?: 'keyword' | 'vector' | 'hybrid';
 }
 
 /** Options for indexing a codebase. */

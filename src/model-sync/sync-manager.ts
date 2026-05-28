@@ -20,7 +20,7 @@ export interface Database {
 }
 
 export interface Statement {
-  run(...params: unknown[]): { lastInsertRowid: number };
+  run(...params: unknown[]): { lastInsertRowid: number | bigint };
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown | undefined;
 }

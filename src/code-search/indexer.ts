@@ -6,6 +6,9 @@
  */
 
 import type { CodeChunk, SearchResult } from './types.js';
+import { BM25Index } from './bm25-index.js';
+import { VectorIndex } from './vector-index.js';
+import type { Embedder } from './embedder.js';
 
 /** Tokenize text into searchable tokens. */
 function tokenize(text: string): string[] {
@@ -192,5 +195,92 @@ export class SearchIndex {
   /** Get all chunks for a specific file. */
   getChunksForFile(filePath: string): CodeChunk[] {
     return this.chunks.filter((c) => c.filePath === filePath);
+  }
+}
+
+/**
+ * Multi-index builder that populates keyword, BM25, and vector indices
+ * from the same set of code chunks.
+ *
+ * Keyword index is always built. BM25 and vector indices are built when
+ * the corresponding components are available (vector requires an Embedder).
+ */
+export class HybridIndex {
+  /** Classic keyword + fuzzy index. Always present. */
+  keywordIndex = new SearchIndex();
+  /** BM25 keyword index (requires minisearch). */
+  bm25Index = new BM25Index();
+  /** Dense vector index for semantic search. */
+  vectorIndex = new VectorIndex();
+
+  constructor(private embedder?: Embedder) {}
+
+  /** Number of chunks in the keyword index. */
+  get size(): number {
+    return this.keywordIndex.size;
+  }
+
+  /** Sizes of each sub-index. */
+  get indexSizes(): { keyword: number; bm25: number; vector: number } {
+    return {
+      keyword: this.keywordIndex.size,
+      bm25: this.bm25Index.size(),
+      vector: this.vectorIndex.size(),
+    };
+  }
+
+  /** Whether vector (semantic) indexing is enabled. */
+  get hasVectorIndex(): boolean {
+    return this.vectorIndex.size() > 0;
+  }
+
+  /** Clear all sub-indices. */
+  clear(): void {
+    this.keywordIndex.clear();
+    this.bm25Index.clear();
+    this.vectorIndex.clear();
+  }
+
+  /**
+   * Add chunks to all enabled indices.
+   *
+   * - Keyword index: always populated (synchronous).
+   * - BM25 index: populated if minisearch is available (synchronous).
+   * - Vector index: populated if an embedder was provided (asynchronous).
+   */
+  async addChunks(chunks: CodeChunk[]): Promise<void> {
+    this.keywordIndex.addChunks(chunks);
+
+    for (const chunk of chunks) {
+      this.bm25Index.add({
+        id: chunk.id,
+        name: chunk.name,
+        content: chunk.content,
+      });
+
+      if (this.embedder) {
+        const vector = await this.embedder.embed(chunk.content);
+        this.vectorIndex.add(chunk.id, vector);
+      }
+    }
+  }
+
+  /**
+   * Search the keyword index.
+   *
+   * Thin wrapper around `keywordIndex.search()` for backward compatibility.
+   */
+  search(query: string, limit: number): SearchResult[] {
+    return this.keywordIndex.search(query, limit);
+  }
+
+  /** Get a chunk by its ID from the keyword index. */
+  getChunk(id: string): CodeChunk | undefined {
+    return this.keywordIndex.getChunk(id);
+  }
+
+  /** Get all chunks for a specific file from the keyword index. */
+  getChunksForFile(filePath: string): CodeChunk[] {
+    return this.keywordIndex.getChunksForFile(filePath);
   }
 }

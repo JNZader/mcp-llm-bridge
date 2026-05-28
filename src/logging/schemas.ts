@@ -45,12 +45,12 @@ export const LogEntryPublicSchema = LogEntrySchema.pick({
  * Schema for LogQuery parameters
  */
 export const LogQuerySchema = z.object({
-  from: z.number().int().positive().optional(),
-  to: z.number().int().positive().optional(),
+  from: z.coerce.number().int().positive().optional(),
+  to: z.coerce.number().int().positive().optional(),
   provider: z.string().min(1).max(100).optional(),
   model: z.string().min(1).max(200).optional(),
-  limit: z.number().int().min(1).max(1000).default(100),
-  offset: z.number().int().nonnegative().default(0),
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
+  offset: z.coerce.number().int().nonnegative().default(0),
 }).refine(
   (data) => {
     if (data.from && data.to) {

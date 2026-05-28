@@ -155,3 +155,29 @@ export function createBalancer(strategy: BalancerStrategy): Balancer {
       return new WeightedBalancer();
   }
 }
+
+// ── Re-export standalone balancer module ───────────────────
+// src/balancer/ provides the same strategies with a richer API
+// (ProviderCandidate, config, mode switching). Re-exporting it
+// here lets consumers import everything from one entry point.
+export {
+  LoadBalancer,
+  createBalancerFromString,
+  getAllLoadBalanceModes,
+  LOAD_BALANCE_MODE,
+  DEFAULT_LOAD_BALANCE_MODE,
+  DEFAULT_BALANCER_CONFIG,
+  type LoadBalanceMode,
+  type ProviderCandidate,
+  type BalancerConfig,
+  type BalancerSelection,
+  isLoadBalanceMode,
+  isProviderCandidate,
+  isBalancerConfig,
+  RoundRobinStrategy,
+  RandomStrategy,
+  FailoverStrategy,
+  WeightedStrategy,
+  createStrategy,
+  getStrategyDescription,
+} from '../balancer/index.js';

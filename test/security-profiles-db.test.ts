@@ -38,11 +38,12 @@ function insertProfile(
   categories: string[],
   rateLimitMax: number | null = null,
   rateLimitWindowMs: number | null = null,
+  sandbox: number = 0,
 ): void {
   db.prepare(`
-    INSERT INTO security_profiles (project, trust_level, allowed_categories, rate_limit_max, rate_limit_window_ms)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(project, trustLevel, JSON.stringify(categories), rateLimitMax, rateLimitWindowMs);
+    INSERT INTO security_profiles (project, trust_level, allowed_categories, rate_limit_max, rate_limit_window_ms, sandbox)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(project, trustLevel, JSON.stringify(categories), rateLimitMax, rateLimitWindowMs, sandbox);
 }
 
 /** Minimal tool definition. */
@@ -76,6 +77,7 @@ describe('createDbProfileResolver', () => {
     assert.equal(profile.level, 'restricted');
     assert.deepEqual([...profile.allowedCategories].sort(), ['generate', 'read']);
     assert.deepEqual(profile.rateLimit, { max: 50, windowMs: 60_000 });
+    assert.equal(profile.sandbox, false);
   });
 
   it('returns null when no DB entry exists (fallback to static)', () => {
@@ -118,6 +120,15 @@ describe('createDbProfileResolver', () => {
     const profile = resolver('weird-project');
     assert.ok(profile);
     assert.equal(profile.level, 'restricted');
+  });
+
+  it('reads sandbox flag from DB row', () => {
+    insertProfile(db, 'sandboxed-app', 'open', ['generate'], null, null, 1);
+    const resolver = createDbProfileResolver(db);
+
+    const profile = resolver('sandboxed-app');
+    assert.ok(profile);
+    assert.equal(profile.sandbox, true);
   });
 });
 
@@ -235,6 +246,7 @@ describe('Admin Profile CRUD Routes', () => {
     assert.equal(body.ok, true);
     assert.equal(body.project, 'my-frontend');
     assert.deepEqual(body.allowedCategories, ['read', 'generate']);
+    assert.equal(body.sandbox, false);
   });
 
   it('POST /v1/admin/profiles upserts on conflict', async () => {
@@ -255,16 +267,40 @@ describe('Admin Profile CRUD Routes', () => {
       body: JSON.stringify({
         project: 'my-frontend',
         allowedCategories: ['read', 'generate', 'admin'],
+        sandbox: true,
       }),
     });
 
     assert.equal(res.status, 201);
     const body = await res.json();
     assert.deepEqual(body.allowedCategories, ['read', 'generate', 'admin']);
+    assert.equal(body.sandbox, true);
 
     // Verify only one row in DB
     const count = db.prepare('SELECT COUNT(*) as cnt FROM security_profiles WHERE project = ?').get('my-frontend') as { cnt: number };
     assert.equal(count.cnt, 1);
+  });
+
+  it('POST /v1/admin/profiles accepts sandbox true', async () => {
+    const res = await app.request('/v1/admin/profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project: 'sandboxed-project',
+        trustLevel: 'open',
+        allowedCategories: ['generate'],
+        sandbox: true,
+      }),
+    });
+
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.sandbox, true);
+
+    // Verify in DB
+    const row = db.prepare('SELECT sandbox FROM security_profiles WHERE project = ?').get('sandboxed-project') as { sandbox: number };
+    assert.equal(row.sandbox, 1);
   });
 
   it('POST /v1/admin/profiles rejects invalid payload', async () => {
@@ -298,7 +334,7 @@ describe('Admin Profile CRUD Routes', () => {
   it('GET /v1/admin/profiles lists all profiles', async () => {
     // Insert two profiles
     insertProfile(db, 'alpha', 'restricted', ['read', 'generate']);
-    insertProfile(db, 'beta', 'open', ['generate']);
+    insertProfile(db, 'beta', 'open', ['generate'], null, null, 1);
 
     const res = await app.request('/v1/admin/profiles');
     assert.equal(res.status, 200);
@@ -308,6 +344,8 @@ describe('Admin Profile CRUD Routes', () => {
     assert.equal(body.profiles[0].project, 'alpha');
     assert.equal(body.profiles[1].project, 'beta');
     assert.deepEqual(body.profiles[0].allowedCategories, ['read', 'generate']);
+    assert.equal(body.profiles[0].sandbox, false);
+    assert.equal(body.profiles[1].sandbox, true);
   });
 
   it('GET /v1/admin/profiles returns empty array when no profiles', async () => {

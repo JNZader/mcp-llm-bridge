@@ -28,6 +28,7 @@ import {
   getCircuitBreakerRegistry,
   CircuitState,
 } from '../src/core/circuit-breaker.js';
+import { migrate } from '../src/db/migrate.js';
 
 // ── Test infrastructure ──────────────────────────────────
 
@@ -58,7 +59,19 @@ let server: http.Server;
 let port = 0;
 
 before(async () => {
-  server = startHttpServer(router, vault, config, groupStore, costTracker) as unknown as http.Server;
+  // Run migrations so model-sync tables exist
+  await migrate({ dbPath });
+
+  server = startHttpServer(
+    router,
+    vault,
+    config,
+    groupStore,
+    costTracker,
+    undefined,
+    undefined,
+    vault.getDb(),
+  ) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();
@@ -317,6 +330,146 @@ describe('POST /v1/admin/flush-usage', () => {
     assert.equal(data.ok, true);
     assert.ok(data.flushed > 0, 'should have flushed at least one record');
     assert.equal(data.remainingBuffer, 0);
+  });
+});
+
+// ── POST /v1/admin/models/sync ────────────────────────
+
+function mockFetch(response: unknown): typeof fetch {
+  return (async () =>
+    Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(response),
+    } as Response)) as unknown as typeof fetch;
+}
+
+describe('POST /v1/admin/models/sync', () => {
+  it('syncs models for a provider using vault credentials', async () => {
+    // Store a credential in the vault for openai
+    vault.store('openai', 'default', 'sk-test-openai-key');
+
+    // Mock the upstream API response
+    const originalFetch = global.fetch;
+    global.fetch = mockFetch({
+      data: [
+        { id: 'gpt-4o', name: 'GPT-4o' },
+        { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
+      ],
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await request('POST', '/v1/admin/models/sync', {
+        provider: 'openai',
+      });
+
+      assert.equal(res.status, 200);
+
+      const data = res.data as {
+        ok: boolean;
+        provider: string;
+        synced: number;
+        models: Array<{ id: string; name: string }>;
+        added: Array<{ id: string; name: string }>;
+        removed: string[];
+      };
+
+      assert.equal(data.ok, true);
+      assert.equal(data.provider, 'openai');
+      assert.equal(data.synced, 2);
+      assert.ok(Array.isArray(data.models));
+      assert.ok(data.models.some((m) => m.id === 'gpt-4o'));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('syncs models with explicit apiKey in body', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = mockFetch({
+      models: [{ id: 'claude-3-opus' }],
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await request('POST', '/v1/admin/models/sync', {
+        provider: 'anthropic',
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'sk-test-anthropic-key',
+      });
+
+      assert.equal(res.status, 200);
+
+      const data = res.data as {
+        ok: boolean;
+        provider: string;
+        synced: number;
+      };
+
+      assert.equal(data.ok, true);
+      assert.equal(data.provider, 'anthropic');
+      assert.equal(data.synced, 1);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('returns 400 for invalid provider', async () => {
+    const res = await request('POST', '/v1/admin/models/sync', {
+      provider: 'invalid-provider',
+    });
+
+    assert.equal(res.status, 400);
+
+    const data = res.data as { error: string; code: string };
+    assert.equal(data.code, 'VALIDATION_ERROR');
+  });
+
+  it('returns 400 when credentials are missing', async () => {
+    const res = await request('POST', '/v1/admin/models/sync', {
+      provider: 'groq',
+    });
+
+    assert.equal(res.status, 400);
+
+    const data = res.data as { error: string; code: string };
+    assert.equal(data.code, 'MISSING_CREDENTIALS');
+  });
+});
+
+// ── GET /v1/admin/models/sync/history ───────────────────
+
+describe('GET /v1/admin/models/sync/history', () => {
+  it('returns sync history', async () => {
+    // First sync something to create history
+    vault.store('openai', 'default', 'sk-test-openai-key');
+
+    const originalFetch = global.fetch;
+    global.fetch = mockFetch({
+      data: [{ id: 'gpt-4o' }],
+    }) as unknown as typeof fetch;
+
+    try {
+      await request('POST', '/v1/admin/models/sync', {
+        provider: 'openai',
+      });
+
+      const res = await request('GET', '/v1/admin/models/sync/history?provider=openai');
+      assert.equal(res.status, 200);
+
+      const data = res.data as {
+        history: Array<{
+          id: number;
+          provider: string;
+          modelsFound: number;
+        }>;
+        count: number;
+      };
+
+      assert.ok(Array.isArray(data.history));
+      assert.ok(data.count > 0);
+      assert.equal(data.history[0]!.provider, 'openai');
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
 

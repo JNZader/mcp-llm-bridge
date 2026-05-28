@@ -40,6 +40,11 @@ export class ModelRouter {
     );
   }
 
+  /** Whether model routing is enabled. */
+  get enabled(): boolean {
+    return this.config.enabled;
+  }
+
   /**
    * Route a classified task to the optimal model endpoint.
    *

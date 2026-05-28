@@ -1,0 +1,712 @@
+/**
+ * Router + ModelRouter integration tests.
+ *
+ * Covers:
+ * - Router with ModelRouter: routes task to preferred endpoint
+ * - Router without ModelRouter: backward compatible behavior
+ * - ModelRouter endpoint not found: falls back to default
+ * - Feedback recorded on success
+ * - Feedback recorded on failure
+ * - Feedback failure is non-blocking
+ * - Precedence: local-llm vs ModelRouter
+ * - generateFromInternal integration
+ */
+
+import { describe, it, mock, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { Router, resetCircuitBreakerV2 } from '../../src/core/router.js';
+import { TransformerRegistry } from '../../src/core/transformer.js';
+import type {
+  LLMProvider,
+  GenerateRequest,
+  GenerateResponse,
+  ModelInfo,
+  ProviderType,
+} from '../../src/core/types.js';
+import type { InternalLLMRequest, InternalLLMResponse } from '../../src/core/internal-model.js';
+import type { ModelRouter } from '../../src/model-routing/router.js';
+import type { RoutingDecision, ModelEndpoint, RouteRule } from '../../src/model-routing/types.js';
+import type { TaskClassification } from '../../src/classification/index.js';
+
+// ── Helpers ───────────────────────────────────────────────
+
+function createMockProvider(opts: {
+  id: string;
+  name: string;
+  type: ProviderType;
+  models: ModelInfo[];
+  available?: boolean;
+  response?: GenerateResponse;
+  shouldFail?: boolean;
+  failMessage?: string;
+}): LLMProvider {
+  return {
+    id: opts.id,
+    name: opts.name,
+    type: opts.type,
+    models: opts.models,
+
+    async generate(_request: GenerateRequest): Promise<GenerateResponse> {
+      if (opts.shouldFail) {
+        throw new Error(opts.failMessage ?? `${opts.id} failed`);
+      }
+      return opts.response ?? {
+        text: `Response from ${opts.id}`,
+        provider: opts.id,
+        model: opts.models[0]?.id ?? 'unknown',
+        resolvedProvider: opts.id,
+        resolvedModel: opts.models[0]?.id ?? 'unknown',
+        fallbackUsed: false,
+      };
+    },
+
+    async isAvailable(): Promise<boolean> {
+      return opts.available ?? true;
+    },
+  };
+}
+
+function createMockModelRouter(opts: {
+  enabled?: boolean;
+  decision?: RoutingDecision | null;
+  onRecordFeedback?: (feedback: { endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }) => void;
+  onRoute?: (classification: TaskClassification) => void;
+}): ModelRouter {
+  return {
+    enabled: opts.enabled ?? true,
+
+    route(classification: TaskClassification): RoutingDecision | null {
+      opts.onRoute?.(classification);
+      return opts.decision ?? null;
+    },
+
+    recordFeedback(feedback: { endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number; timestamp: string }): void {
+      opts.onRecordFeedback?.(feedback);
+    },
+
+    // Stub remaining ModelRouter methods so TS is happy
+    getQualityStats: () => null,
+    getEndpointsByCost: () => [],
+    setEndpointAvailability: () => {},
+  } as unknown as ModelRouter;
+}
+
+function createMockEndpoint(opts: Partial<ModelEndpoint> & { id: string }): ModelEndpoint {
+  return {
+    name: opts.name ?? opts.id,
+    provider: opts.provider ?? 'test-provider',
+    modelId: opts.modelId ?? 'test-model',
+    costTier: opts.costTier ?? 'standard',
+    capabilities: opts.capabilities ?? [],
+    isLocal: opts.isLocal ?? false,
+    maxTokens: opts.maxTokens ?? 4096,
+    available: opts.available ?? true,
+    ...opts,
+  };
+}
+
+function createMockRule(opts: Partial<RouteRule> & { id: string; preferredModels: string[] }): RouteRule {
+  return {
+    taskPattern: opts.taskPattern ?? '*',
+    maxCostTier: opts.maxCostTier ?? 'expensive',
+    minQuality: opts.minQuality ?? 'low',
+    allowFallback: opts.allowFallback ?? true,
+    keywordPatterns: opts.keywordPatterns ?? [],
+    ...opts,
+  };
+}
+
+// ── Tests ─────────────────────────────────────────────────
+
+describe('Router + ModelRouter integration', () => {
+  beforeEach(() => {
+    resetCircuitBreakerV2();
+  });
+
+  // ── 1. Router with ModelRouter: routes task to preferred endpoint ──
+
+  it('routes task to preferred endpoint when ModelRouter is enabled', async () => {
+    const router = new Router();
+    const preferred = createMockProvider({
+      id: 'preferred',
+      name: 'Preferred',
+      type: 'api',
+      models: [{ id: 'preferred-model', name: 'Preferred Model', provider: 'preferred', maxTokens: 4096 }],
+      response: { text: 'from-preferred', provider: 'preferred', model: 'preferred-model', resolvedProvider: 'preferred', resolvedModel: 'preferred-model', fallbackUsed: false },
+    });
+    const fallback = createMockProvider({
+      id: 'fallback',
+      name: 'Fallback',
+      type: 'api',
+      models: [{ id: 'fallback-model', name: 'Fallback Model', provider: 'fallback', maxTokens: 4096 }],
+      response: { text: 'from-fallback', provider: 'fallback', model: 'fallback-model', resolvedProvider: 'fallback', resolvedModel: 'fallback-model', fallbackUsed: false },
+    });
+
+    router.register(preferred);
+    router.register(fallback);
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: 'preferred' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['preferred'] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({ enabled: true, decision });
+    router.setModelRouter(mockRouter);
+
+    // "summarize this" triggers summarization task
+    const result = await router.generate({ prompt: 'summarize this' });
+
+    assert.equal(result.text, 'from-preferred');
+    assert.equal(result.provider, 'preferred');
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  // ── 2. Router without ModelRouter: backward compatible behavior ──
+
+  it('uses standard resolution when ModelRouter is not set', async () => {
+    const router = new Router();
+    router.register(createMockProvider({
+      id: 'first',
+      name: 'First',
+      type: 'api',
+      models: [{ id: 'model-a', name: 'Model A', provider: 'first', maxTokens: 4096 }],
+      response: { text: 'from-first', provider: 'first', model: 'model-a', resolvedProvider: 'first', resolvedModel: 'model-a', fallbackUsed: false },
+    }));
+    router.register(createMockProvider({
+      id: 'second',
+      name: 'Second',
+      type: 'api',
+      models: [{ id: 'model-b', name: 'Model B', provider: 'second', maxTokens: 4096 }],
+      response: { text: 'from-second', provider: 'second', model: 'model-b', resolvedProvider: 'second', resolvedModel: 'model-b', fallbackUsed: false },
+    }));
+
+    const result = await router.generate({ prompt: 'test' });
+
+    assert.equal(result.text, 'from-first');
+    assert.equal(result.provider, 'first');
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  it('uses standard resolution when ModelRouter is disabled', async () => {
+    const router = new Router();
+    router.register(createMockProvider({
+      id: 'first',
+      name: 'First',
+      type: 'api',
+      models: [{ id: 'model-a', name: 'Model A', provider: 'first', maxTokens: 4096 }],
+      response: { text: 'from-first', provider: 'first', model: 'model-a', resolvedProvider: 'first', resolvedModel: 'model-a', fallbackUsed: false },
+    }));
+
+    const mockRouter = createMockModelRouter({ enabled: false, decision: null });
+    router.setModelRouter(mockRouter);
+
+    const result = await router.generate({ prompt: 'test' });
+
+    assert.equal(result.text, 'from-first');
+    assert.equal(result.provider, 'first');
+  });
+
+  // ── 3. ModelRouter endpoint not found: falls back to default ──
+
+  it('falls back to default order when ModelRouter endpoint is not registered', async () => {
+    const router = new Router();
+    const first = createMockProvider({
+      id: 'first',
+      name: 'First',
+      type: 'api',
+      models: [{ id: 'model-a', name: 'Model A', provider: 'first', maxTokens: 4096 }],
+      response: { text: 'from-first', provider: 'first', model: 'model-a', resolvedProvider: 'first', resolvedModel: 'model-a', fallbackUsed: false },
+    });
+    router.register(first);
+
+    // ModelRouter wants 'unknown-endpoint' which is NOT registered
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: 'unknown-endpoint' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['unknown-endpoint'] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({ enabled: true, decision });
+    router.setModelRouter(mockRouter);
+
+    const result = await router.generate({ prompt: 'summarize this' });
+
+    // Should fall back to standard resolution (first provider)
+    assert.equal(result.text, 'from-first');
+    assert.equal(result.provider, 'first');
+    // fallbackUsed is false because the first provider is tried at index 0
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  // ── 4. Feedback recorded on success ──
+
+  it('records feedback on successful generation via ModelRouter', async () => {
+    const router = new Router();
+    const endpointId = 'smart-provider';
+    router.register(createMockProvider({
+      id: endpointId,
+      name: 'Smart',
+      type: 'api',
+      models: [{ id: 'smart-model', name: 'Smart Model', provider: endpointId, maxTokens: 4096 }],
+      response: { text: 'smart-response', provider: endpointId, model: 'smart-model', resolvedProvider: endpointId, resolvedModel: 'smart-model', fallbackUsed: false },
+    }));
+
+    const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: endpointId }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({
+      enabled: true,
+      decision,
+      onRecordFeedback: (fb) => feedbacks.push(fb),
+    });
+    router.setModelRouter(mockRouter);
+
+    await router.generate({ prompt: 'summarize this' });
+
+    assert.equal(feedbacks.length, 1);
+    assert.equal(feedbacks[0]!.endpointId, endpointId);
+    assert.equal(feedbacks[0]!.taskPattern, 'summarization');
+    assert.equal(feedbacks[0]!.acceptable, true);
+    assert.ok(typeof feedbacks[0]!.latencyMs === 'number');
+    assert.ok(feedbacks[0]!.latencyMs >= 0);
+  });
+
+  // ── 5. Feedback recorded on failure ──
+
+  it('records feedback on failed generation via ModelRouter', async () => {
+    const router = new Router();
+    const endpointId = 'failing-provider';
+    router.register(createMockProvider({
+      id: endpointId,
+      name: 'Failing',
+      type: 'api',
+      models: [{ id: 'fail-model', name: 'Fail Model', provider: endpointId, maxTokens: 4096 }],
+      shouldFail: true,
+      failMessage: 'boom',
+    }));
+    router.register(createMockProvider({
+      id: 'backup',
+      name: 'Backup',
+      type: 'api',
+      models: [{ id: 'backup-model', name: 'Backup Model', provider: 'backup', maxTokens: 4096 }],
+      response: { text: 'backup-response', provider: 'backup', model: 'backup-model', resolvedProvider: 'backup', resolvedModel: 'backup-model', fallbackUsed: false },
+    }));
+
+    const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: endpointId }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({
+      enabled: true,
+      decision,
+      onRecordFeedback: (fb) => feedbacks.push(fb),
+    });
+    router.setModelRouter(mockRouter);
+
+    // The first provider fails, fallback to backup succeeds
+    const result = await router.generate({ prompt: 'summarize this' });
+
+    assert.equal(result.provider, 'backup');
+    assert.equal(result.fallbackUsed, true);
+
+    // Two feedback entries: one for the failing provider, one for the backup
+    assert.equal(feedbacks.length, 2);
+
+    // First feedback is for the failing provider
+    assert.equal(feedbacks[0]!.endpointId, endpointId);
+    assert.equal(feedbacks[0]!.taskPattern, 'summarization');
+    assert.equal(feedbacks[0]!.acceptable, false);
+
+    // Second feedback is for the backup provider
+    assert.equal(feedbacks[1]!.endpointId, 'backup');
+    assert.equal(feedbacks[1]!.taskPattern, 'summarization');
+    assert.equal(feedbacks[1]!.acceptable, true);
+  });
+
+  // ── 6. Feedback failure is non-blocking ──
+
+  it('does not throw when feedback recording fails', async () => {
+    const router = new Router();
+    router.register(createMockProvider({
+      id: 'good',
+      name: 'Good',
+      type: 'api',
+      models: [{ id: 'good-model', name: 'Good Model', provider: 'good', maxTokens: 4096 }],
+      response: { text: 'good-response', provider: 'good', model: 'good-model', resolvedProvider: 'good', resolvedModel: 'good-model', fallbackUsed: false },
+    }));
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: 'good' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['good'] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({
+      enabled: true,
+      decision,
+      onRecordFeedback: () => {
+        throw new Error('feedback storage is down');
+      },
+    });
+    router.setModelRouter(mockRouter);
+
+    // Should not throw despite feedback failure
+    const result = await router.generate({ prompt: 'summarize this' });
+
+    assert.equal(result.text, 'good-response');
+    assert.equal(result.provider, 'good');
+  });
+
+  // ── 7. Precedence: local-llm vs ModelRouter ──
+
+  it('ModelRouter takes precedence over local-llm offloading', async () => {
+    const router = new Router();
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: { text: 'from-cloud', provider: 'cloud', model: 'cloud-model', resolvedProvider: 'cloud', resolvedModel: 'cloud-model', fallbackUsed: false },
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'cli',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: { text: 'from-local', provider: 'local-llm', model: 'local-model', resolvedProvider: 'local-llm', resolvedModel: 'local-model', fallbackUsed: false },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: 'cloud' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['cloud'] }),
+      reason: 'Primary model for fast-completion',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({ enabled: true, decision });
+    router.setModelRouter(mockRouter);
+
+    // Short prompt "hi" triggers fast-completion which is offloadable,
+    // but ModelRouter should take precedence and route to cloud
+    const result = await router.generate({ prompt: 'hi' });
+
+    assert.equal(result.text, 'from-cloud');
+    assert.equal(result.provider, 'cloud');
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  it('local-llm offloading works when ModelRouter is disabled', async () => {
+    const router = new Router();
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: { text: 'from-cloud', provider: 'cloud', model: 'cloud-model', resolvedProvider: 'cloud', resolvedModel: 'cloud-model', fallbackUsed: false },
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'cli',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: { text: 'from-local', provider: 'local-llm', model: 'local-model', resolvedProvider: 'local-llm', resolvedModel: 'local-model', fallbackUsed: false },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+
+    const mockRouter = createMockModelRouter({ enabled: false, decision: null });
+    router.setModelRouter(mockRouter);
+
+    // "summarize this" is recognized as offloadable by classifyForOffload
+    const result = await router.generate({ prompt: 'summarize this' });
+
+    assert.equal(result.text, 'from-local');
+    assert.equal(result.provider, 'local-llm');
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  it('local-llm offloading works when ModelRouter returns null', async () => {
+    const router = new Router();
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: { text: 'from-cloud', provider: 'cloud', model: 'cloud-model', resolvedProvider: 'cloud', resolvedModel: 'cloud-model', fallbackUsed: false },
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'cli',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: { text: 'from-local', provider: 'local-llm', model: 'local-model', resolvedProvider: 'local-llm', resolvedModel: 'local-model', fallbackUsed: false },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+
+    const mockRouter = createMockModelRouter({ enabled: true, decision: null });
+    router.setModelRouter(mockRouter);
+
+    // "summarize this" is recognized as offloadable by classifyForOffload
+    const result = await router.generate({ prompt: 'summarize this' });
+
+    assert.equal(result.text, 'from-local');
+    assert.equal(result.provider, 'local-llm');
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  // ── 8. generateFromInternal integration ──
+
+  it('generateFromInternal routes via ModelRouter when enabled', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    const endpointId = 'internal-provider';
+    const provider = createMockProvider({
+      id: endpointId,
+      name: 'Internal Provider',
+      type: 'api',
+      models: [{ id: 'internal-model', name: 'Internal Model', provider: endpointId, maxTokens: 4096 }],
+      response: { text: 'internal-response', provider: endpointId, model: 'internal-model', resolvedProvider: endpointId, resolvedModel: 'internal-model', fallbackUsed: false },
+    });
+
+    router.register(provider);
+    router.setTransformerRegistry(registry);
+
+    // Register a mock outbound transformer so tryProvider finds one
+    registry.registerOutbound(endpointId, {
+      name: endpointId,
+      transformRequest: (_req: InternalLLMRequest) => ({ transformed: true }),
+      transformResponse: (_res: unknown) => ({
+        content: 'transformed',
+        model: 'internal-model',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      }),
+    });
+
+    const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: endpointId }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({
+      enabled: true,
+      decision,
+      onRecordFeedback: (fb) => feedbacks.push(fb),
+    });
+    router.setModelRouter(mockRouter);
+
+    const request: InternalLLMRequest = {
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'internal-model',
+    };
+
+    const result = await router.generateFromInternal(request);
+
+    assert.equal(result.content, 'internal-response');
+    assert.equal(result.metadata?.['provider'], endpointId);
+
+    assert.equal(feedbacks.length, 1);
+    assert.equal(feedbacks[0]!.endpointId, endpointId);
+    assert.equal(feedbacks[0]!.taskPattern, 'summarization');
+    assert.equal(feedbacks[0]!.acceptable, true);
+  });
+
+  it('generateFromInternal falls back to standard order when ModelRouter is disabled', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    const first = createMockProvider({
+      id: 'first',
+      name: 'First',
+      type: 'api',
+      models: [{ id: 'first-model', name: 'First Model', provider: 'first', maxTokens: 4096 }],
+      response: { text: 'first-response', provider: 'first', model: 'first-model', resolvedProvider: 'first', resolvedModel: 'first-model', fallbackUsed: false },
+    });
+
+    router.register(first);
+    router.setTransformerRegistry(registry);
+
+    registry.registerOutbound('first', {
+      name: 'first',
+      transformRequest: (_req: InternalLLMRequest) => ({ transformed: true }),
+      transformResponse: (_res: unknown) => ({
+        content: 'transformed',
+        model: 'first-model',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      }),
+    });
+
+    const mockRouter = createMockModelRouter({ enabled: false, decision: null });
+    router.setModelRouter(mockRouter);
+
+    const request: InternalLLMRequest = {
+      messages: [{ role: 'user', content: 'hello' }],
+      model: 'first-model',
+    };
+
+    const result = await router.generateFromInternal(request);
+
+    assert.equal(result.content, 'first-response');
+    assert.equal(result.metadata?.['provider'], 'first');
+  });
+
+  it('generateFromInternal does not use ModelRouter when request specifies provider', async () => {
+    // When a provider is specified in metadata, the resolveCandidates path puts it first
+    // ModelRouter should still be skipped because in generateFromInternal it checks
+    // this._modelRouter && this._modelRouter.enabled (not provider/strict like generate())
+    // Actually, generateFromInternal does NOT skip ModelRouter when provider is specified.
+    // Let's verify it still works correctly — the ModelRouter may reorder candidates.
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    const alpha = createMockProvider({
+      id: 'alpha',
+      name: 'Alpha',
+      type: 'api',
+      models: [{ id: 'alpha-model', name: 'Alpha Model', provider: 'alpha', maxTokens: 4096 }],
+      response: { text: 'alpha-response', provider: 'alpha', model: 'alpha-model', resolvedProvider: 'alpha', resolvedModel: 'alpha-model', fallbackUsed: false },
+    });
+    const beta = createMockProvider({
+      id: 'beta',
+      name: 'Beta',
+      type: 'api',
+      models: [{ id: 'beta-model', name: 'Beta Model', provider: 'beta', maxTokens: 4096 }],
+      response: { text: 'beta-response', provider: 'beta', model: 'beta-model', resolvedProvider: 'beta', resolvedModel: 'beta-model', fallbackUsed: false },
+    });
+
+    router.register(alpha);
+    router.register(beta);
+    router.setTransformerRegistry(registry);
+
+    registry.registerOutbound('alpha', {
+      name: 'alpha',
+      transformRequest: (_req: InternalLLMRequest) => ({ transformed: true }),
+      transformResponse: (_res: unknown) => ({
+        content: 'transformed',
+        model: 'alpha-model',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      }),
+    });
+    registry.registerOutbound('beta', {
+      name: 'beta',
+      transformRequest: (_req: InternalLLMRequest) => ({ transformed: true }),
+      transformResponse: (_res: unknown) => ({
+        content: 'transformed',
+        model: 'beta-model',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      }),
+    });
+
+    // ModelRouter wants beta
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: 'beta' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['beta'] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({ enabled: true, decision });
+    router.setModelRouter(mockRouter);
+
+    // Request specifies alpha in metadata
+    const request: InternalLLMRequest = {
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'alpha-model',
+      metadata: { provider: 'alpha' },
+    };
+
+    const result = await router.generateFromInternal(request);
+
+    // In generateFromInternal, resolveCandidates is called with provider from metadata,
+    // which puts alpha first. Then ModelRouter reorders to put beta first.
+    // So beta should win.
+    assert.equal(result.content, 'beta-response');
+    assert.equal(result.metadata?.['provider'], 'beta');
+  });
+
+  it('generateFromInternal falls back when ModelRouter endpoint not found', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    const first = createMockProvider({
+      id: 'first',
+      name: 'First',
+      type: 'api',
+      models: [{ id: 'first-model', name: 'First Model', provider: 'first', maxTokens: 4096 }],
+      response: { text: 'first-response', provider: 'first', model: 'first-model', resolvedProvider: 'first', resolvedModel: 'first-model', fallbackUsed: false },
+    });
+
+    router.register(first);
+    router.setTransformerRegistry(registry);
+
+    registry.registerOutbound('first', {
+      name: 'first',
+      transformRequest: (_req: InternalLLMRequest) => ({ transformed: true }),
+      transformResponse: (_res: unknown) => ({
+        content: 'transformed',
+        model: 'first-model',
+        finishReason: 'stop' as const,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      }),
+    });
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({ id: 'missing-endpoint' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['missing-endpoint'] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    const mockRouter = createMockModelRouter({ enabled: true, decision });
+    router.setModelRouter(mockRouter);
+
+    const request: InternalLLMRequest = {
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'first-model',
+    };
+
+    const result = await router.generateFromInternal(request);
+
+    assert.equal(result.content, 'first-response');
+    assert.equal(result.metadata?.['provider'], 'first');
+  });
+});

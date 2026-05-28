@@ -27,6 +27,7 @@ import { CompareRequestSchema } from "../comparison/schemas.js";
 import type { ComparisonService } from "../comparison/service.js";
 import { CostExceededError } from "../comparison/service.js";
 import { getCircuitBreakerRegistry } from "../core/circuit-breaker.js";
+import { getCircuitBreakerV2 } from "../core/router.js";
 import { MAX_BODY_SIZE, VALID_PROVIDERS, VERSION } from "../core/constants.js";
 import type { CostTracker } from "../core/cost-tracker.js";
 import type { GroupStore } from "../core/groups.js";
@@ -52,12 +53,22 @@ import type { ApprovalStore } from "../approval/index.js";
 import type { FreeModelRouter } from "../free-models/router.js";
 import type { LatencyMeasurer } from "../latency/index.js";
 import type { Vault } from "../vault/vault.js";
+import type { AnalyticsAggregator } from "../analytics/index.js";
+import type { SessionManager } from "../session/session-manager.js";
+import { LogQuerySchema } from "../logging/schemas.js";
+import type { RequestLogger } from "../logging/request-logger.js";
+import type { LogContext } from "../logging/types.js";
 import { registerAdminRoutes } from "./admin.js";
+import { ToolCatalog } from "../tool-catalog/index.js";
 import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
 import { securityProfileMiddleware } from "../security/enforcer.js";
 import { optimizeMessages } from "../transformers/three-part-prompt.js";
 import { detectLocalLLMs } from "../local-llm/detector.js";
+import {
+  normalizeOpenAIRequest,
+  createCanonicalResponse,
+} from "../protocol-converter/index.js";
 import {
 	isGithubOauthConfigured,
 	getGithubAuthUrl,
@@ -358,25 +369,26 @@ const PROVIDER_BASE_URLS: Record<string, string> = {
  */
 function handleStreamingRequest(
 	c: Context,
-	validated: ReturnType<typeof validateChatCompletions>,
+	canonical: import("../protocol-converter/types.js").CanonicalRequest,
 	router: Router,
 	costTracker?: CostTracker,
 	vault?: Vault,
+	requestLogger?: RequestLogger,
 ): Response {
 	const chatId = `chatcmpl-${randomUUID()}`;
-	const model = validated.model ?? "";
+	const model = canonical.model ?? "";
 	const project = c.req.header("X-Project") ?? undefined;
 
-	// Build InternalLLMRequest from validated body
-	const internalMessages = validated.messages.map((m) => ({
+	// Build InternalLLMRequest from canonical body
+	const internalMessages = canonical.messages.map((m) => ({
 		role: m.role as "system" | "user" | "assistant",
 		content: m.content,
 	}));
 
 	const internalRequest: InternalLLMRequest = {
 		messages: internalMessages,
-		model: validated.model,
-		maxTokens: validated.max_tokens,
+		model: canonical.model,
+		maxTokens: canonical.max_tokens,
 	};
 
 	return streamSSE(c, async (stream) => {
@@ -384,27 +396,57 @@ function handleStreamingRequest(
 
 		if (!resolved) {
 			// No streaming transformer — fallback: run non-streaming and send as single SSE event
-			const result = await router.generate({
-				prompt: validated.messages
-					.filter((m) => m.role !== "system")
-					.map((m) => m.content)
-					.join("\n"),
-				system:
-					validated.messages
-						.filter((m) => m.role === "system")
-						.map((m) => m.content)
-						.join("\n") || undefined,
-				model: validated.model,
-				maxTokens: validated.max_tokens,
-				project,
+			const logCtx = requestLogger?.captureStart({
+				provider: 'unknown',
+				model: canonical.model || 'unknown',
+				startTime: Date.now(),
 			});
+
+			let result;
+			try {
+				result = await router.generate({
+					prompt: canonical.messages
+						.filter((m) => m.role !== "system")
+						.map((m) => m.content)
+						.join("\n"),
+					system:
+						canonical.messages
+							.filter((m) => m.role === "system")
+							.map((m) => m.content)
+							.join("\n") || undefined,
+					model: canonical.model,
+					maxTokens: canonical.max_tokens,
+					project,
+				});
+			} catch (error) {
+				if (logCtx && requestLogger) {
+					await requestLogger.captureEnd(logCtx, {
+						error: error instanceof Error ? error : new Error(String(error)),
+					});
+				}
+				throw error;
+			}
+
+			if (logCtx && requestLogger) {
+				await requestLogger.captureEnd(logCtx, {
+					outputTokens: result.tokensUsed || 0,
+					responseData: JSON.stringify(result),
+				});
+			}
+
+			// Build canonical response via protocol-converter, then reshape to SSE chunk
+			const canonicalResponse = createCanonicalResponse(
+				chatId,
+				result.model,
+				result.text,
+				{ prompt: 0, completion: result.tokensUsed ?? 0 },
+			);
 
 			await stream.writeSSE({
 				data: JSON.stringify({
-					id: chatId,
+					...canonicalResponse,
 					object: "chat.completion.chunk",
 					created: Math.floor(Date.now() / 1000),
-					model: result.model,
 					choices: [
 						{
 							index: 0,
@@ -412,11 +454,6 @@ function handleStreamingRequest(
 							finish_reason: "stop",
 						},
 					],
-					usage: {
-						prompt_tokens: 0,
-						completion_tokens: 0,
-						total_tokens: result.tokensUsed ?? 0,
-					},
 				}),
 			});
 
@@ -476,10 +513,10 @@ function handleStreamingRequest(
 			}
 
 			await stream.writeSSE({ data: "[DONE]" });
-			getCircuitBreakerRegistry().recordSuccess(provider.id);
+			getCircuitBreakerV2().recordSuccess(provider.id, 'default', model);
 			streamRecorder?.finish();
 		} catch (error) {
-			getCircuitBreakerRegistry().recordFailure(provider.id);
+			getCircuitBreakerV2().recordFailure(provider.id, 'default', model);
 			const message = error instanceof Error ? error.message : String(error);
 			streamRecorder?.finish(message);
 
@@ -588,9 +625,12 @@ export function startHttpServer(
 	latencyMeasurer?: LatencyMeasurer,
 	freeModelRouter?: FreeModelRouter,
 	db?: Database.Database,
+	analyticsAggregator?: AnalyticsAggregator,
 	comparisonService?: ComparisonService,
 	securityProfile?: TrustLevel,
 	approvalStore?: ApprovalStore,
+	sessionManager?: SessionManager,
+	requestLogger?: RequestLogger,
 	..._rest: unknown[]
 ): ServerType {
 	// Reset start time on server creation
@@ -767,6 +807,36 @@ export function startHttpServer(
 		});
 	});
 
+	// ── Request Logs ──────────────────────────────────────
+
+	app.get("/v1/logs", async (c) => {
+		try {
+			if (!requestLogger) {
+				return c.json({ error: "Request logging not enabled" }, 503);
+			}
+			const query = LogQuerySchema.parse(c.req.query());
+			const logs = await requestLogger.getLogs(query);
+			return c.json(logs);
+		} catch (error) {
+			if (error && typeof error === "object" && "issues" in error) {
+				const issues = (
+					error as { issues: Array<{ message: string; path: string[] }> }
+				).issues;
+				const firstIssue = issues[0];
+				return c.json(
+					{
+						error: firstIssue?.message ?? "Validation error",
+						code: "VALIDATION_ERROR",
+						field: firstIssue?.path?.join(".") ?? "",
+					},
+					400,
+				);
+			}
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 500);
+		}
+	});
+
 	// ── Metrics ─────────────────────────────────────────────
 
 	app.get("/metrics", async (c) => {
@@ -779,6 +849,7 @@ export function startHttpServer(
 	// ── Generate ───────────────────────────────────────────
 
 	app.post("/v1/generate", async (c) => {
+		let logCtx: LogContext | undefined;
 		try {
 			const body = await c.req.json();
 
@@ -841,6 +912,12 @@ export function startHttpServer(
 				}
 			}
 
+			logCtx = requestLogger?.captureStart({
+				provider: validated.provider || 'unknown',
+				model: validated.model || 'unknown',
+				startTime: Date.now(),
+			});
+
 			const result = await router.generate({
 				prompt,
 				model: validated.model,
@@ -850,8 +927,21 @@ export function startHttpServer(
 				strict: validated.strict,
 				project,
 			});
+
+			if (logCtx && requestLogger) {
+				await requestLogger.captureEnd(logCtx, {
+					outputTokens: result.tokensUsed || 0,
+					responseData: JSON.stringify(result),
+				});
+			}
+
 			return c.json(result);
 		} catch (error) {
+			if (logCtx && requestLogger) {
+				await requestLogger.captureEnd(logCtx, {
+					error: error instanceof Error ? error : new Error(String(error)),
+				});
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json({ error: message }, 500);
 		}
@@ -860,6 +950,7 @@ export function startHttpServer(
 	// ── OpenAI-compatible Chat Completions ──────────────────
 
 	app.post("/v1/chat/completions", async (c) => {
+		let logCtx: LogContext | undefined;
 		try {
 			const body = await c.req.json();
 
@@ -889,21 +980,41 @@ export function startHttpServer(
 				throw error;
 			}
 
+			// Normalize and validate OpenAI-format request via protocol-converter
+			let canonicalRequest: import("../protocol-converter/types.js").CanonicalRequest;
+			try {
+				canonicalRequest = normalizeOpenAIRequest(validated);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return c.json(
+					{
+						error: {
+							message,
+							type: "invalid_request_error",
+							param: null,
+							code: null,
+						},
+					},
+					400,
+				);
+			}
+
 			// Apply three-part prompt optimization to message array
-			const internalMessages = validated.messages.map((m) => ({
+			const internalMessages = canonicalRequest.messages.map((m) => ({
 				role: m.role as 'system' | 'user' | 'assistant' | 'tool',
 				content: m.content,
 			}));
 			const optimizedMessages = optimizeMessages(internalMessages);
 
 			// ── Streaming path ──────────────────────────────────────
-			if (validated.stream) {
+			if (canonicalRequest.stream) {
 				return handleStreamingRequest(
 					c,
-					{ ...validated, messages: optimizedMessages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })) as { role: 'system' | 'user' | 'assistant'; content: string }[] },
+					{ ...canonicalRequest, messages: optimizedMessages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })) as { role: 'system' | 'user' | 'assistant'; content: string }[] },
 				router,
 				costTracker,
 				vault,
+				requestLogger,
 				);
 			}
 
@@ -949,37 +1060,47 @@ export function startHttpServer(
 
 			const headerProject = c.req.header('X-Project') ?? undefined;
 
+			logCtx = requestLogger?.captureStart({
+				provider: 'unknown',
+				model: canonicalRequest.model || 'unknown',
+				startTime: Date.now(),
+			});
+
 			const result = await router.generate({
 				prompt,
 				system,
-				model: validated.model,
-				maxTokens: validated.max_tokens,
+				model: canonicalRequest.model,
+				maxTokens: canonicalRequest.max_tokens,
 				project: headerProject,
 			});
 
+			if (logCtx && requestLogger) {
+				await requestLogger.captureEnd(logCtx, {
+					outputTokens: result.tokensUsed || 0,
+					responseData: JSON.stringify(result),
+				});
+			}
+
+			// Build canonical OpenAI response via protocol-converter
+			const canonicalResponse = createCanonicalResponse(
+				`chatcmpl-${randomUUID()}`,
+				result.model,
+				result.text,
+				{ prompt: 0, completion: result.tokensUsed ?? 0 },
+			);
+
 			return c.json({
-				id: `chatcmpl-${randomUUID()}`,
+				...canonicalResponse,
 				object: "chat.completion",
 				created: Math.floor(Date.now() / 1000),
-				model: result.model,
-				choices: [
-					{
-						index: 0,
-						message: {
-							role: "assistant",
-							content: result.text,
-						},
-						finish_reason: "stop",
-					},
-				],
-				usage: {
-					prompt_tokens: 0,
-					completion_tokens: 0,
-					total_tokens: result.tokensUsed ?? 0,
-				},
 				x_gateway: buildGatewayMetadata(result),
 			});
 		} catch (error) {
+			if (logCtx && requestLogger) {
+				await requestLogger.captureEnd(logCtx, {
+					error: error instanceof Error ? error : new Error(String(error)),
+				});
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json(
 				{
@@ -1029,6 +1150,56 @@ export function startHttpServer(
 		}
 	});
 
+	// ── Tool Catalog ─────────────────────────────────────
+
+	const toolCatalog = new ToolCatalog();
+
+	app.get("/v1/tools/catalog", (c) => {
+		try {
+			const source = c.req.query("source") as import("../tool-catalog/index.js").ToolSource | undefined;
+			const tools = toolCatalog.listAll(source);
+			return c.json({
+				count: tools.length,
+				tools: tools.map((t) => ({
+					name: t.name,
+					namespace: t.namespace,
+					source: t.source,
+					description: t.description,
+					parameters: t.parameters,
+					tags: t.tags,
+					addedAt: t.addedAt,
+				})),
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 500);
+		}
+	});
+
+	app.get("/v1/tools/search", (c) => {
+		try {
+			const query = c.req.query("q") ?? "";
+			const limitStr = c.req.query("limit");
+			const limit = limitStr ? parseInt(limitStr, 10) : 10;
+			const results = toolCatalog.search(query, isNaN(limit) ? 10 : limit);
+			return c.json({
+				query,
+				count: results.length,
+				tools: results.map((t) => ({
+					name: t.name,
+					namespace: t.namespace,
+					source: t.source,
+					description: t.description,
+					parameters: t.parameters,
+					tags: t.tags,
+				})),
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 500);
+		}
+	});
+
 	// ── Local Models ───────────────────────────────────────
 
 	app.get("/v1/local/models", async (c) => {
@@ -1052,6 +1223,18 @@ export function startHttpServer(
 		try {
 			const providers = await router.getProviderStatuses();
 			return c.json({ providers });
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 500);
+		}
+	});
+
+	// ── Balancer Strategies ────────────────────────────────
+
+	app.get("/v1/balancer/strategies", async (c) => {
+		try {
+			const { getAllLoadBalanceModes } = await import("../balancer/index.js");
+			return c.json({ strategies: getAllLoadBalanceModes() });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json({ error: message }, 500);
@@ -1085,6 +1268,102 @@ export function startHttpServer(
 				})),
 				count: measurements.length,
 				timestamp: new Date().toISOString(),
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return c.json({ error: message }, 500);
+		}
+	});
+
+	// ── Analytics ──────────────────────────────────────────
+
+	app.get("/v1/analytics", (c) => {
+		try {
+			if (!analyticsAggregator) {
+				return c.json({ error: "Analytics not enabled" }, 503);
+			}
+
+			const dimension = (c.req.query("dimension") as any) || "hourly";
+			const fromStr = c.req.query("from");
+			const toStr = c.req.query("to");
+			const channelId = c.req.query("channelId") || undefined;
+			const model = c.req.query("model") || undefined;
+
+			// Validate dimension
+			const validDimensions = ["total", "hourly", "daily", "channel", "model"];
+			if (!validDimensions.includes(dimension)) {
+				return c.json(
+					{
+						error: "INVALID_PARAMS",
+						message: `Invalid dimension: ${dimension}`,
+					},
+					400,
+				);
+			}
+
+			// Parse from/to
+			let from: number | undefined;
+			let to: number | undefined;
+			if (fromStr !== undefined) {
+				from = parseInt(fromStr, 10);
+				if (isNaN(from)) {
+					return c.json(
+						{ error: "INVALID_PARAMS", message: "Invalid from timestamp" },
+						400,
+					);
+				}
+			}
+			if (toStr !== undefined) {
+				to = parseInt(toStr, 10);
+				if (isNaN(to)) {
+					return c.json(
+						{ error: "INVALID_PARAMS", message: "Invalid to timestamp" },
+						400,
+					);
+				}
+			}
+			if (from !== undefined && to !== undefined && from > to) {
+				return c.json(
+					{ error: "INVALID_PARAMS", message: "from must be <= to" },
+					400,
+				);
+			}
+
+			const data = analyticsAggregator.query({
+				dimension,
+				from,
+				to,
+				channelId,
+				model,
+			});
+
+			// Calculate summary
+			const totalRequests = data.reduce((sum, d) => sum + d.requests, 0);
+			const totalTokens = data.reduce(
+				(sum, d) => sum + d.inputTokens + d.outputTokens,
+				0,
+			);
+			const totalCost =
+				Math.round(
+					data.reduce((sum, d) => sum + d.cost, 0) * 1000000,
+				) / 1000000;
+			const avgLatency =
+				totalRequests > 0
+					? Math.round(
+							data.reduce((sum, d) => sum + d.avgLatency * d.requests, 0) /
+								totalRequests,
+						)
+					: 0;
+
+			return c.json({
+				data,
+				dimension,
+				summary: {
+					totalRequests,
+					totalTokens,
+					totalCost,
+					avgLatency,
+				},
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -1744,6 +2023,7 @@ export function startHttpServer(
 		serverStartTime,
 		freeModelRouter,
 		db,
+		sessionManager,
 	});
 
 	// ── Start ──────────────────────────────────────────────

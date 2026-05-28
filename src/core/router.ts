@@ -31,9 +31,14 @@ import type { FreeModelRouter } from '../free-models/router.js';
 import type { LatencyMeasurer } from '../latency/measurer.js';
 import type { ModelRouter } from '../model-routing/router.js';
 import type { ApprovalStore } from '../approval/index.js';
+import type { AnalyticsAggregator } from '../analytics/index.js';
+import { calculateCost } from './pricing.js';
 import { optimizeMessages } from '../transformers/three-part-prompt.js';
 import { LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload } from '../local-llm/router.js';
+import { classify } from '../classification/index.js';
+import type { TaskClassification } from '../classification/index.js';
+import type { RoutingDecision } from '../model-routing/types.js';
 
 /**
  * Minimal interface for a local LLM client.
@@ -89,7 +94,7 @@ export function optimizeMessagesEnabled(): boolean {
 }
 
 export class Router {
-  private providers: LLMProvider[] = [];
+  private _providers: LLMProvider[] = [];
   private _transformerRegistry: TransformerRegistry | null = null;
   private _groupStore: GroupStore | null = null;
   private _sessionStore: SessionStore | null = null;
@@ -99,7 +104,18 @@ export class Router {
   private _modelRouter: ModelRouter | null = null;
   private _localLLMClient: LocalLLMClient | null = null;
   private _approvalStore: ApprovalStore | null = null;
+  private _analyticsAggregator: AnalyticsAggregator | null = null;
   private _explorationRate: number = 0.1; // 10% epsilon-greedy
+
+  /** Set the analytics aggregator for usage recording. */
+  setAnalyticsAggregator(aggregator: AnalyticsAggregator): void {
+    this._analyticsAggregator = aggregator;
+  }
+
+  /** Get the analytics aggregator (null if not set). */
+  get analyticsAggregator(): AnalyticsAggregator | null {
+    return this._analyticsAggregator;
+  }
 
   /** Set the latency measurer for latency-based routing. */
   setLatencyMeasurer(measurer: LatencyMeasurer): void {
@@ -201,6 +217,11 @@ export class Router {
     return this._approvalStore;
   }
 
+  /** Return all registered providers. */
+  get providers(): LLMProvider[] {
+    return this._providers;
+  }
+
   private withResolutionMetadata(
     request: GenerateRequest,
     result: GenerateResponse,
@@ -221,11 +242,19 @@ export class Router {
 
   /** Register a provider adapter with the router. */
   register(provider: LLMProvider): void {
-    this.providers.push(provider);
+    this._providers.push(provider);
   }
 
   /**
    * Generate text by routing the request to the best available provider.
+   *
+   * Precedence stack (highest to lowest):
+   * 1. Session stickiness
+   * 2. Group-based routing
+   * 3. ModelRouter (when enabled)
+   * 4. Local-LLM offloading (when enabled)
+   * 5. Standard resolution
+   * 6. Latency reordering
    *
    * Tries each candidate in resolution order and falls back to the next
    * on failure. Throws if all providers fail.
@@ -241,10 +270,28 @@ export class Router {
       );
     }
 
+    // ── Model Routing: classify and route to optimal endpoint ──
+    let modelRouterDecision: RoutingDecision | null = null;
+    let classification: TaskClassification | null = null;
+    if (this._modelRouter && this._modelRouter.enabled && !request.provider && !request.strict) {
+      classification = classify(request.prompt);
+      modelRouterDecision = this._modelRouter.route(classification);
+      if (modelRouterDecision) {
+        const selectedIndex = candidates.findIndex((p) => p.id === modelRouterDecision!.endpoint.id);
+        if (selectedIndex >= 0) {
+          const selected = candidates[selectedIndex]!;
+          candidates = [selected, ...candidates.filter((_, i) => i !== selectedIndex)];
+        } else {
+          logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
+        }
+      }
+    }
+
     // ── Sprint 3: Insert local-llm as first candidate when offloadable ──
-    if (!request.provider && !request.strict) {
-      const classification = classifyForOffload(request.prompt);
-      if (classification.shouldOffload) {
+    // Only when ModelRouter is disabled or returned null (superseded by ModelRouter)
+    if (!request.provider && !request.strict && !modelRouterDecision) {
+      const offloadClassification = classifyForOffload(request.prompt);
+      if (offloadClassification.shouldOffload) {
         const localIndex = candidates.findIndex((p) => p.id === 'local-llm');
         if (localIndex > 0) {
           const localProvider = candidates[localIndex]!;
@@ -282,12 +329,18 @@ export class Router {
         circuitBreaker.recordSuccess(provider.id, 'default', model);
         const latencyMs = Date.now() - startTime;
         this.recordUsage(provider.id, model, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
+        if (classification) {
+          this._recordModelFeedback(provider.id, classification, true, latencyMs);
+        }
         return this.withResolutionMetadata(request, result, false, latencyMs);
       } catch (error) {
         circuitBreaker.recordFailure(provider.id, 'default', model);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
         this.recordUsage(provider.id, model, 0, 0, latencyMs, false, request.project, message);
+        if (classification) {
+          this._recordModelFeedback(provider.id, classification, false, latencyMs);
+        }
         logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
         throw error;
       }
@@ -301,12 +354,18 @@ export class Router {
         circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
         const latencyMs = Date.now() - startTime;
         this.recordUsage(provider.id, result.model ?? model, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
+        if (classification) {
+          this._recordModelFeedback(provider.id, classification, true, latencyMs);
+        }
         return this.withResolutionMetadata(request, result, index > 0, latencyMs);
       } catch (error) {
         circuitBreaker.recordFailure(provider.id, 'default', model);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
         this.recordUsage(provider.id, model, 0, 0, latencyMs, false, request.project, message);
+        if (classification) {
+          this._recordModelFeedback(provider.id, classification, false, latencyMs);
+        }
 
         // ── Sprint 3: Specific metric/log for LocalLLMError fallback ──
         if (error instanceof LocalLLMError) {
@@ -367,7 +426,10 @@ export class Router {
    * 1. Check session stickiness (if pinned, use that provider)
    * 2. Check if a Group matches the requested model (via modelPattern)
    *    → If group found, use group's balancer strategy to order providers
-   * 3. Fallback to current behavior (sequential through all providers)
+   * 3. ModelRouter selection (when enabled)
+   * 4. Local-LLM offloading (only if ModelRouter did not select it)
+   * 5. Standard resolution (model match → fuzzy → provider preference → API before CLI)
+   * 6. Latency-based reordering
    *
    * After successful response: pin session if stickiness is enabled.
    */
@@ -391,7 +453,7 @@ export class Router {
     if (this._sessionStore && clientId && model) {
       const pinned = this._sessionStore.get(clientId, model);
       if (pinned) {
-        const stickyProvider = this.providers.find((p) => p.id === pinned.provider);
+        const stickyProvider = this._providers.find((p) => p.id === pinned.provider);
         if (stickyProvider) {
           const circuitBreaker = getCircuitBreakerV2();
           if (circuitBreaker.canExecute(stickyProvider.id, 'default', model).allowed) {
@@ -434,6 +496,23 @@ export class Router {
       );
     }
 
+    // ── Model Routing: classify and route to optimal endpoint ──
+    let internalClassification: TaskClassification | null = null;
+    if (this._modelRouter && this._modelRouter.enabled) {
+      const prompt = this.extractPromptFromInternal(optimizedRequest);
+      internalClassification = classify(prompt);
+      const decision = this._modelRouter.route(internalClassification);
+      if (decision) {
+        const selectedIndex = orderedCandidates.findIndex((p) => p.id === decision.endpoint.id);
+        if (selectedIndex >= 0) {
+          const selected = orderedCandidates[selectedIndex]!;
+          orderedCandidates = [selected, ...orderedCandidates.filter((_, i) => i !== selectedIndex)];
+        } else {
+          logger.warn({ endpointId: decision.endpoint.id }, 'Unmatched ModelRouter endpoint');
+        }
+      }
+    }
+
     const circuitBreaker = getCircuitBreakerV2();
     const availableCandidates = orderedCandidates.filter((p) =>
       circuitBreaker.canExecute(p.id, 'default', model).allowed
@@ -450,7 +529,7 @@ export class Router {
 
     for (const provider of availableCandidates) {
       try {
-        const result = await this.tryProvider(provider, optimizedRequest, registry, startTime);
+        const result = await this.tryProvider(provider, optimizedRequest, registry, startTime, undefined, internalClassification ?? undefined);
 
         // Pin session on success if stickiness is enabled
         if (this._sessionStore && clientId && model && matchedGroup?.stickyTTL) {
@@ -546,6 +625,7 @@ export class Router {
     registry: TransformerRegistry,
     startTime: number,
     model: string = 'unknown',
+    classification?: TaskClassification,
   ): Promise<InternalLLMResponse> {
     const circuitBreaker = getCircuitBreakerV2();
     const outbound = registry.getOutbound(provider.id);
@@ -570,12 +650,18 @@ export class Router {
           const response = cliOutbound.transformResponse(result);
           const latencyMs = Date.now() - startTime;
           this.recordUsage(provider.id, response.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
+          if (classification) {
+            this._recordModelFeedback(provider.id, classification, true, latencyMs);
+          }
           return response;
         } catch (error) {
           circuitBreaker.recordFailure(provider.id, 'default', model);
           const message = error instanceof Error ? error.message : String(error);
           const latencyMs = Date.now() - startTime;
           this.recordUsage(provider.id, model, 0, 0, latencyMs, false, undefined, message);
+          if (classification) {
+            this._recordModelFeedback(provider.id, classification, false, latencyMs);
+          }
           logger.warn({ provider: provider.id, model, error: message }, 'Provider failed (CLI transformer)');
           throw error;
         }
@@ -621,12 +707,18 @@ export class Router {
       };
 
       this.recordUsage(provider.id, result.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
+      if (classification) {
+        this._recordModelFeedback(provider.id, classification, true, latencyMs);
+      }
       return response;
     } catch (error) {
       circuitBreaker.recordFailure(provider.id, 'default', model);
       const message = error instanceof Error ? error.message : String(error);
       const latencyMs = Date.now() - startTime;
       this.recordUsage(provider.id, model, 0, 0, latencyMs, false, undefined, message);
+      if (classification) {
+        this._recordModelFeedback(provider.id, classification, false, latencyMs);
+      }
       logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
       throw error;
     }
@@ -663,7 +755,7 @@ export class Router {
       used.add(key);
 
       // Find matching registered provider
-      const provider = this.providers.find((p) => p.id === member.provider);
+      const provider = this._providers.find((p) => p.id === member.provider);
       if (provider) {
         ordered.push(provider);
       }
@@ -689,6 +781,21 @@ export class Router {
     project?: string,
     errorMessage?: string,
   ): void {
+    if (this._analyticsAggregator) {
+      try {
+        const cost = calculateCost(model, tokensIn, tokensOut);
+        this._analyticsAggregator.record(provider, model, {
+          inputTokens: tokensIn,
+          outputTokens: tokensOut,
+          cost,
+          latencyMs,
+          channel: project ?? 'default',
+        });
+      } catch (error) {
+        logger.warn({ error }, 'Failed to record analytics');
+      }
+    }
+
     if (!this._costTracker) return;
 
     try {
@@ -704,6 +811,30 @@ export class Router {
       });
     } catch (error) {
       logger.warn({ error }, 'Failed to record usage');
+    }
+  }
+
+  /**
+   * Record model routing feedback for adaptive routing.
+   * Non-blocking — failures are logged, not thrown.
+   */
+  private _recordModelFeedback(
+    providerId: string,
+    classification: TaskClassification,
+    success: boolean,
+    latencyMs: number,
+  ): void {
+    if (!this._modelRouter) return;
+    try {
+      this._modelRouter.recordFeedback({
+        endpointId: providerId,
+        taskPattern: classification.task,
+        acceptable: success,
+        latencyMs,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.warn({ error, providerId }, 'Failed to record model routing feedback');
     }
   }
 
@@ -754,7 +885,7 @@ export class Router {
   async getAvailableModels(): Promise<ModelInfo[]> {
     // Parallel availability checks for better performance
     const results = await Promise.all(
-      this.providers.map(async (provider) => ({
+      this._providers.map(async (provider) => ({
         provider,
         available: await provider.isAvailable(),
       })),
@@ -767,7 +898,7 @@ export class Router {
 
   /** Return model IDs for a specific provider. */
   getProviderModels(providerId: string): string[] {
-    const provider = this.providers.find((p) => p.id === providerId);
+    const provider = this._providers.find((p) => p.id === providerId);
     if (!provider) return [];
     return provider.models.map((m) => m.id);
   }
@@ -778,7 +909,7 @@ export class Router {
   > {
     // Parallel availability checks for better performance
     const results = await Promise.all(
-      this.providers.map(async (provider) => ({
+      this._providers.map(async (provider) => ({
         id: provider.id,
         name: provider.name,
         type: provider.type,
@@ -802,7 +933,7 @@ export class Router {
   ): Promise<LLMProvider[]> {
     // Parallel availability check - avoids N sequential isAvailable() calls
     const availabilityResults = await Promise.all(
-      this.providers.map(async (provider) => ({
+      this._providers.map(async (provider) => ({
         provider,
         available: await provider.isAvailable(),
       })),

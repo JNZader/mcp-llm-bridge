@@ -30,3 +30,18 @@ export {
   ModelRouter,
   rankEndpointsByCost,
 } from './router.js';
+
+// Config loader + types
+export {
+  loadConfig,
+  type JsonEndpoint,
+  type JsonRouteRule,
+  type JsonModelRoutingConfig,
+} from './config.js';
+
+// Bootstrap
+export {
+  createModelRouter,
+  bootstrapModelRouter,
+  type MappedProvider,
+} from './bootstrap.js';

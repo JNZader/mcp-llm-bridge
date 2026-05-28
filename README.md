@@ -24,7 +24,7 @@ Visuals coming soon.
 - One service for LLM routing, encrypted credential storage, MCP tooling, and OpenAI-compatible HTTP access.
 - 11 provider adapters today: 5 direct API providers plus 6 CLI-backed providers.
 - Supports API keys and auth-file workflows, including `auth.json` and `.credentials.json`.
-- Includes task-aware bridge routing, project-scoped credentials with global fallback, semantic code search, context compression, and CRDT shared state.
+- Includes task-aware bridge routing, model routing, project-scoped credentials with global fallback, semantic code search, context compression, and CRDT shared state.
 - Ships as a local dev tool, self-hosted HTTP gateway, MCP stdio server, and Docker deployment.
 
 ## Why It Matters
@@ -90,11 +90,12 @@ If you set `LLM_GATEWAY_AUTH_TOKEN`, add `Authorization: Bearer <token>` to ever
 17. [Three-Part Prompt](#three-part-prompt)
 18. [RTK Output Compression](#rtk-output-compression)
 19. [Local LLM Offloading](#local-llm-offloading)
-20. [HF Auto-Discovery](#hf-auto-discovery)
-21. [Architecture](#architecture)
-22. [Security](#security)
-23. [Development](#development)
-24. [License](#license)
+20. [Model Routing](#model-routing)
+21. [HF Auto-Discovery](#hf-auto-discovery)
+22. [Architecture](#architecture)
+23. [Security](#security)
+24. [Development](#development)
+25. [License](#license)
 
 ## Quick Start
 
@@ -778,13 +779,19 @@ compressor.destroy();
 
 ## Semantic Code Search
 
-The code-search subsystem exposes semantic-ish symbol search through MCP.
+The code-search subsystem exposes three search modes through MCP:
+
+- **keyword** (default): exact/prefix/fuzzy matching with inverted index
+- **vector**: semantic similarity via dense embeddings
+- **hybrid**: RRF fusion of keyword + BM25 + vector for best results
 
 It combines:
 
 - regex-based chunking
 - trigram fuzzy search
-- symbol/content scoring
+- BM25 keyword scoring (via MiniSearch)
+- dense vector similarity (via transformer embeddings)
+- Reciprocal Rank Fusion (RRF) for hybrid ranking
 - optional multi-hop import following
 
 ### Supported Languages
@@ -812,11 +819,42 @@ Default chunking support covers:
   "query": "authentication middleware",
   "scope": "/path/to/project",
   "limit": 10,
-  "followImports": true
+  "followImports": true,
+  "mode": "hybrid"
 }
 ```
 
 Returned results include file path, symbol name, kind, content, line numbers, score, and related chunks when import following is enabled.
+
+### Search Modes
+
+| Mode | Description | Best For |
+|------|-------------|----------|
+| `keyword` | Exact token matching, prefix search, trigram fuzzy fallback | Known symbol names, fast, no model needed |
+| `vector` | Cosine similarity over 384-dim embeddings | Conceptual queries, synonyms, semantic relatedness |
+| `hybrid` | RRF fusion of keyword + BM25 + vector | General use — combines precision + recall |
+
+**Keyword mode** is the default and requires no setup. It scores exact name matches highest, then prefix matches, then keyword-in-content, then trigram fuzzy similarity.
+
+**Vector mode** uses a local embedding model (`Xenova/all-MiniLM-L6-v2`, 22MB, 384-dimensional). On first run the model downloads automatically from HuggingFace and caches locally. Vector search finds semantically related code even when keywords don't overlap.
+
+**Hybrid mode** runs all three strategies in parallel and fuses the rankings with Reciprocal Rank Fusion (RRF). Results include `rrfScore` (the fused score) and `methodCount` (how many strategies found the result). Items found by multiple methods rank higher, giving the best overall coverage.
+
+### Embedding Model
+
+- Model: `Xenova/all-MiniLM-L6-v2` (22MB, 384-dim)
+- Backend: `@xenova/transformers` (ONNX runtime, runs locally)
+- First run: model auto-downloads and caches to `~/.cache/huggingface/`
+- Fallback: if the local model fails to load, the embedder can fall back to OpenAI API (`text-embedding-3-small`) when `OPENAI_API_KEY` is set
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMBEDDER_MODE` | `local` | `local` uses Xenova transformer; `api` forces OpenAI API |
+| `OPENAI_API_KEY` | — | Fallback API embedder key (optional) |
+| `VOYAGE_API_KEY` | — | Alternative API embedder key (optional) |
+| `TRANSFORMERS_OFFLINE` | — | Set to `1` to use only cached model, skip download |
 
 ## CRDT Multi-Agent State
 
@@ -1056,6 +1094,60 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 MCP stdio runs locally and does not use the HTTP bearer-token middleware.
 
+## Dynamic MCP Servers
+
+The bridge supports loading external `.mcp-server.js` plugin files at runtime. This lets you extend the toolset without modifying the core codebase.
+
+### What It Is
+
+Any `.mcp-server.js` file placed in the plugin directory is loaded at startup and its tools are registered alongside the 27 static tools. Plugins export a `McpServerDefinition` object (or use the builder) with tools, resources, and prompts.
+
+### Enable
+
+Set `MCP_DYNAMIC_SERVERS=true`:
+
+```bash
+export MCP_DYNAMIC_SERVERS=true
+export MCP_SERVERS_DIR=./mcp-servers
+```
+
+### Create a Plugin
+
+Create a `.mcp-server.js` file in the plugin directory:
+
+```javascript
+import { McpServerBuilder } from 'mcp-llm-bridge/mcp-builder';
+
+export default new McpServerBuilder()
+  .tool('greet', 'Say hello to someone', { name: { type: 'string' } }, async ({ name }) => {
+    return { content: [{ type: 'text', text: `Hello, ${name}!` }] };
+  })
+  .build();
+```
+
+The builder validates naming conventions, schema completeness, and description quality. Tools are registered on the MCP server and appear in `ListTools`.
+
+### Directory
+
+The default plugin directory is `./mcp-servers`. Override with:
+
+```bash
+export MCP_SERVERS_DIR=./my-custom-plugins
+```
+
+### Security
+
+Dynamic tools are registered with the `read` category by default. This means they are:
+
+- **Allowed** under `local-dev` and `restricted` profiles
+- **Blocked** under the `open` profile (which only allows `generate` tools)
+
+The enforcer applies the same category-based filtering to dynamic tools as it does to static tools.
+
+### Coexistence with Static Tools
+
+Static tools (vault, search, generate, etc.) and dynamic tools appear together in the `ListTools` response. There is no namespacing — tool names must be unique across both sets. The approval flow and rate limiting apply uniformly to all tools.
+
 ## Configuration
 
 ### Core Environment Variables
@@ -1096,11 +1188,11 @@ If that file does not exist, bridge routing is disabled.
 
 Security profiles enforce trust-level-based access control on both MCP tools and HTTP endpoints. Three profiles are built-in:
 
-| Profile | Allowed Categories | Rate Limit |
-|---------|-------------------|------------|
-| `local-dev` | all (destructive, read, generate, admin) | none |
-| `restricted` | read + generate only | 100 req / 15 min |
-| `open` | generate only | 10 req / 15 min |
+| Profile | Allowed Categories | Rate Limit | Sandbox |
+|---------|-------------------|------------|---------|
+| `local-dev` | all (destructive, read, generate, admin) | none | false |
+| `restricted` | read + generate only | 100 req / 15 min | false |
+| `open` | generate only | 10 req / 15 min | false |
 
 ### Configuration
 
@@ -1111,6 +1203,8 @@ LLM_GATEWAY_SECURITY_PROFILE=restricted
 ```
 
 Default is `local-dev` (backward compatible — no restrictions).
+
+Each profile also carries a `sandbox` flag (default `false`). When `sandbox: true`, the profile indicates that the project should run in an isolated/sandboxed mode. This flag is exposed on the profile schema and through the admin API for per-project configuration.
 
 ### HTTP Enforcement
 
@@ -1258,6 +1352,102 @@ If the local LLM fails or the task is not offloadable, the gateway falls back to
 |------|-------------|
 | `local_llm_generate` | Generate via local LLM with offload detection |
 
+## Model Routing
+
+Model routing adds task-aware provider selection that classifies each prompt and routes it to the optimal endpoint based on configured rules, cost tiers, and quality thresholds.
+
+### What It Does
+
+- **Classifies** incoming prompts into task types (`code`, `analysis`, `chat`, `reasoning`, etc.)
+- **Matches** the task against routing rules defined in `model-routing.json`
+- **Selects** the cheapest available endpoint that meets quality requirements
+- **Falls back** to more expensive endpoints if quality drops below threshold
+- **Learns** from feedback — records success/failure per endpoint+task for adaptive routing
+
+### Enable
+
+```bash
+MODEL_ROUTING_ENABLED=true
+```
+
+When enabled, the precedence stack becomes:
+
+1. Session stickiness
+2. Group-based routing
+3. **ModelRouter** (task-aware selection)
+4. Local-LLM offloading (only if ModelRouter is disabled or returns no match)
+5. Standard resolution (model match → provider preference → API before CLI)
+6. Latency reordering
+
+### Configuration
+
+Create `model-routing.json` in the project root. The gateway loads it at startup.
+
+```json
+{
+  "enabled": true,
+  "endpoints": [...],
+  "rules": [...],
+  "defaultEndpoint": "opencode-cli-default",
+  "qualityThreshold": 0.7,
+  "qualityWindowSize": 50
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | boolean | Whether model routing is active |
+| `endpoints` | array | Available model endpoints with cost tier and capabilities |
+| `rules` | array | Task-to-endpoint routing rules (first match wins) |
+| `defaultEndpoint` | string | Fallback endpoint ID when no rule matches |
+| `qualityThreshold` | number | Minimum acceptable quality rate (0–1) |
+| `qualityWindowSize` | number | Number of recent requests to track per endpoint+task |
+
+**Endpoint fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique endpoint identifier |
+| `providerId` | string | Provider ID (e.g., `anthropic`, `openai`, `opencode-cli`) |
+| `model` | string | Model ID for API calls |
+| `costTier` | string | `free`, `cheap`, `standard`, or `expensive` |
+| `capabilities` | array | Capability tags (e.g., `chat`, `code`, `reasoning`) |
+| `maxTokens` | number | Maximum context window in tokens |
+
+**Rule fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique rule identifier |
+| `taskType` | string | Task type to match, or `*` for wildcard |
+| `preferredEndpoints` | array | Ordered list of endpoint IDs to try |
+| `maxCostTier` | string | Most expensive tier allowed for this task |
+| `minQuality` | string | Minimum quality level: `low`, `medium`, `high`, `critical` |
+| `allowFallback` | boolean | Whether to fall back to default endpoint if all preferred fail |
+
+### Example Task-to-Endpoint Mappings
+
+| Task Type | Preferred Endpoints | Cost Cap | Min Quality |
+|-----------|---------------------|----------|-------------|
+| `code` | Claude Sonnet → GPT-4.1 | `expensive` | `high` |
+| `analysis` | Claude Sonnet → GPT-4.1 | `expensive` | `high` |
+| `chat` | GPT-4.1-mini → OpenCode CLI | `standard` | `medium` |
+| `reasoning` | GPT-4.1 → Claude Sonnet | `expensive` | `critical` |
+| `*` (default) | OpenCode CLI → GPT-4.1-mini | `standard` | `low` |
+
+### Coexistence with Local-LLM Offloading
+
+Local-LLM offloading and model routing work together with clear precedence:
+
+- **ModelRouter runs first.** If it selects an endpoint, that provider is promoted to the top of the candidate list.
+- **Local-LLM offloading runs only when ModelRouter is disabled or returns no match.** This prevents conflicts: explicit routing rules always beat heuristic offloading.
+
+If you want local models in your routing mix, register them as endpoints with `"costTier": "free"` and include them in rule `preferredEndpoints`.
+
+### Example File
+
+See `model-routing.example.json` in the repository root for a full template with multiple endpoints and routing rules.
+
 ## HF Auto-Discovery
 
 At startup (when enabled), the gateway scans local backends and enriches detected models with HuggingFace metadata (tags, pipeline type, recommended tasks).
@@ -1344,6 +1534,27 @@ Clients (GHAGGA, OpenCode, curl, LangChain, any OpenAI-compatible tool)
 - Bridge routing is intentionally optional and file-driven.
 - Code search stays in-memory for speed and freshness.
 - CRDTs reduce coordination pain for parallel agent workflows.
+
+### Experimental Modules
+
+- **`src/workflow-builder/builder.ts`** — DAG-based workflow engine for MCP tool orchestration.  
+  Exports: `createWorkflow`, `addNode`, `addEdge`, `validateWorkflow`, `getExecutionOrder`, `createExecution`, `serializeWorkflow`, `deserializeWorkflow`.  
+  Not yet wired to HTTP or MCP. Use programmatically if you want to experiment with visual workflow definitions.
+
+### Session Systems
+
+The gateway has two separate session systems by design:
+
+1. **SessionStore** (`src/core/session.ts`) — Router-level provider pinning.  
+   Tracks which provider+key a specific client+model combo should use.  
+   Used by the Router for low-level request-to-provider stickiness.
+
+2. **SessionManager** (`src/session/session-manager.ts`) — Group-level sticky routing.  
+   Manages session affinity for multi-turn conversations via TTL-based tracking.  
+   Used by GroupManager for group-based sticky routing and dashboard metrics.
+
+They are separate by design: `SessionStore` operates at the Router layer (provider selection), while `SessionManager` operates at the Group layer (conversation continuity).  
+Do not conflate them.
 
 ## Security
 

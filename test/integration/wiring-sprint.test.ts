@@ -22,7 +22,6 @@ import { ApprovalStore } from '../../src/approval/index.js';
 import { optimizeMessages } from '../../src/transformers/three-part-prompt.js';
 import { compressOutput, compressionStats } from '../../src/context-compression/output-compression.js';
 import { handleToolCall } from '../../src/server/mcp.js';
-import { securityProfileMiddleware } from '../../src/security/enforcer.js';
 import { optimizeMessagesEnabled } from '../../src/core/router.js';
 
 // ── Test infrastructure ──────────────────────────────────
@@ -63,6 +62,7 @@ before(async () => {
     undefined,
     undefined,
     undefined,
+    undefined, // analyticsAggregator
     config.securityProfile,
     approvalStore,
   ) as unknown as http.Server;

@@ -36,6 +36,7 @@ export const SecurityProfileSchema = z.object({
   level: TrustLevelSchema,
   allowedCategories: z.array(ToolCategorySchema).min(1),
   rateLimit: RateLimitConfigSchema,
+  sandbox: z.boolean().default(false),
 });
 
 export type SecurityProfile = z.infer<typeof SecurityProfileSchema>;
@@ -77,6 +78,13 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   code_search: 'read',
   approval_list: 'read',
   discover_models: 'read',
+  conversation_paginate: 'read',
+  conversation_get_page: 'read',
+  conversation_context: 'read',
+  conversation_navigate: 'read',
+  conversation_info: 'read',
+  conversation_find_relevant: 'read',
+  conversation_check_compaction: 'read',
 
   // admin
   configure_circuit_breaker: 'admin',
@@ -98,16 +106,19 @@ export const PROFILES: Record<TrustLevel, SecurityProfile> = {
     level: 'local-dev',
     allowedCategories: ['destructive', 'read', 'generate', 'admin'],
     rateLimit: null,
+    sandbox: false,
   }),
   restricted: SecurityProfileSchema.parse({
     level: 'restricted',
     allowedCategories: ['read', 'generate'],
     rateLimit: { max: 100, windowMs: 15 * 60 * 1000 },
+    sandbox: false,
   }),
   open: SecurityProfileSchema.parse({
     level: 'open',
     allowedCategories: ['generate'],
     rateLimit: { max: 10, windowMs: 15 * 60 * 1000 },
+    sandbox: false,
   }),
 } as const;
 
@@ -128,6 +139,7 @@ interface DbProfileRow {
   allowed_categories: string;
   rate_limit_max: number | null;
   rate_limit_window_ms: number | null;
+  sandbox: number;
   created_at: string;
   updated_at: string;
 }
@@ -178,6 +190,7 @@ export function createDbProfileResolver(db: Database.Database): ProfileResolver 
         : 'restricted') as TrustLevel,
       allowedCategories: validCategories as [ToolCategory, ...ToolCategory[]],
       rateLimit,
+      sandbox: Boolean(row.sandbox),
     };
   };
 }
