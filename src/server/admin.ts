@@ -103,7 +103,7 @@ export interface AdminDeps {
   db?: Database.Database;
   /** Optional free model router for catalog operations. */
   freeModelRouter?: import('../free-models/router.js').FreeModelRouter;
-  /** Optional session manager for sticky session metrics. */
+  /** Optional session manager for group-level sticky session metrics. */
   sessionManager?: SessionManager;
 }
 
@@ -298,10 +298,17 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
   app.get('/v1/admin/sessions', (c) => {
     try {
       const sessionManager = deps.sessionManager;
-      if (!sessionManager) {
-        return c.json({ error: 'Session manager not available', code: 'NOT_CONFIGURED' }, 503);
+      const sessionStore = deps.router.sessionStore;
+
+      if (!sessionManager && !sessionStore) {
+        return c.json({ error: 'Session systems not available', code: 'NOT_CONFIGURED' }, 503);
       }
-      return c.json(sessionManager.getDashboardMetrics());
+
+      return c.json({
+        note: 'Router sticky routing uses SessionStore pins. Group session metrics come from SessionManager. These systems are separate and should not be compared as a single total.',
+        routerStickySessions: sessionStore ? sessionStore.getMetrics() : null,
+        groupSessions: sessionManager ? sessionManager.getDashboardMetrics() : null,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);

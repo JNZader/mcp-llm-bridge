@@ -101,4 +101,17 @@ describe('SessionStore', () => {
     store.unpin('a', 'm1');
     assert.equal(store.size, 1);
   });
+
+  it('getMetrics counts only non-expired sticky sessions', async () => {
+    store = new SessionStore(60_000);
+    store.pin('active-client', 'gpt-4', 'openai', 'default', 10_000);
+    store.pin('expired-client', 'gpt-4', 'anthropic', 'default', 20);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const metrics = store.getMetrics();
+    assert.equal(metrics.activeSessionCount, 1);
+    assert.ok(metrics.computedAt > 0);
+    assert.equal(store.size, 2, 'raw store size may still include expired entries before sweep');
+  });
 });

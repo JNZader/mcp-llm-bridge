@@ -1556,6 +1556,12 @@ The gateway has two separate session systems by design:
 They are separate by design: `SessionStore` operates at the Router layer (provider selection), while `SessionManager` operates at the Group layer (conversation continuity).  
 Do not conflate them.
 
+`GET /v1/admin/sessions` reports them separately for that reason:
+
+- `routerStickySessions` comes from `SessionStore` and reflects the pins the Router actually uses at request time.
+- `groupSessions` comes from `SessionManager` and reflects group-level session affinity metrics.
+- The endpoint includes a `note` explaining the split so the dashboard does not imply a single shared session pool.
+
 ## Security
 
 - AES-256-GCM encryption for stored keys and auth files

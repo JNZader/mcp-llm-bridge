@@ -15,6 +15,11 @@ interface SessionEntry {
   expiresAt: number;
 }
 
+export interface SessionStoreMetrics {
+  activeSessionCount: number;
+  computedAt: number;
+}
+
 /** Default sweep interval: every 60 seconds. */
 const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
 
@@ -107,6 +112,26 @@ export class SessionStore {
    */
   get size(): number {
     return this.sessions.size;
+  }
+
+  /**
+   * Active sticky-session metrics for admin visibility.
+   * Counts only non-expired pins, even if lazy cleanup has not run yet.
+   */
+  getMetrics(): SessionStoreMetrics {
+    const now = Date.now();
+    let activeSessionCount = 0;
+
+    for (const entry of this.sessions.values()) {
+      if (now < entry.expiresAt) {
+        activeSessionCount++;
+      }
+    }
+
+    return {
+      activeSessionCount,
+      computedAt: now,
+    };
   }
 
   /**

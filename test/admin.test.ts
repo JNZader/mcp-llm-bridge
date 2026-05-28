@@ -24,6 +24,8 @@ import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { GroupStore } from '../src/core/groups.js';
 import { CostTracker } from '../src/core/cost-tracker.js';
+import { SessionStore } from '../src/core/session.js';
+import { SessionManager } from '../src/session/session-manager.js';
 import {
   getCircuitBreakerRegistry,
   CircuitState,
@@ -51,9 +53,12 @@ for (const adapter of createAllAdapters(vault)) {
 
 const groupStore = new GroupStore(dbPath);
 const costTracker = new CostTracker({ dbPath });
+const sessionStore = new SessionStore();
+const sessionManager = new SessionManager({ ttlSeconds: 60, cleanupIntervalMs: 60_000 });
 
 // Wire up router
 router.setCostTracker(costTracker);
+router.setSessionStore(sessionStore);
 
 let server: http.Server;
 let port = 0;
@@ -71,6 +76,11 @@ before(async () => {
     undefined,
     undefined,
     vault.getDb(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    sessionManager,
   ) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
@@ -89,6 +99,8 @@ after(() => {
       vault.close();
       groupStore.close();
       costTracker.destroy();
+      sessionStore.destroy();
+      sessionManager.stopCleanup();
       for (const suffix of ['', '-wal', '-shm']) {
         const filePath = dbPath + suffix;
         if (existsSync(filePath)) {
@@ -272,6 +284,52 @@ describe('GET /v1/admin/health', () => {
     assert.ok(typeof data.memory.heapTotal === 'number');
     assert.ok(typeof data.memory.heapUsed === 'number');
     assert.ok(typeof data.memory.external === 'number');
+  });
+});
+
+// ── GET /v1/admin/sessions ──────────────────────────────
+
+describe('GET /v1/admin/sessions', () => {
+  it('reports router sticky sessions separately from group sessions', async () => {
+    sessionStore.pin('admin-test-client', 'gpt-4o', 'openai', 'default', 10_000);
+    const groupSession = sessionManager.getOrCreateSession(
+      { apiKeyId: 4242, provider: 'anthropic', model: 'claude-3' },
+      'anthropic',
+      'key-admin-test',
+      'claude-3',
+    );
+
+    try {
+      const res = await request('GET', '/v1/admin/sessions');
+      assert.equal(res.status, 200);
+
+      const data = res.data as {
+        note: string;
+        routerStickySessions: { activeSessionCount: number; computedAt: number } | null;
+        groupSessions: {
+          activeSessionCount: number;
+          averageSessionAge: number;
+          byProvider: Array<{ provider: string; sessionCount: number; avgTtlRemaining: number }>;
+          computedAt: number;
+        } | null;
+      };
+
+      assert.match(data.note, /SessionStore/i);
+      assert.match(data.note, /SessionManager/i);
+      assert.ok(data.routerStickySessions, 'routerStickySessions should be present');
+      assert.equal(data.routerStickySessions!.activeSessionCount, 1);
+      assert.ok(data.routerStickySessions!.computedAt > 0);
+      assert.ok(data.groupSessions, 'groupSessions should be present');
+      assert.equal(data.groupSessions!.activeSessionCount, 1);
+      assert.ok(data.groupSessions!.computedAt > 0);
+
+      const anthropicEntry = data.groupSessions!.byProvider.find((entry) => entry.provider === 'anthropic');
+      assert.ok(anthropicEntry);
+      assert.equal(anthropicEntry!.sessionCount, 1);
+    } finally {
+      sessionStore.unpin('admin-test-client', 'gpt-4o');
+      sessionManager.endSession(groupSession.sessionId);
+    }
   });
 });
 
