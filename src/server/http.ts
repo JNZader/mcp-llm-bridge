@@ -59,7 +59,8 @@ import { LogQuerySchema } from "../logging/schemas.js";
 import type { RequestLogger } from "../logging/request-logger.js";
 import type { LogContext } from "../logging/types.js";
 import { registerAdminRoutes } from "./admin.js";
-import { ToolCatalog } from "../tool-catalog/index.js";
+import { createCatalogFromMcpTools } from "../tool-catalog/index.js";
+import { getRuntimeMcpTools } from "./mcp.js";
 import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
 import { securityProfileMiddleware } from "../security/enforcer.js";
@@ -1215,11 +1216,14 @@ export function startHttpServer(
 
 	// ── Tool Catalog ─────────────────────────────────────
 
-	const toolCatalog = new ToolCatalog();
+	function getToolCatalog() {
+		return createCatalogFromMcpTools(getRuntimeMcpTools());
+	}
 
 	app.get("/v1/tools/catalog", (c) => {
 		try {
 			const source = c.req.query("source") as import("../tool-catalog/index.js").ToolSource | undefined;
+			const toolCatalog = getToolCatalog();
 			const tools = toolCatalog.listAll(source);
 			return c.json({
 				count: tools.length,
@@ -1244,6 +1248,7 @@ export function startHttpServer(
 			const query = c.req.query("q") ?? "";
 			const limitStr = c.req.query("limit");
 			const limit = limitStr ? parseInt(limitStr, 10) : 10;
+			const toolCatalog = getToolCatalog();
 			const results = toolCatalog.search(query, isNaN(limit) ? 10 : limit);
 			return c.json({
 				query,

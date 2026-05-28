@@ -566,6 +566,17 @@ export const TOOLS = [
   ...PAGEINDEX_TOOL_DEFINITIONS,
 ] as const;
 
+export function getRuntimeMcpTools(): Array<{
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}> {
+  return [
+    ...TOOLS,
+    ...(dynamicToolAdapter?.getToolListEntries() ?? []),
+  ];
+}
+
 /**
  * Handle a tool call by dispatching to the appropriate router/vault method.
  * Exported for testing.
@@ -1332,10 +1343,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
 
   // Default handlers (no security filtering)
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
-      ...TOOLS,
-      ...(dynamicToolAdapter?.getToolListEntries() ?? []),
-    ],
+    tools: getRuntimeMcpTools(),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -1376,10 +1384,7 @@ export async function startMcpServer(router: Router, vault: Vault, groupStore?: 
           enforcer.registerDynamicTool(name, 'read');
         }
         server.setRequestHandler(ListToolsRequestSchema, async () => ({
-          tools: enforcer.filterTools([
-            ...TOOLS,
-            ...(dynamicToolAdapter?.getToolListEntries() ?? []),
-          ]),
+          tools: enforcer.filterTools(getRuntimeMcpTools()),
         }));
       }
     }).catch((e) => {

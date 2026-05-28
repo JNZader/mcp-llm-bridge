@@ -12,6 +12,7 @@ import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
+import { TOOLS } from '../src/server/mcp.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 
 // Create test components once
@@ -190,6 +191,43 @@ describe('GET /v1/providers', () => {
     const provider = data.providers[0] as Record<string, unknown>;
     assert.ok(provider.id);
     assert.ok(typeof provider.available === 'boolean');
+  });
+});
+
+// ── Tool catalog endpoints ─────────────────────────────────
+
+describe('GET /v1/tools/catalog', () => {
+  it('returns the real MCP runtime tool catalog instead of an empty registry', async () => {
+    const res = await request('GET', '/v1/tools/catalog');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      count: number;
+      tools: Array<{ name: string; namespace: string; source: string }>;
+    };
+
+    assert.ok(data.count >= TOOLS.length);
+    assert.ok(data.tools.some((tool) => tool.name === 'llm_generate'));
+    assert.ok(data.tools.some((tool) => tool.name === 'code_search'));
+    assert.ok(data.tools.every((tool) => tool.source === 'mcp'));
+    assert.ok(data.tools.every((tool) => tool.namespace.startsWith('mcp:')));
+  });
+});
+
+describe('GET /v1/tools/search', () => {
+  it('searches across the real MCP runtime catalog', async () => {
+    const res = await request('GET', '/v1/tools/search?q=semantic%20code');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      query: string;
+      count: number;
+      tools: Array<{ name: string }>;
+    };
+
+    assert.equal(data.query, 'semantic code');
+    assert.ok(data.count > 0);
+    assert.equal(data.tools[0]?.name, 'code_search');
   });
 });
 

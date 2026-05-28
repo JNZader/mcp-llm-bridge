@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ToolCatalog } from '../src/tool-catalog/index.js';
+import { createCatalogFromMcpTools, ToolCatalog } from '../src/tool-catalog/index.js';
 
 // ── Registration ──
 
@@ -174,5 +174,34 @@ describe('ToolCatalog serialization', () => {
     const json = catalog.toJSON();
     const restored = ToolCatalog.fromJSON(json);
     assert.equal(restored.size, 0);
+  });
+});
+
+describe('createCatalogFromMcpTools', () => {
+  it('creates populated MCP catalog entries from runtime tool definitions', () => {
+    const catalog = createCatalogFromMcpTools([
+      {
+        name: 'code_search',
+        description: 'Search code semantically',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+        },
+      },
+    ]);
+
+    const tool = catalog.getByName('mcp:code_search');
+    assert.ok(tool);
+    assert.deepEqual(tool.parameters, {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+      },
+      required: ['query'],
+    });
+    assert.deepEqual(tool.tags, ['code', 'search']);
   });
 });

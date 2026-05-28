@@ -21,6 +21,30 @@ export interface ToolEntry extends ToolInput {
   addedAt: string;
 }
 
+export interface CatalogToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+function inferTagsFromToolName(name: string): string[] {
+  return Array.from(new Set(name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)));
+}
+
+export function createCatalogFromMcpTools(tools: CatalogToolDefinition[]): ToolCatalog {
+  const catalog = new ToolCatalog();
+  catalog.registerBulk(
+    tools.map((tool) => ({
+      name: tool.name,
+      source: 'mcp' as const,
+      description: tool.description,
+      parameters: tool.inputSchema,
+      tags: inferTagsFromToolName(tool.name),
+    })),
+  );
+  return catalog;
+}
+
 // ── Catalog ──
 
 export class ToolCatalog {
