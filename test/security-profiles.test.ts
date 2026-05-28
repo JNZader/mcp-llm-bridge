@@ -123,9 +123,9 @@ describe('ToolCategorySchema', () => {
 // ── TOOL_CATEGORIES map ────────────────────────────────────
 
 describe('TOOL_CATEGORIES', () => {
-  it('has exactly 23 tools mapped', () => {
+  it('has exactly 30 tools mapped', () => {
     const count = Object.keys(TOOL_CATEGORIES).length;
-    assert.equal(count, 23, `Expected 23 tools, got ${count}`);
+    assert.equal(count, 30, `Expected 30 tools, got ${count}`);
   });
 
   it('maps every tool to a valid category', () => {
