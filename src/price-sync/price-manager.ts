@@ -25,7 +25,7 @@ export interface Database {
 }
 
 export interface Statement {
-  run(...params: unknown[]): { lastInsertRowid: number };
+  run(...params: unknown[]): { lastInsertRowid: number | bigint };
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown | undefined;
 }
@@ -46,6 +46,13 @@ export class PriceManager {
       defaultCurrency: config?.defaultCurrency ?? DEFAULT_CURRENCY,
     };
     this.refreshCache();
+  }
+
+  /**
+   * Alias for syncFromUpstream — returns the sync result.
+   */
+  syncPrices(): Promise<PriceSyncResult> {
+    return this.syncFromUpstream();
   }
 
   /**

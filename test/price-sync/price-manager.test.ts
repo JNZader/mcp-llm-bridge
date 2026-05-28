@@ -5,7 +5,9 @@
  * Following Red → Green → Refactor cycle
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+
 import {
   PriceManager,
   createPriceManager,
@@ -178,14 +180,14 @@ function createMockDatabase(): Database {
 // === Mock Fetch ===
 
 function mockFetch(response: unknown): typeof fetch {
-  return vi.fn().mockResolvedValue({
+  return () => Promise.resolve({
     ok: true,
     json: () => Promise.resolve(response),
   } as Response);
 }
 
 function mockFetchError(status: number): typeof fetch {
-  return vi.fn().mockResolvedValue({
+  return () => Promise.resolve({
     ok: false,
     status,
   } as Response);
@@ -200,7 +202,6 @@ describe('PriceManager', () => {
   beforeEach(() => {
     db = createMockDatabase();
     manager = createPriceManager(db);
-    vi.restoreAllMocks();
   });
 
   describe('syncFromUpstream', () => {
@@ -219,16 +220,17 @@ describe('PriceManager', () => {
 
       const result = await manager.syncFromUpstream();
 
-      expect(result.added).toBe(1);
-      expect(result.updated).toBe(0);
-      expect(result.unchanged).toBe(0);
+      assert.strictEqual(result.added, 1);
+      assert.strictEqual(result.updated, 0);
+      assert.strictEqual(result.unchanged, 0);
     });
 
     it('should handle fetch errors', async () => {
       global.fetch = mockFetchError(500);
 
-      await expect(manager.syncFromUpstream()).rejects.toThrow(
-        'Failed to fetch prices'
+      await assert.rejects(
+        async () => manager.syncFromUpstream(),
+        /Failed to fetch prices/
       );
     });
 
@@ -263,8 +265,8 @@ describe('PriceManager', () => {
 
       const result = await manager.syncFromUpstream();
 
-      expect(result.updated).toBe(1);
-      expect(result.added).toBe(0);
+      assert.strictEqual(result.updated, 1);
+      assert.strictEqual(result.added, 0);
     });
 
     it('should not update overridden prices on sync', async () => {
@@ -305,12 +307,12 @@ describe('PriceManager', () => {
       const result = await manager.syncFromUpstream();
 
       // Should not update the overridden price
-      expect(result.updated).toBe(0);
-      expect(result.unchanged).toBe(1);
+      assert.strictEqual(result.updated, 0);
+      assert.strictEqual(result.unchanged, 1);
 
       const price = manager.getPrice('openai', 'gpt-4o');
-      expect(price?.inputPrice).toBe(999.0);
-      expect(price?.outputPrice).toBe(999.0);
+      assert.strictEqual(price?.inputPrice, 999.0);
+      assert.strictEqual(price?.outputPrice, 999.0);
     });
 
     it('should log sync history', async () => {
@@ -329,9 +331,9 @@ describe('PriceManager', () => {
       await manager.syncFromUpstream();
 
       const history = manager.getSyncHistory(10);
-      expect(history.length).toBeGreaterThan(0);
-      expect(history[0]!.modelsAdded).toBe(1);
-      expect(history[0]!.modelsUpdated).toBe(0);
+      assert.ok(history.length > 0);
+      assert.strictEqual(history[0]!.modelsAdded, 1);
+      assert.strictEqual(history[0]!.modelsUpdated, 0);
     });
   });
 
@@ -349,10 +351,10 @@ describe('PriceManager', () => {
       // (1000/1M) * $2.50 = $0.0025 input
       // (500/1M) * $10.00 = $0.005 output
       // Total: $0.0075
-      expect(cost.inputCost).toBe(0.0025);
-      expect(cost.outputCost).toBe(0.005);
-      expect(cost.totalCost).toBe(0.0075);
-      expect(cost.currency).toBe('USD');
+      assert.strictEqual(cost.inputCost, 0.0025);
+      assert.strictEqual(cost.outputCost, 0.005);
+      assert.strictEqual(cost.totalCost, 0.0075);
+      assert.strictEqual(cost.currency, 'USD');
     });
 
     it('should support Anthropic cache pricing', () => {
@@ -372,9 +374,9 @@ describe('PriceManager', () => {
         { read: 800, write: 200 }
       );
 
-      expect(cost.cacheReadCost).toBe((800 / 1_000_000) * 1.5);
-      expect(cost.cacheWriteCost).toBe((200 / 1_000_000) * 3.75);
-      expect(cost.totalCost).toBeGreaterThan(cost.inputCost + cost.outputCost);
+      assert.strictEqual(cost.cacheReadCost, (800 / 1_000_000) * 1.5);
+      assert.strictEqual(cost.cacheWriteCost, (200 / 1_000_000) * 3.75);
+      assert.ok(cost.totalCost > cost.inputCost + cost.outputCost);
 
       // Verify breakdown
       const expectedInputCost = (1000 / 1_000_000) * 3.0;
@@ -387,20 +389,20 @@ describe('PriceManager', () => {
         expectedCacheReadCost +
         expectedCacheWriteCost;
 
-      expect(cost.inputCost).toBe(expectedInputCost);
-      expect(cost.outputCost).toBe(expectedOutputCost);
-      expect(cost.cacheReadCost).toBe(expectedCacheReadCost);
-      expect(cost.cacheWriteCost).toBe(expectedCacheWriteCost);
-      expect(cost.totalCost).toBe(expectedTotal);
+      assert.strictEqual(cost.inputCost, expectedInputCost);
+      assert.strictEqual(cost.outputCost, expectedOutputCost);
+      assert.strictEqual(cost.cacheReadCost, expectedCacheReadCost);
+      assert.strictEqual(cost.cacheWriteCost, expectedCacheWriteCost);
+      assert.strictEqual(cost.totalCost, expectedTotal);
     });
 
     it('should return zero cost for unknown model', () => {
       const cost = manager.calculateCost('unknown', 'unknown-model', 1000, 500);
 
-      expect(cost.inputCost).toBe(0);
-      expect(cost.outputCost).toBe(0);
-      expect(cost.totalCost).toBe(0);
-      expect(cost.currency).toBe('USD');
+      assert.strictEqual(cost.inputCost, 0);
+      assert.strictEqual(cost.outputCost, 0);
+      assert.strictEqual(cost.totalCost, 0);
+      assert.strictEqual(cost.currency, 'USD');
     });
 
     it('should handle missing cache pricing gracefully', () => {
@@ -420,9 +422,9 @@ describe('PriceManager', () => {
       );
 
       // Should not have cache costs since no cache pricing defined
-      expect(cost.cacheReadCost).toBeUndefined();
-      expect(cost.cacheWriteCost).toBeUndefined();
-      expect(cost.totalCost).toBe(cost.inputCost + cost.outputCost);
+      assert.strictEqual(cost.cacheReadCost, undefined);
+      assert.strictEqual(cost.cacheWriteCost, undefined);
+      assert.strictEqual(cost.totalCost, cost.inputCost + cost.outputCost);
     });
   });
 
@@ -435,9 +437,9 @@ describe('PriceManager', () => {
       });
 
       const price = manager.getPrice('custom', 'custom-model');
-      expect(price).not.toBeNull();
-      expect(price?.inputPrice).toBe(5.0);
-      expect(price?.outputPrice).toBe(10.0);
+      assert.notStrictEqual(price, null);
+      assert.strictEqual(price?.inputPrice, 5.0);
+      assert.strictEqual(price?.outputPrice, 10.0);
     });
 
     it('should update existing price and mark as overridden', () => {
@@ -453,8 +455,8 @@ describe('PriceManager', () => {
       });
 
       const price = manager.getPrice('openai', 'gpt-4o');
-      expect(price?.inputPrice).toBe(999.0);
-      expect(price?.outputPrice).toBe(10.0); // Should keep old output price
+      assert.strictEqual(price?.inputPrice, 999.0);
+      assert.strictEqual(price?.outputPrice, 10.0); // Should keep old output price
     });
   });
 
@@ -483,10 +485,10 @@ describe('PriceManager', () => {
       // This should now update the price since override was cleared
       manager = createPriceManager(db); // Create fresh manager to reload cache
       const result = await manager.syncFromUpstream();
-      expect(result.updated).toBe(1); // Price was cleared and now updated
+      assert.strictEqual(result.updated, 1); // Price was cleared and now updated
 
       const price = manager.getPrice('openai', 'gpt-4o');
-      expect(price?.inputPrice).toBe(2.5);
+      assert.strictEqual(price?.inputPrice, 2.5);
     });
   });
 
@@ -504,17 +506,17 @@ describe('PriceManager', () => {
 
       manager.startAutoSync(1000);
 
-      expect(manager.isAutoSyncRunning()).toBe(true);
+      assert.strictEqual(manager.isAutoSyncRunning(), true);
 
       manager.stopAutoSync();
     });
 
     it('should stop auto-sync', () => {
       manager.startAutoSync(1000);
-      expect(manager.isAutoSyncRunning()).toBe(true);
+      assert.strictEqual(manager.isAutoSyncRunning(), true);
 
       manager.stopAutoSync();
-      expect(manager.isAutoSyncRunning()).toBe(false);
+      assert.strictEqual(manager.isAutoSyncRunning(), false);
     });
 
     it('should auto-sync periodically', () => {
@@ -528,7 +530,7 @@ describe('PriceManager', () => {
         manager.startAutoSync(100); // 100ms for testing
 
         setTimeout(() => {
-          expect(syncCount).toBeGreaterThanOrEqual(2);
+          assert.ok(syncCount >= 2);
           manager.stopAutoSync();
           resolve();
         }, 250);
@@ -542,7 +544,7 @@ describe('PriceManager', () => {
       manager.setPriceOverride('anthropic', 'claude-3', { inputPrice: 3.0 });
 
       const prices = manager.getAllPrices();
-      expect(prices.length).toBe(2);
+      assert.strictEqual(prices.length, 2);
     });
 
     it('should filter to overrides only', () => {
@@ -561,8 +563,8 @@ describe('PriceManager', () => {
       manager.setPriceOverride('anthropic', 'claude-3', { inputPrice: 999.0 });
 
       const prices = manager.getAllPrices({ overridesOnly: true });
-      expect(prices.length).toBe(1);
-      expect(prices[0]!.provider).toBe('anthropic');
+      assert.strictEqual(prices.length, 1);
+      assert.strictEqual(prices[0]!.provider, 'anthropic');
     });
   });
 
@@ -579,7 +581,7 @@ describe('PriceManager', () => {
       await manager.syncFromUpstream();
 
       const history = manager.getSyncHistory(10);
-      expect(history.length).toBeGreaterThan(0);
+      assert.ok(history.length > 0);
     });
 
     it('should respect limit parameter', async () => {
@@ -597,7 +599,7 @@ describe('PriceManager', () => {
       }
 
       const history = manager.getSyncHistory(3);
-      expect(history.length).toBeLessThanOrEqual(3);
+      assert.ok(history.length <= 3);
     });
   });
 });
@@ -632,19 +634,19 @@ describe('PriceFetcher', () => {
     const fetcher = new PriceFetcher();
     const prices = await fetcher.fetchPrices();
 
-    expect(prices.length).toBe(3);
+    assert.strictEqual(prices.length, 3);
 
     const gpt4o = prices.find((p) => p.modelId === 'gpt-4o');
-    expect(gpt4o).toBeDefined();
-    expect(gpt4o?.provider).toBe('openai');
-    expect(gpt4o?.inputPrice).toBe(2.5);
-    expect(gpt4o?.outputPrice).toBe(10.0);
+    assert.ok(gpt4o !== undefined);
+    assert.strictEqual(gpt4o?.provider, 'openai');
+    assert.strictEqual(gpt4o?.inputPrice, 2.5);
+    assert.strictEqual(gpt4o?.outputPrice, 10.0);
 
     const opus = prices.find((p) => p.modelId === 'claude-3-opus');
-    expect(opus).toBeDefined();
-    expect(opus?.provider).toBe('anthropic');
-    expect(opus?.cacheReadPrice).toBe(1.5);
-    expect(opus?.cacheWritePrice).toBe(3.75);
+    assert.ok(opus !== undefined);
+    assert.strictEqual(opus?.provider, 'anthropic');
+    assert.strictEqual(opus?.cacheReadPrice, 1.5);
+    assert.strictEqual(opus?.cacheWritePrice, 3.75);
   });
 
   it('should normalize provider names', async () => {
@@ -668,20 +670,23 @@ describe('PriceFetcher', () => {
     const fetcher = new PriceFetcher();
     const prices = await fetcher.fetchPrices();
 
-    expect(prices.length).toBe(2);
+    assert.strictEqual(prices.length, 2);
 
     const gemini = prices.find((p) => p.provider === 'gemini');
-    expect(gemini).toBeDefined();
+    assert.ok(gemini !== undefined);
 
     const deepseek = prices.find((p) => p.provider === 'deepseek');
-    expect(deepseek).toBeDefined();
+    assert.ok(deepseek !== undefined);
   });
 
   it('should handle fetch errors', async () => {
     global.fetch = mockFetchError(500);
 
     const fetcher = new PriceFetcher();
-    await expect(fetcher.fetchPrices()).rejects.toThrow('Failed to fetch prices');
+    await assert.rejects(
+      async () => fetcher.fetchPrices(),
+      /Failed to fetch prices/
+    );
   });
 
   it('should handle missing pricing fields', async () => {
@@ -699,8 +704,8 @@ describe('PriceFetcher', () => {
     const fetcher = new PriceFetcher();
     const prices = await fetcher.fetchPrices();
 
-    expect(prices.length).toBe(1);
-    expect(prices[0]!.inputPrice).toBe(0);
-    expect(prices[0]!.outputPrice).toBe(0);
+    assert.strictEqual(prices.length, 1);
+    assert.strictEqual(prices[0]!.inputPrice, 0);
+    assert.strictEqual(prices[0]!.outputPrice, 0);
   });
 });

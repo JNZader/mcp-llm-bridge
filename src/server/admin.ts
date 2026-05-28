@@ -29,6 +29,7 @@ import {
   isProviderType,
   PROVIDER_TYPE,
 } from '../model-sync/index.js';
+import { PriceManager } from '../price-sync/index.js';
 
 // ── Admin Auth Middleware ─────────────────────────────────
 
@@ -663,6 +664,23 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
         })),
         count: history.length,
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  // ── POST /v1/admin/prices/sync ───────────────────────────
+
+  app.post('/v1/admin/prices/sync', async (c) => {
+    try {
+      if (!deps.db) {
+        return c.json({ error: 'Database not configured', code: 'NOT_CONFIGURED' }, 500);
+      }
+
+      const priceManager = new PriceManager(deps.db);
+      const result = await priceManager.syncPrices();
+      return c.json({ ok: true, synced: result.added + result.updated, details: result });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return c.json({ error: message }, 500);
