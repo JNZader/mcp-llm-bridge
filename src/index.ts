@@ -28,7 +28,6 @@ import { GroupStore } from "./core/groups.js";
 import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
 import { Router } from "./core/router.js";
-import { SessionStore } from "./core/session.js";
 import { SessionManager } from "./session/index.js";
 import { registry } from "./core/transformer.js";
 import { StateManager } from "./crdt/index.js";
@@ -91,12 +90,9 @@ router.setTransformerRegistry(registry);
 const groupStore = new GroupStore(config.dbPath);
 router.setGroupStore(groupStore);
 
-// Initialize session store (in-memory with TTL sweep)
-const sessionStore = new SessionStore();
-router.setSessionStore(sessionStore);
-
 // Initialize session manager (session affinity for sticky routing)
 const sessionManager = new SessionManager();
+router.setSessionManager(sessionManager);
 
 // Initialize context compression service (background pre-computation)
 const compressor = new CompressorService();
@@ -233,7 +229,7 @@ async function setupGracefulShutdown(vault: Vault): Promise<void> {
 		freeModelRouter.destroy();
 		costTracker.destroy();
 		groupStore.close();
-		sessionStore.destroy();
+		sessionManager.stopCleanup();
 		cleanupAllProviderHomes();
 		vault.destroy();
 		await shutdownTracing();

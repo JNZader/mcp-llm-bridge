@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Router } from '../src/core/router.js';
 import { GroupStore } from '../src/core/groups.js';
-import { SessionStore } from '../src/core/session.js';
+import { SessionManager } from '../src/session/session-manager.js';
 import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../src/core/types.js';
 
 // ── Mock Provider ──────────────────────────────────────────
@@ -57,7 +57,7 @@ function createMockProvider(
 describe('Balancer Integration', () => {
   let router: Router;
   let groupStore: GroupStore;
-  let sessionStore: SessionStore;
+  let sessionManager: SessionManager;
   let testDir: string;
 
   beforeEach(() => {
@@ -67,14 +67,14 @@ describe('Balancer Integration', () => {
 
     router = new Router();
     groupStore = new GroupStore(dbPath);
-    sessionStore = new SessionStore(60_000);
+    sessionManager = new SessionManager({ cleanupIntervalMs: 60_000 });
 
     router.setGroupStore(groupStore);
-    router.setSessionStore(sessionStore);
+    router.setSessionManager(sessionManager);
   });
 
   afterEach(() => {
-    sessionStore.destroy();
+    sessionManager.stopCleanup();
     groupStore.close();
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true, force: true });
@@ -137,17 +137,21 @@ describe('Balancer Integration', () => {
 
   describe('Session Stickiness + Router', () => {
     it('pins and retrieves session correctly', () => {
-      sessionStore.pin('app-1', 'gpt-4', 'openai', 'key-a', 10_000);
+      sessionManager.pinRouterStickySession('app-1', 'gpt-4', 'openai', 'key-a', 10_000);
 
-      const pinned = sessionStore.get('app-1', 'gpt-4');
-      assert.deepEqual(pinned, { provider: 'openai', keyName: 'key-a' });
+      const pinned = sessionManager.getRouterStickySession('app-1', 'gpt-4');
+      assert.ok(pinned);
+      assert.equal(pinned.provider, 'openai');
+      assert.equal(pinned.keyId, 'key-a');
     });
 
-    it('session store is accessible from router', () => {
-      assert.ok(router.sessionStore);
-      router.sessionStore.pin('app-1', 'gpt-4', 'openai', 'key-a', 10_000);
-      const pinned = router.sessionStore.get('app-1', 'gpt-4');
-      assert.deepEqual(pinned, { provider: 'openai', keyName: 'key-a' });
+    it('session manager is accessible from router', () => {
+      assert.ok(router.sessionManager);
+      router.sessionManager.pinRouterStickySession('app-1', 'gpt-4', 'openai', 'key-a', 10_000);
+      const pinned = router.sessionManager.getRouterStickySession('app-1', 'gpt-4');
+      assert.ok(pinned);
+      assert.equal(pinned.provider, 'openai');
+      assert.equal(pinned.keyId, 'key-a');
     });
   });
 

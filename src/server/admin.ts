@@ -24,6 +24,7 @@ import { loadCatalog, importCatalog } from '../free-models/registry.js';
 import { createApiKey, revokeApiKey, listApiKeys } from '../auth/keys.js';
 import { discoverModels } from '../model-discovery/discovery.js';
 import type { SessionManager } from '../session/session-manager.js';
+import { SESSION_ENTRY_KIND } from '../session/types.js';
 import {
   ModelSyncManager,
   isProviderType,
@@ -298,16 +299,70 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
   app.get('/v1/admin/sessions', (c) => {
     try {
       const sessionManager = deps.sessionManager;
-      const sessionStore = deps.router.sessionStore;
+      const routerSessionManager = deps.router.sessionManager;
 
-      if (!sessionManager && !sessionStore) {
+      if (!sessionManager && !routerSessionManager) {
         return c.json({ error: 'Session systems not available', code: 'NOT_CONFIGURED' }, 503);
       }
 
+      const groupActiveSessions = sessionManager
+        ? sessionManager.getActiveSessions().filter(
+            (session) => session.kind === SESSION_ENTRY_KIND.API_GROUP,
+          )
+        : [];
+      const routerStickySessions = routerSessionManager
+        ? {
+            activeSessionCount: routerSessionManager.getActiveSessions().filter(
+              (session) => session.kind === SESSION_ENTRY_KIND.ROUTER_STICKY,
+            ).length,
+            computedAt: Date.now(),
+          }
+        : null;
+      const groupSessions = sessionManager
+        ? {
+            activeSessionCount: groupActiveSessions.length,
+            averageSessionAge: groupActiveSessions.length > 0
+              ? Math.floor(
+                  groupActiveSessions.reduce(
+                    (total, session) => total + (Date.now() - session.createdAt),
+                    0,
+                  ) / groupActiveSessions.length,
+                )
+              : 0,
+            byProvider: Array.from(
+              groupActiveSessions.reduce(
+                (providers, session) => {
+                  const current = providers.get(session.provider) ?? {
+                    provider: session.provider,
+                    sessionCount: 0,
+                    avgTtlRemaining: 0,
+                    totalTtlRemaining: 0,
+                  };
+                  current.sessionCount += 1;
+                  current.totalTtlRemaining += session.expiresAt - Date.now();
+                  providers.set(session.provider, current);
+                  return providers;
+                },
+                new Map<string, {
+                  provider: string;
+                  sessionCount: number;
+                  avgTtlRemaining: number;
+                  totalTtlRemaining: number;
+                }>(),
+              ).values(),
+            ).map((entry) => ({
+              provider: entry.provider,
+              sessionCount: entry.sessionCount,
+              avgTtlRemaining: Math.floor(entry.totalTtlRemaining / entry.sessionCount / 1000),
+            })),
+            computedAt: Date.now(),
+          }
+        : null;
+
       return c.json({
-        note: 'Router sticky routing uses SessionStore pins. Group session metrics come from SessionManager. These systems are separate and should not be compared as a single total.',
-        routerStickySessions: sessionStore ? sessionStore.getMetrics() : null,
-        groupSessions: sessionManager ? sessionManager.getDashboardMetrics() : null,
+        note: 'Router sticky routing and group sessions both use SessionManager, but they remain separate session kinds and should not be compared as a single total.',
+        routerStickySessions,
+        groupSessions,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

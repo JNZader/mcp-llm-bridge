@@ -25,7 +25,7 @@ import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.j
 import type { TransformerRegistry } from './transformer.js';
 import type { StreamingOutboundTransformer } from '../transformers/streaming.js';
 import type { GroupStore, ProviderGroup } from './groups.js';
-import type { SessionStore } from './session.js';
+import type { SessionManager } from '../session/session-manager.js';
 import type { CostTracker } from './cost-tracker.js';
 import type { FreeModelRouter } from '../free-models/router.js';
 import type { LatencyMeasurer } from '../latency/measurer.js';
@@ -97,7 +97,7 @@ export class Router {
   private _providers: LLMProvider[] = [];
   private _transformerRegistry: TransformerRegistry | null = null;
   private _groupStore: GroupStore | null = null;
-  private _sessionStore: SessionStore | null = null;
+  private _sessionManager: SessionManager | null = null;
   private _costTracker: CostTracker | null = null;
   private _freeModelRouter: FreeModelRouter | null = null;
   private _latencyMeasurer: LatencyMeasurer | null = null;
@@ -177,14 +177,14 @@ export class Router {
     return this._groupStore;
   }
 
-  /** Set the session store for stickiness. */
-  setSessionStore(store: SessionStore): void {
-    this._sessionStore = store;
+  /** Set the session manager for stickiness. */
+  setSessionManager(manager: SessionManager): void {
+    this._sessionManager = manager;
   }
 
-  /** Get the session store (null if not set). */
-  get sessionStore(): SessionStore | null {
-    return this._sessionStore;
+  /** Get the session manager (null if not set). */
+  get sessionManager(): SessionManager | null {
+    return this._sessionManager;
   }
 
   /** Set the model router for cost-aware routing. */
@@ -498,8 +498,8 @@ export class Router {
     const clientId = optimizedRequest.metadata?.['clientId'] as string | undefined;
 
     // 1. Check session stickiness
-    if (this._sessionStore && clientId && model) {
-      const pinned = this._sessionStore.get(clientId, model);
+    if (this._sessionManager && clientId && model) {
+      const pinned = this._sessionManager.getRouterStickySession(clientId, model);
       if (pinned) {
         const stickyProvider = this._providers.find((p) => p.id === pinned.provider);
         if (stickyProvider) {
@@ -592,13 +592,13 @@ export class Router {
         );
 
         // Pin session on success if stickiness is enabled
-        if (this._sessionStore && clientId && model && matchedGroup?.stickyTTL) {
-          this._sessionStore.pin(
+        if (this._sessionManager && clientId && model && matchedGroup?.stickyTTL) {
+          this._sessionManager.pinRouterStickySession(
             clientId,
             model,
             provider.id,
             'default',
-            matchedGroup.stickyTTL * 1000, // stickyTTL is in seconds, pin expects ms
+            matchedGroup.stickyTTL * 1000,
           );
         }
 

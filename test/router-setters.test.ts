@@ -9,6 +9,7 @@ import { Router } from '../src/core/router.js';
 import type { LocalLLMClient } from '../src/core/router.js';
 import { ModelRouter } from '../src/model-routing/router.js';
 import { ApprovalStore } from '../src/approval/index.js';
+import { SessionManager } from '../src/session/session-manager.js';
 
 describe('Router setters', () => {
   it('setModelRouter stores and retrieves ModelRouter', () => {
@@ -53,7 +54,20 @@ describe('Router setters', () => {
     assert.ok(router.approvalStore !== null);
   });
 
-  it('all three setters can be set on the same router instance', () => {
+  it('setSessionManager stores and retrieves SessionManager', () => {
+    const router = new Router();
+    const sessionManager = new SessionManager();
+
+    assert.equal(router.sessionManager, null);
+
+    router.setSessionManager(sessionManager);
+    assert.equal(router.sessionManager, sessionManager);
+    assert.ok(router.sessionManager !== null);
+
+    sessionManager.stopCleanup();
+  });
+
+  it('all four setters can be set on the same router instance', () => {
     const router = new Router();
     const modelRouter = new ModelRouter({ enabled: true, endpoints: [], rules: [], defaultEndpoint: '', qualityThreshold: 0.7, qualityWindowSize: 50 });
     const localClient: LocalLLMClient = {
@@ -67,13 +81,18 @@ describe('Router setters', () => {
       }),
     };
     const approvalStore = new ApprovalStore();
+    const sessionManager = new SessionManager();
 
     router.setModelRouter(modelRouter);
     router.setLocalLLMClient(localClient);
     router.setApprovalStore(approvalStore);
+    router.setSessionManager(sessionManager);
 
     assert.equal(router.modelRouter, modelRouter);
     assert.equal(router.localLLMClient, localClient);
     assert.equal(router.approvalStore, approvalStore);
+    assert.equal(router.sessionManager, sessionManager);
+
+    sessionManager.stopCleanup();
   });
 });

@@ -24,7 +24,6 @@ import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { GroupStore } from '../src/core/groups.js';
 import { CostTracker } from '../src/core/cost-tracker.js';
-import { SessionStore } from '../src/core/session.js';
 import { SessionManager } from '../src/session/session-manager.js';
 import {
   getCircuitBreakerRegistry,
@@ -53,12 +52,11 @@ for (const adapter of createAllAdapters(vault)) {
 
 const groupStore = new GroupStore(dbPath);
 const costTracker = new CostTracker({ dbPath });
-const sessionStore = new SessionStore();
 const sessionManager = new SessionManager({ ttlSeconds: 60, cleanupIntervalMs: 60_000 });
 
 // Wire up router
 router.setCostTracker(costTracker);
-router.setSessionStore(sessionStore);
+router.setSessionManager(sessionManager);
 
 let server: http.Server;
 let port = 0;
@@ -99,7 +97,6 @@ after(() => {
       vault.close();
       groupStore.close();
       costTracker.destroy();
-      sessionStore.destroy();
       sessionManager.stopCleanup();
       for (const suffix of ['', '-wal', '-shm']) {
         const filePath = dbPath + suffix;
@@ -291,7 +288,7 @@ describe('GET /v1/admin/health', () => {
 
 describe('GET /v1/admin/sessions', () => {
   it('reports router sticky sessions separately from group sessions', async () => {
-    sessionStore.pin('admin-test-client', 'gpt-4o', 'openai', 'default', 10_000);
+    sessionManager.pinRouterStickySession('admin-test-client', 'gpt-4o', 'openai', 'default', 10_000);
     const groupSession = sessionManager.getOrCreateSession(
       { apiKeyId: 4242, provider: 'anthropic', model: 'claude-3' },
       'anthropic',
@@ -314,7 +311,6 @@ describe('GET /v1/admin/sessions', () => {
         } | null;
       };
 
-      assert.match(data.note, /SessionStore/i);
       assert.match(data.note, /SessionManager/i);
       assert.ok(data.routerStickySessions, 'routerStickySessions should be present');
       assert.equal(data.routerStickySessions!.activeSessionCount, 1);
@@ -327,7 +323,7 @@ describe('GET /v1/admin/sessions', () => {
       assert.ok(anthropicEntry);
       assert.equal(anthropicEntry!.sessionCount, 1);
     } finally {
-      sessionStore.unpin('admin-test-client', 'gpt-4o');
+      sessionManager.unpinRouterStickySession('admin-test-client', 'gpt-4o');
       sessionManager.endSession(groupSession.sessionId);
     }
   });
