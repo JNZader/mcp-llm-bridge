@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 
 import { ProfileEnforcer } from '../src/security/enforcer.js';
 import { TOOL_CATEGORIES } from '../src/security/profiles.js';
+import { getRuntimeMcpTools } from '../src/server/mcp.js';
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -16,11 +17,11 @@ function toolDef(name: string) {
   return { name, description: `${name} tool`, inputSchema: { type: 'object' as const, properties: {} } };
 }
 
-/** All tool names from the TOOL_CATEGORIES map. */
-const ALL_TOOL_NAMES = Object.keys(TOOL_CATEGORIES);
+/** Static MCP runtime tools from the exported registry. */
+const ALL_TOOLS = getRuntimeMcpTools();
 
-/** Build a full tool list matching the categories map. */
-const ALL_TOOLS = ALL_TOOL_NAMES.map(toolDef);
+/** All static MCP tool names from the runtime registry. */
+const ALL_TOOL_NAMES = ALL_TOOLS.map((tool) => tool.name);
 
 // Track enforcers for cleanup
 const enforcers: ProfileEnforcer[] = [];
@@ -320,59 +321,26 @@ describe('ProfileEnforcer.wrapHandlers', () => {
 // ── CI Guard: TOOL_CATEGORIES covers all registered tools ──
 
 describe('CI Guard: TOOL_CATEGORIES coverage', () => {
-  it('every tool in mcp.ts TOOLS array has a category mapping', async () => {
-    // Dynamically import to get the TOOLS constant
-    // We can't import TOOLS directly since it's not exported,
-    // so we verify against our known list of tool names from the source.
-    const expectedToolNames = [
-      'llm_generate',
-      'llm_models',
-      'local_llm_generate',
-      'vault_store',
-      'vault_list',
-      'vault_delete',
-      'vault_store_file',
-      'vault_list_files',
-      'vault_delete_file',
-      'list_groups',
-      'create_group',
-      'delete_group',
-      'configure_circuit_breaker',
-      'circuit_breaker_stats',
-      'usage_summary',
-      'usage_query',
-      'code_search',
-      'index_codebase',
-      'shared_state',
-      'approval_list',
-      'approval_approve',
-      'approval_deny',
-      'discover_models',
-      'conversation_paginate',
-      'conversation_get_page',
-      'conversation_context',
-      'conversation_navigate',
-      'conversation_info',
-      'conversation_find_relevant',
-      'conversation_check_compaction',
-    ];
+  it('every runtime MCP tool has a category mapping and no stale entries remain', () => {
+    const runtimeToolNames = getRuntimeMcpTools().map((tool) => tool.name).sort();
+    const categoryToolNames = Object.keys(TOOL_CATEGORIES).sort();
 
-    const categoryToolNames = Object.keys(TOOL_CATEGORIES);
+    assert.deepEqual(
+      categoryToolNames,
+      runtimeToolNames,
+      'TOOL_CATEGORIES must exactly match the exported runtime MCP tool registry',
+    );
+  });
 
-    // Every registered tool must have a category
-    for (const name of expectedToolNames) {
-      assert.ok(
-        categoryToolNames.includes(name),
-        `Registered tool "${name}" is missing from TOOL_CATEGORIES — add it!`,
-      );
-    }
+  it('dynamic tools still require explicit registration and stay read-only by default', () => {
+    const restricted = createEnforcer('restricted');
+    const open = createEnforcer('open');
 
-    // Every categorized tool must be a registered tool (no stale entries)
-    for (const name of categoryToolNames) {
-      assert.ok(
-        expectedToolNames.includes(name),
-        `TOOL_CATEGORIES has stale entry "${name}" — tool no longer registered in mcp.ts`,
-      );
-    }
+    assert.equal(restricted.authorize('dynamic_runtime_tool'), false);
+    restricted.registerDynamicTool('dynamic_runtime_tool', 'read');
+    open.registerDynamicTool('dynamic_runtime_tool', 'read');
+
+    assert.equal(restricted.authorize('dynamic_runtime_tool'), true);
+    assert.equal(open.authorize('dynamic_runtime_tool'), false);
   });
 });

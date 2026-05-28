@@ -13,6 +13,7 @@ import {
   TOOL_CATEGORIES,
   PROFILES,
 } from '../src/security/profiles.js';
+import { getRuntimeMcpTools } from '../src/server/mcp.js';
 
 // ── Zod Schema Validation ──────────────────────────────────
 
@@ -123,9 +124,15 @@ describe('ToolCategorySchema', () => {
 // ── TOOL_CATEGORIES map ────────────────────────────────────
 
 describe('TOOL_CATEGORIES', () => {
-  it('has exactly 30 tools mapped', () => {
-    const count = Object.keys(TOOL_CATEGORIES).length;
-    assert.equal(count, 30, `Expected 30 tools, got ${count}`);
+  it('covers the runtime MCP tool registry exactly', () => {
+    const runtimeToolNames = getRuntimeMcpTools().map((tool) => tool.name).sort();
+    const categorizedToolNames = Object.keys(TOOL_CATEGORIES).sort();
+
+    assert.deepEqual(
+      categorizedToolNames,
+      runtimeToolNames,
+      'TOOL_CATEGORIES must match the exported runtime MCP tool registry',
+    );
   });
 
   it('maps every tool to a valid category', () => {
@@ -138,36 +145,61 @@ describe('TOOL_CATEGORIES', () => {
     }
   });
 
-  it('contains expected tool names', () => {
-    const expectedTools = [
-      'llm_generate',
-      'llm_models',
-      'local_llm_generate',
-      'vault_store',
-      'vault_delete',
-      'vault_store_file',
-      'vault_delete_file',
-      'vault_list',
-      'vault_list_files',
-      'list_groups',
-      'create_group',
-      'delete_group',
-      'approval_approve',
-      'approval_deny',
-      'circuit_breaker_stats',
-      'usage_summary',
-      'usage_query',
-      'code_search',
-      'approval_list',
-      'discover_models',
-      'configure_circuit_breaker',
-      'index_codebase',
-      'shared_state',
-    ];
-    for (const name of expectedTools) {
-      assert.ok(
-        name in TOOL_CATEGORIES,
-        `Expected tool "${name}" in TOOL_CATEGORIES`,
+  it('maps conversation tools to read', () => {
+    const conversationTools = getRuntimeMcpTools()
+      .map((tool) => tool.name)
+      .filter((name) => name.startsWith('conversation_'))
+      .sort();
+
+    assert.deepEqual(conversationTools, [
+      'conversation_check_compaction',
+      'conversation_context',
+      'conversation_find_relevant',
+      'conversation_get_page',
+      'conversation_info',
+      'conversation_navigate',
+      'conversation_paginate',
+    ]);
+
+    for (const name of conversationTools) {
+      assert.equal(
+        TOOL_CATEGORIES[name],
+        'read',
+        `Conversation tool "${name}" should be read-only`,
+      );
+    }
+  });
+
+  it('keeps sensitive tools in their intended categories', () => {
+    const expectedCategories = {
+      llm_generate: 'generate',
+      llm_models: 'generate',
+      local_llm_generate: 'generate',
+      vault_store: 'destructive',
+      vault_delete: 'destructive',
+      vault_store_file: 'destructive',
+      vault_delete_file: 'destructive',
+      create_group: 'destructive',
+      delete_group: 'destructive',
+      approval_approve: 'destructive',
+      approval_deny: 'destructive',
+      vault_list: 'read',
+      vault_list_files: 'read',
+      usage_summary: 'read',
+      usage_query: 'read',
+      code_search: 'read',
+      approval_list: 'read',
+      discover_models: 'read',
+      configure_circuit_breaker: 'admin',
+      index_codebase: 'admin',
+      shared_state: 'admin',
+    } as const;
+
+    for (const [toolName, category] of Object.entries(expectedCategories)) {
+      assert.equal(
+        TOOL_CATEGORIES[toolName],
+        category,
+        `Tool "${toolName}" should stay in category "${category}"`,
       );
     }
   });
