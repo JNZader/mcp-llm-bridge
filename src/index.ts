@@ -92,6 +92,7 @@ router.setGroupStore(groupStore);
 
 // Initialize session manager (session affinity for sticky routing)
 const sessionManager = new SessionManager();
+sessionManager.startCleanup();
 router.setSessionManager(sessionManager);
 
 // Initialize context compression service (background pre-computation)
