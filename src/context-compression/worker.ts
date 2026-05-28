@@ -5,7 +5,7 @@
  * compressing them via the configured strategy and storing
  * results in the LRU cache.
  *
- * Follows the destroy() pattern from SessionStore / GroupStore.
+ * Follows the destroy() pattern used by SessionManager / GroupStore.
  */
 
 import type { CompressionQueueItem } from './types.js';
@@ -35,7 +35,7 @@ export class BackgroundCompressionWorker {
 
     this.timer = setInterval(() => this.processQueue(), this.intervalMs);
 
-    // Unref so it doesn't keep the process alive (matches SessionStore pattern)
+    // Unref so it doesn't keep the process alive (matches session cleanup patterns)
     if (typeof this.timer === 'object' && 'unref' in this.timer) {
       this.timer.unref();
     }

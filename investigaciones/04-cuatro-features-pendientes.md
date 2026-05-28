@@ -45,7 +45,7 @@
 
 The bridge currently has **no real-time log streaming**. It has:
 - `src/logging/` — basic request logging types and `RequestLogger` class (unwired from inspection)
-- `src/core/session.ts` — `SessionStore` (in-memory with TTL sweep)
+- `src/session/session-manager.ts` — `SessionManager` (in-memory TTL-based session affinity)
 - `src/server/http.ts` — SSE streaming for chat completions only
 - `dashboard/` — React+Vite admin dashboard (no live log view)
 

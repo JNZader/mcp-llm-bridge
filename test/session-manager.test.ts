@@ -20,7 +20,7 @@ describe('SessionManager', () => {
   });
 
   afterEach(() => {
-    manager.stopCleanup();
+    manager.destroy();
   });
 
   // ── getOrCreateSession ─────────────────────────────────
@@ -173,6 +173,36 @@ describe('SessionManager', () => {
     assert.ok(sticky!.expiresIn > 0);
   });
 
+  it('returns null for unknown router sticky session', () => {
+    assert.equal(manager.getRouterStickySession('missing-client', 'gpt-4o'), null);
+  });
+
+  it('tracks different router sticky pins independently by client and model', () => {
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'openai', 'router-key-1', 2_000);
+    manager.pinRouterStickySession('client-1', 'claude-3', 'anthropic', 'router-key-2', 2_000);
+    manager.pinRouterStickySession('client-2', 'gpt-4o', 'google', 'router-key-3', 2_000);
+
+    const firstSticky = manager.getRouterStickySession('client-1', 'gpt-4o');
+    const secondSticky = manager.getRouterStickySession('client-1', 'claude-3');
+    const thirdSticky = manager.getRouterStickySession('client-2', 'gpt-4o');
+
+    assert.ok(firstSticky);
+    assert.ok(secondSticky);
+    assert.ok(thirdSticky);
+    assert.equal(firstSticky.provider, 'openai');
+    assert.equal(firstSticky.keyId, 'router-key-1');
+    assert.equal(firstSticky.model, 'gpt-4o');
+    assert.ok(firstSticky.expiresIn > 0);
+    assert.equal(secondSticky.provider, 'anthropic');
+    assert.equal(secondSticky.keyId, 'router-key-2');
+    assert.equal(secondSticky.model, 'claude-3');
+    assert.ok(secondSticky.expiresIn > 0);
+    assert.equal(thirdSticky.provider, 'google');
+    assert.equal(thirdSticky.keyId, 'router-key-3');
+    assert.equal(thirdSticky.model, 'gpt-4o');
+    assert.ok(thirdSticky.expiresIn > 0);
+  });
+
   it('router sticky pin updates in place for same client and model', () => {
     manager.pinRouterStickySession('client-1', 'gpt-4o', 'openai', 'router-key-1', 2_000);
     const firstSession = manager.getActiveSessions().find((session) => session.kind === SESSION_ENTRY_KIND.ROUTER_STICKY);
@@ -205,6 +235,18 @@ describe('SessionManager', () => {
     assert.equal(manager.getRouterStickySession('client-1', 'gpt-4o'), null);
     assert.ok(manager.getSession(groupSession.sessionId));
     assert.ok(manager.getStickyKey({ apiKeyId: 1, provider: 'openai', model: 'gpt-4o' }));
+  });
+
+  it('returns null for expired router sticky session', async () => {
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'openai', 'router-key-1', 10);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(manager.getRouterStickySession('client-1', 'gpt-4o'), null);
+    assert.equal(
+      manager.getActiveSessions().filter((session) => session.kind === SESSION_ENTRY_KIND.ROUTER_STICKY).length,
+      0,
+    );
   });
 
   it('returns null for unknown sticky key', () => {
@@ -251,6 +293,18 @@ describe('SessionManager', () => {
     shortTtlManager.stopCleanup();
   });
 
+  it('cleanup removes expired router sticky sessions and preserves active ones', async () => {
+    manager.pinRouterStickySession('expired-client', 'gpt-4o', 'openai', 'router-key-1', 10);
+    manager.pinRouterStickySession('active-client', 'gpt-4o', 'anthropic', 'router-key-2', 2_000);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const removed = manager.cleanup();
+    assert.equal(removed, 1);
+    assert.equal(manager.getRouterStickySession('expired-client', 'gpt-4o'), null);
+    assert.ok(manager.getRouterStickySession('active-client', 'gpt-4o'));
+  });
+
   it('cleanup returns 0 when no expired sessions', () => {
     manager.getOrCreateSession(
       { apiKeyId: 1 },
@@ -270,6 +324,25 @@ describe('SessionManager', () => {
     manager.stopCleanup();
     // Should not throw if already stopped
     manager.stopCleanup();
+  });
+
+  it('destroy clears all sessions and is idempotent', () => {
+    const groupSession = manager.getOrCreateSession(
+      { apiKeyId: 1, provider: 'openai', model: 'gpt-4o' },
+      'openai',
+      'key-1',
+      'gpt-4o'
+    );
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'anthropic', 'router-key-1', 2_000);
+    manager.startCleanup();
+
+    manager.destroy();
+
+    assert.equal(manager.getSession(groupSession.sessionId), null);
+    assert.equal(manager.getStickyKey({ apiKeyId: 1, provider: 'openai', model: 'gpt-4o' }), null);
+    assert.equal(manager.getRouterStickySession('client-1', 'gpt-4o'), null);
+    assert.equal(manager.getActiveSessions().length, 0);
+    assert.doesNotThrow(() => manager.destroy());
   });
 
   // ── getStats ───────────────────────────────────────────

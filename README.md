@@ -1543,22 +1543,18 @@ Clients (GHAGGA, OpenCode, curl, LangChain, any OpenAI-compatible tool)
 
 ### Session Systems
 
-The gateway has two separate session systems by design:
+The gateway now uses `SessionManager` for both session-affinity concerns:
 
-1. **SessionStore** (`src/core/session.ts`) — Router-level provider pinning.  
-   Tracks which provider+key a specific client+model combo should use.  
-   Used by the Router for low-level request-to-provider stickiness.
+1. **Router sticky sessions** (`SessionManager.pinRouterStickySession`) — Pins a specific `clientId + model` to a provider/key with TTL-based expiry.
 
-2. **SessionManager** (`src/session/session-manager.ts`) — Group-level sticky routing.  
-   Manages session affinity for multi-turn conversations via TTL-based tracking.  
-   Used by GroupManager for group-based sticky routing and dashboard metrics.
+2. **Group/API sessions** (`src/session/session-manager.ts`) — Manages session affinity for multi-turn conversations and dashboard metrics.
 
-They are separate by design: `SessionStore` operates at the Router layer (provider selection), while `SessionManager` operates at the Group layer (conversation continuity).  
-Do not conflate them.
+They are separate by design inside the same manager instance: router stickiness handles provider selection, while group/API sessions handle conversation continuity.  
+Do not conflate the two entry kinds.
 
 `GET /v1/admin/sessions` reports them separately for that reason:
 
-- `routerStickySessions` comes from `SessionStore` and reflects the pins the Router actually uses at request time.
+- `routerStickySessions` comes from `SessionManager` router-sticky entries and reflects the pins the Router actually uses at request time.
 - `groupSessions` comes from `SessionManager` and reflects group-level session affinity metrics.
 - The endpoint includes a `note` explaining the split so the dashboard does not imply a single shared session pool.
 

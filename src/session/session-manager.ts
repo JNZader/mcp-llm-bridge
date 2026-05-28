@@ -260,6 +260,17 @@ export class SessionManager {
   }
 
   /**
+   * Stop background cleanup and clear all session state.
+   * Safe to call multiple times during shutdown/tests.
+   */
+  destroy(): void {
+    this.stopCleanup();
+    this.sessionsById.clear();
+    this.apiLookupIndex.clear();
+    this.routerLookupIndex.clear();
+  }
+
+  /**
    * Manually trigger cleanup of expired sessions
    * @returns Number of expired sessions removed
    */

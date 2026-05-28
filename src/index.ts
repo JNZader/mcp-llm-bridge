@@ -230,7 +230,7 @@ async function setupGracefulShutdown(vault: Vault): Promise<void> {
 		freeModelRouter.destroy();
 		costTracker.destroy();
 		groupStore.close();
-		sessionManager.stopCleanup();
+		sessionManager.destroy();
 		cleanupAllProviderHomes();
 		vault.destroy();
 		await shutdownTracing();
