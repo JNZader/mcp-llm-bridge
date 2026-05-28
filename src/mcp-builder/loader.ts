@@ -1,5 +1,6 @@
 import { readdir } from 'fs/promises';
-import { join } from 'path';
+import { resolve } from 'path';
+import { pathToFileURL } from 'url';
 import { McpServerDefinition } from './index.js';
 
 export interface LoadedPlugin {
@@ -15,7 +16,8 @@ export async function loadPlugins(pluginsDir: string): Promise<LoadedPlugin[]> {
     const plugins: LoadedPlugin[] = [];
     for (const file of jsFiles) {
       try {
-        const module = await import(join(pluginsDir, file));
+        const modulePath = pathToFileURL(resolve(pluginsDir, file)).href;
+        const module = await import(modulePath);
         const definition = module.default || module.server || module.definition;
         if (!definition || !definition.tools) {
           console.warn(`[PluginLoader] ${file}: invalid export shape`);

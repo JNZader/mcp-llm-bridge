@@ -147,6 +147,25 @@ export class ModelRouter {
   }
 
   /**
+   * Find the configured endpoint for a provider/model pair.
+   *
+   * Prefers an exact provider+model match. If modelId is omitted or no exact
+   * match exists, falls back to the first endpoint for that provider.
+   */
+  findEndpointForProvider(providerId: string, modelId?: string): ModelEndpoint | null {
+    if (modelId) {
+      const exactMatch = this.config.endpoints.find(
+        (endpoint) => endpoint.provider === providerId && endpoint.modelId === modelId,
+      );
+      if (exactMatch) {
+        return exactMatch;
+      }
+    }
+
+    return this.config.endpoints.find((endpoint) => endpoint.provider === providerId) ?? null;
+  }
+
+  /**
    * Find the first matching rule for a task classification.
    */
   private findMatchingRule(classification: TaskClassification): RouteRule | null {

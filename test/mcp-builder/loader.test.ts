@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdir, writeFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { loadPlugins, LoadedPlugin } from '../../src/mcp-builder/loader.js';
 import type { McpServerDefinition } from '../../src/mcp-builder/index.js';
 
@@ -66,6 +66,31 @@ describe('loadPlugins', () => {
     assert.deepStrictEqual(plugins[0]!.definition.prompts, []);
   });
 
+  it('loads plugins from the default relative ./mcp-servers directory', async () => {
+    const originalCwd = process.cwd();
+    const appRoot = join(tempDir, 'app-root');
+    const defaultPluginsDir = join(appRoot, 'mcp-servers');
+
+    await mkdir(defaultPluginsDir, { recursive: true });
+    await writeFile(
+      join(defaultPluginsDir, 'relative.mcp-server.js'),
+      `export default ${JSON.stringify(makeDefinition('relative'))};`,
+      'utf-8',
+    );
+
+    try {
+      process.chdir(appRoot);
+
+      const plugins = await loadPlugins('./mcp-servers');
+
+      assert.strictEqual(plugins.length, 1);
+      assert.strictEqual(plugins[0]!.name, 'relative');
+      assert.strictEqual(plugins[0]!.definition.name, 'relative');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   it('handles empty directory (returns empty array)', async () => {
     const plugins = await loadPlugins(tempDir);
     assert.deepStrictEqual(plugins, []);
@@ -74,6 +99,20 @@ describe('loadPlugins', () => {
   it('handles missing directory (returns empty array)', async () => {
     const plugins = await loadPlugins(join(tempDir, 'nonexistent'));
     assert.deepStrictEqual(plugins, []);
+  });
+
+  it('loads plugins from an absolute directory path', async () => {
+    const def = makeDefinition('absolute');
+    await writePluginFile(
+      'absolute',
+      `export default ${JSON.stringify(def)};`,
+    );
+
+    const plugins = await loadPlugins(resolve(tempDir));
+
+    assert.strictEqual(plugins.length, 1);
+    assert.strictEqual(plugins[0]!.name, 'absolute');
+    assert.strictEqual(plugins[0]!.definition.name, def.name);
   });
 
   it('skips invalid export shape with warning', async () => {

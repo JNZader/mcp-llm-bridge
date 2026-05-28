@@ -72,6 +72,60 @@ describe('MCP dynamic server startup', () => {
     server = null;
   });
 
+  it('server starts with default ./mcp-servers directory when MCP_SERVERS_DIR is unset', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    delete process.env.MCP_SERVERS_DIR;
+
+    const originalCwd = process.cwd();
+    const appRoot = join(tempDir, 'default-dir-app');
+    const defaultPluginsDir = join(appRoot, 'mcp-servers');
+
+    await mkdir(defaultPluginsDir, { recursive: true });
+
+    const pluginContent = `
+      export default {
+        name: 'default-dir-plugin',
+        version: '1.0.0',
+        description: 'Default directory plugin',
+        tools: [
+          {
+            name: 'dynamic_default_dir',
+            description: 'Loads from default directory',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async () => ({
+              content: [{ type: 'text', text: 'loaded from default dir' }],
+            }),
+          },
+        ],
+        resources: [],
+        prompts: [],
+      };
+    `;
+    await writeFile(join(defaultPluginsDir, 'default-dir.mcp-server.js'), pluginContent, 'utf-8');
+
+    try {
+      process.chdir(appRoot);
+
+      server = await startMcpServer(router, vault);
+      assert.ok(server, 'server should start');
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      assert.ok(dynamicToolAdapter, 'dynamicToolAdapter should be set');
+      assert.equal(dynamicToolAdapter!.hasTool('dynamic_default_dir'), true);
+
+      const result = await handleToolCall('dynamic_default_dir', {}, router, vault);
+      assert.ok(!result.isError, 'should not error');
+      assert.ok(result.content[0]!.text.includes('loaded from default dir'));
+
+      await server.close();
+      server = null;
+    } finally {
+      process.chdir(originalCwd);
+      await rm(join(defaultPluginsDir, 'default-dir.mcp-server.js'), { force: true });
+    }
+  });
+
   it('server starts with MCP_DYNAMIC_SERVERS=true + valid plugin dir → dynamic tools loaded', async () => {
     process.env.MCP_DYNAMIC_SERVERS = 'true';
     process.env.MCP_SERVERS_DIR = tempDir;
@@ -127,7 +181,7 @@ describe('MCP dynamic server startup', () => {
     // Ensure directory is empty
     const files = await readdir(tempDir);
     for (const file of files) {
-      await rm(join(tempDir, file));
+      await rm(join(tempDir, file), { recursive: true, force: true });
     }
 
     server = await startMcpServer(router, vault);

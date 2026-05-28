@@ -12,7 +12,7 @@
  * - generateFromInternal integration
  */
 
-import { describe, it, mock, beforeEach } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Router, resetCircuitBreakerV2 } from '../../src/core/router.js';
@@ -24,7 +24,7 @@ import type {
   ModelInfo,
   ProviderType,
 } from '../../src/core/types.js';
-import type { InternalLLMRequest, InternalLLMResponse } from '../../src/core/internal-model.js';
+import type { InternalLLMRequest } from '../../src/core/internal-model.js';
 import type { ModelRouter } from '../../src/model-routing/router.js';
 import type { RoutingDecision, ModelEndpoint, RouteRule } from '../../src/model-routing/types.js';
 import type { TaskClassification } from '../../src/classification/index.js';
@@ -40,6 +40,7 @@ function createMockProvider(opts: {
   response?: GenerateResponse;
   shouldFail?: boolean;
   failMessage?: string;
+  onGenerate?: (request: GenerateRequest) => void;
 }): LLMProvider {
   return {
     id: opts.id,
@@ -48,6 +49,7 @@ function createMockProvider(opts: {
     models: opts.models,
 
     async generate(_request: GenerateRequest): Promise<GenerateResponse> {
+      opts.onGenerate?.(_request);
       if (opts.shouldFail) {
         throw new Error(opts.failMessage ?? `${opts.id} failed`);
       }
@@ -89,6 +91,7 @@ function createMockModelRouter(opts: {
     getQualityStats: () => null,
     getEndpointsByCost: () => [],
     setEndpointAvailability: () => {},
+    findEndpointForProvider: () => null,
   } as unknown as ModelRouter;
 }
 
@@ -128,12 +131,16 @@ describe('Router + ModelRouter integration', () => {
 
   it('routes task to preferred endpoint when ModelRouter is enabled', async () => {
     const router = new Router();
+    let preferredRequest: GenerateRequest | undefined;
     const preferred = createMockProvider({
       id: 'preferred',
       name: 'Preferred',
       type: 'api',
       models: [{ id: 'preferred-model', name: 'Preferred Model', provider: 'preferred', maxTokens: 4096 }],
       response: { text: 'from-preferred', provider: 'preferred', model: 'preferred-model', resolvedProvider: 'preferred', resolvedModel: 'preferred-model', fallbackUsed: false },
+      onGenerate: (request) => {
+        preferredRequest = request;
+      },
     });
     const fallback = createMockProvider({
       id: 'fallback',
@@ -147,8 +154,8 @@ describe('Router + ModelRouter integration', () => {
     router.register(fallback);
 
     const decision: RoutingDecision = {
-      endpoint: createMockEndpoint({ id: 'preferred' }),
-      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['preferred'] }),
+      endpoint: createMockEndpoint({ id: 'preferred-endpoint', provider: 'preferred', modelId: 'preferred-model' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['preferred-endpoint'] }),
       reason: 'Primary model for summarization',
       isFallback: false,
       costTier: 'standard',
@@ -163,6 +170,53 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(result.text, 'from-preferred');
     assert.equal(result.provider, 'preferred');
     assert.equal(result.fallbackUsed, false);
+    assert.equal(preferredRequest?.provider, 'preferred');
+    assert.equal(preferredRequest?.model, 'preferred-model');
+  });
+
+  it('routes correctly when endpoint.id differs from provider.id', async () => {
+    const router = new Router();
+    let selectedRequest: GenerateRequest | undefined;
+    const selected = createMockProvider({
+      id: 'anthropic',
+      name: 'Anthropic',
+      type: 'api',
+      models: [{ id: 'claude-3-7-sonnet-latest', name: 'Claude', provider: 'anthropic', maxTokens: 4096 }],
+      response: { text: 'from-anthropic', provider: 'anthropic', model: 'claude-3-7-sonnet-latest', resolvedProvider: 'anthropic', resolvedModel: 'claude-3-7-sonnet-latest', fallbackUsed: false },
+      onGenerate: (request) => {
+        selectedRequest = request;
+      },
+    });
+    const fallback = createMockProvider({
+      id: 'openai',
+      name: 'OpenAI',
+      type: 'api',
+      models: [{ id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai', maxTokens: 4096 }],
+      response: { text: 'from-openai', provider: 'openai', model: 'gpt-4.1', resolvedProvider: 'openai', resolvedModel: 'gpt-4.1', fallbackUsed: false },
+    });
+
+    router.register(fallback);
+    router.register(selected);
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({
+        id: 'anthropic-claude-3.7-sonnet',
+        provider: 'anthropic',
+        modelId: 'claude-3-7-sonnet-latest',
+      }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['anthropic-claude-3.7-sonnet'] }),
+      reason: 'Primary model for code',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    router.setModelRouter(createMockModelRouter({ enabled: true, decision }));
+
+    const result = await router.generate({ prompt: 'write a function' });
+
+    assert.equal(result.provider, 'anthropic');
+    assert.equal(result.model, 'claude-3-7-sonnet-latest');
+    assert.equal(selectedRequest?.model, 'claude-3-7-sonnet-latest');
   });
 
   // ── 2. Router without ModelRouter: backward compatible behavior ──
@@ -244,23 +298,56 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(result.fallbackUsed, false);
   });
 
+  it('falls back to default order when ModelRouter provider cannot be resolved', async () => {
+    const router = new Router();
+    const first = createMockProvider({
+      id: 'first',
+      name: 'First',
+      type: 'api',
+      models: [{ id: 'model-a', name: 'Model A', provider: 'first', maxTokens: 4096 }],
+      response: { text: 'from-first', provider: 'first', model: 'model-a', resolvedProvider: 'first', resolvedModel: 'model-a', fallbackUsed: false },
+    });
+    router.register(first);
+
+    const decision: RoutingDecision = {
+      endpoint: createMockEndpoint({
+        id: 'unmatched-endpoint',
+        provider: 'missing-provider',
+        modelId: 'missing-model',
+      }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['unmatched-endpoint'] }),
+      reason: 'Primary model for summarization',
+      isFallback: false,
+      costTier: 'standard',
+    };
+
+    router.setModelRouter(createMockModelRouter({ enabled: true, decision }));
+
+    const result = await router.generate({ prompt: 'summarize this' });
+
+    assert.equal(result.text, 'from-first');
+    assert.equal(result.provider, 'first');
+    assert.equal(result.fallbackUsed, false);
+  });
+
   // ── 4. Feedback recorded on success ──
 
   it('records feedback on successful generation via ModelRouter', async () => {
     const router = new Router();
-    const endpointId = 'smart-provider';
+    const endpointId = 'smart-endpoint';
+    const providerId = 'smart-provider';
     router.register(createMockProvider({
-      id: endpointId,
+      id: providerId,
       name: 'Smart',
       type: 'api',
-      models: [{ id: 'smart-model', name: 'Smart Model', provider: endpointId, maxTokens: 4096 }],
-      response: { text: 'smart-response', provider: endpointId, model: 'smart-model', resolvedProvider: endpointId, resolvedModel: 'smart-model', fallbackUsed: false },
+      models: [{ id: 'smart-model', name: 'Smart Model', provider: providerId, maxTokens: 4096 }],
+      response: { text: 'smart-response', provider: providerId, model: 'smart-model', resolvedProvider: providerId, resolvedModel: 'smart-model', fallbackUsed: false },
     }));
 
     const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
 
     const decision: RoutingDecision = {
-      endpoint: createMockEndpoint({ id: endpointId }),
+      endpoint: createMockEndpoint({ id: endpointId, provider: providerId, modelId: 'smart-model' }),
       matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
       reason: 'Primary model for summarization',
       isFallback: false,
@@ -401,8 +488,8 @@ describe('Router + ModelRouter integration', () => {
     router.register(localProvider);
 
     const decision: RoutingDecision = {
-      endpoint: createMockEndpoint({ id: 'cloud' }),
-      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['cloud'] }),
+      endpoint: createMockEndpoint({ id: 'cloud-endpoint', provider: 'cloud', modelId: 'cloud-model' }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['cloud-endpoint'] }),
       reason: 'Primary model for fast-completion',
       isFallback: false,
       costTier: 'standard',
@@ -488,21 +575,26 @@ describe('Router + ModelRouter integration', () => {
     const router = new Router();
     const registry = new TransformerRegistry();
 
-    const endpointId = 'internal-provider';
+    const endpointId = 'internal-endpoint';
+    const providerId = 'internal-provider';
+    let providerRequest: GenerateRequest | undefined;
     const provider = createMockProvider({
-      id: endpointId,
+      id: providerId,
       name: 'Internal Provider',
       type: 'api',
-      models: [{ id: 'internal-model', name: 'Internal Model', provider: endpointId, maxTokens: 4096 }],
-      response: { text: 'internal-response', provider: endpointId, model: 'internal-model', resolvedProvider: endpointId, resolvedModel: 'internal-model', fallbackUsed: false },
+      models: [{ id: 'internal-model', name: 'Internal Model', provider: providerId, maxTokens: 4096 }],
+      response: { text: 'internal-response', provider: providerId, model: 'internal-model', resolvedProvider: providerId, resolvedModel: 'internal-model', fallbackUsed: false },
+      onGenerate: (request) => {
+        providerRequest = request;
+      },
     });
 
     router.register(provider);
     router.setTransformerRegistry(registry);
 
     // Register a mock outbound transformer so tryProvider finds one
-    registry.registerOutbound(endpointId, {
-      name: endpointId,
+    registry.registerOutbound(providerId, {
+      name: providerId,
       transformRequest: (_req: InternalLLMRequest) => ({ transformed: true }),
       transformResponse: (_res: unknown) => ({
         content: 'transformed',
@@ -515,7 +607,7 @@ describe('Router + ModelRouter integration', () => {
     const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
 
     const decision: RoutingDecision = {
-      endpoint: createMockEndpoint({ id: endpointId }),
+      endpoint: createMockEndpoint({ id: endpointId, provider: providerId, modelId: 'internal-model' }),
       matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
       reason: 'Primary model for summarization',
       isFallback: false,
@@ -537,7 +629,8 @@ describe('Router + ModelRouter integration', () => {
     const result = await router.generateFromInternal(request);
 
     assert.equal(result.content, 'internal-response');
-    assert.equal(result.metadata?.['provider'], endpointId);
+    assert.equal(result.metadata?.['provider'], providerId);
+    assert.equal(providerRequest?.model, 'internal-model');
 
     assert.equal(feedbacks.length, 1);
     assert.equal(feedbacks[0]!.endpointId, endpointId);

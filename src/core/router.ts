@@ -38,7 +38,7 @@ import { LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload } from '../local-llm/router.js';
 import { classify } from '../classification/index.js';
 import type { TaskClassification } from '../classification/index.js';
-import type { RoutingDecision } from '../model-routing/types.js';
+import type { ModelEndpoint, RoutingDecision } from '../model-routing/types.js';
 
 /**
  * Minimal interface for a local LLM client.
@@ -277,10 +277,12 @@ export class Router {
       classification = classify(request.prompt);
       modelRouterDecision = this._modelRouter.route(classification);
       if (modelRouterDecision) {
-        const selectedIndex = candidates.findIndex((p) => p.id === modelRouterDecision!.endpoint.id);
-        if (selectedIndex >= 0) {
-          const selected = candidates[selectedIndex]!;
-          candidates = [selected, ...candidates.filter((_, i) => i !== selectedIndex)];
+        const routedCandidates = this.prioritizeEndpointCandidate(
+          candidates,
+          modelRouterDecision.endpoint,
+        );
+        if (routedCandidates) {
+          candidates = routedCandidates;
         } else {
           logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
         }
@@ -302,7 +304,7 @@ export class Router {
 
     // Filter out providers with open circuit breakers (V2 with per-model granularity)
     const circuitBreaker = getCircuitBreakerV2();
-    const model = request.model ?? 'unknown';
+    const model = modelRouterDecision?.endpoint.modelId ?? request.model ?? 'unknown';
     const availableCandidates = candidates.filter((p) =>
       circuitBreaker.canExecute(p.id, 'default', model).allowed
     );
@@ -325,23 +327,46 @@ export class Router {
       }
 
       try {
-        const result = await provider.generate(request);
-        circuitBreaker.recordSuccess(provider.id, 'default', model);
+        const providerRequest = this.buildGenerateRequest(
+          request,
+          provider,
+          modelRouterDecision?.endpoint,
+        );
+        const attemptedModel = providerRequest.model ?? model;
+        const result = await provider.generate(providerRequest);
+        circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, model, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
+        const resolvedModel = result.model ?? attemptedModel;
+        this.recordUsage(provider.id, resolvedModel, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
         if (classification) {
-          this._recordModelFeedback(provider.id, classification, true, latencyMs);
+          this._recordModelFeedback(
+            this.resolveFeedbackEndpointId(provider, resolvedModel, modelRouterDecision?.endpoint),
+            classification,
+            true,
+            latencyMs,
+          );
         }
         return this.withResolutionMetadata(request, result, false, latencyMs);
       } catch (error) {
-        circuitBreaker.recordFailure(provider.id, 'default', model);
+        const providerRequest = this.buildGenerateRequest(
+          request,
+          provider,
+          modelRouterDecision?.endpoint,
+        );
+        const attemptedModel = providerRequest.model ?? model;
+        circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, model, 0, 0, latencyMs, false, request.project, message);
+        this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, request.project, message);
         if (classification) {
-          this._recordModelFeedback(provider.id, classification, false, latencyMs);
+          this._recordModelFeedback(
+            this.resolveFeedbackEndpointId(provider, attemptedModel, modelRouterDecision?.endpoint),
+            classification,
+            false,
+            latencyMs,
+          );
         }
-        logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
+        logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
         throw error;
       }
     }
@@ -350,27 +375,50 @@ export class Router {
 
     for (const [index, provider] of availableCandidates.entries()) {
       try {
-        const result = await provider.generate(request);
-        circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
+        const providerRequest = this.buildGenerateRequest(
+          request,
+          provider,
+          modelRouterDecision?.endpoint,
+        );
+        const attemptedModel = providerRequest.model ?? model;
+        const result = await provider.generate(providerRequest);
+        circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, result.model ?? model, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
+        const resolvedModel = result.model ?? attemptedModel;
+        this.recordUsage(provider.id, resolvedModel, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
         if (classification) {
-          this._recordModelFeedback(provider.id, classification, true, latencyMs);
+          this._recordModelFeedback(
+            this.resolveFeedbackEndpointId(provider, resolvedModel, modelRouterDecision?.endpoint),
+            classification,
+            true,
+            latencyMs,
+          );
         }
         return this.withResolutionMetadata(request, result, index > 0, latencyMs);
       } catch (error) {
-        circuitBreaker.recordFailure(provider.id, 'default', model);
+        const providerRequest = this.buildGenerateRequest(
+          request,
+          provider,
+          modelRouterDecision?.endpoint,
+        );
+        const attemptedModel = providerRequest.model ?? model;
+        circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, model, 0, 0, latencyMs, false, request.project, message);
+        this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, request.project, message);
         if (classification) {
-          this._recordModelFeedback(provider.id, classification, false, latencyMs);
+          this._recordModelFeedback(
+            this.resolveFeedbackEndpointId(provider, attemptedModel, modelRouterDecision?.endpoint),
+            classification,
+            false,
+            latencyMs,
+          );
         }
 
         // ── Sprint 3: Specific metric/log for LocalLLMError fallback ──
         if (error instanceof LocalLLMError) {
           logger.warn(
-            { provider: provider.id, model, backend: error.backend, error: message },
+            { provider: provider.id, model: attemptedModel, backend: error.backend, error: message },
             'Local LLM failed — falling back to cloud provider',
           );
           // Emit metric for local-llm fallback
@@ -378,7 +426,7 @@ export class Router {
             try {
               this._costTracker.record({
                 provider: 'local-llm-fallback',
-                model: model,
+                model: attemptedModel,
                 tokensIn: 0,
                 tokensOut: 0,
                 latencyMs: Date.now() - startTime,
@@ -391,7 +439,7 @@ export class Router {
             }
           }
         } else {
-          logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
+          logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
         }
 
         errors.push(`${provider.id}: ${message}`);
@@ -498,24 +546,28 @@ export class Router {
 
     // ── Model Routing: classify and route to optimal endpoint ──
     let internalClassification: TaskClassification | null = null;
+    let modelRouterDecision: RoutingDecision | null = null;
     if (this._modelRouter && this._modelRouter.enabled) {
       const prompt = this.extractPromptFromInternal(optimizedRequest);
       internalClassification = classify(prompt);
-      const decision = this._modelRouter.route(internalClassification);
-      if (decision) {
-        const selectedIndex = orderedCandidates.findIndex((p) => p.id === decision.endpoint.id);
-        if (selectedIndex >= 0) {
-          const selected = orderedCandidates[selectedIndex]!;
-          orderedCandidates = [selected, ...orderedCandidates.filter((_, i) => i !== selectedIndex)];
+      modelRouterDecision = this._modelRouter.route(internalClassification);
+      if (modelRouterDecision) {
+        const routedCandidates = this.prioritizeEndpointCandidate(
+          orderedCandidates,
+          modelRouterDecision.endpoint,
+        );
+        if (routedCandidates) {
+          orderedCandidates = routedCandidates;
         } else {
-          logger.warn({ endpointId: decision.endpoint.id }, 'Unmatched ModelRouter endpoint');
+          logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
         }
       }
     }
 
     const circuitBreaker = getCircuitBreakerV2();
+    const routedModel = modelRouterDecision?.endpoint.modelId ?? model;
     const availableCandidates = orderedCandidates.filter((p) =>
-      circuitBreaker.canExecute(p.id, 'default', model).allowed
+      circuitBreaker.canExecute(p.id, 'default', routedModel).allowed
     );
 
     if (availableCandidates.length === 0) {
@@ -529,7 +581,15 @@ export class Router {
 
     for (const provider of availableCandidates) {
       try {
-        const result = await this.tryProvider(provider, optimizedRequest, registry, startTime, undefined, internalClassification ?? undefined);
+        const result = await this.tryProvider(
+          provider,
+          this.buildInternalRequest(optimizedRequest, provider, modelRouterDecision?.endpoint),
+          registry,
+          startTime,
+          undefined,
+          internalClassification ?? undefined,
+          modelRouterDecision?.endpoint,
+        );
 
         // Pin session on success if stickiness is enabled
         if (this._sessionStore && clientId && model && matchedGroup?.stickyTTL) {
@@ -566,7 +626,11 @@ export class Router {
    */
   async resolveStreamingProvider(
     request: InternalLLMRequest,
-  ): Promise<{ provider: LLMProvider; streamTransformer: StreamingOutboundTransformer } | null> {
+  ): Promise<{
+    provider: LLMProvider;
+    request: InternalLLMRequest;
+    streamTransformer: StreamingOutboundTransformer;
+  } | null> {
     if (!this._transformerRegistry) {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
     }
@@ -598,16 +662,38 @@ export class Router {
       orderedCandidates = await this.resolveCandidates(resolveRequest);
     }
 
+    let modelRouterDecision: RoutingDecision | null = null;
+    if (this._modelRouter && this._modelRouter.enabled) {
+      const classification = classify(this.extractPromptFromInternal(optimizedRequest));
+      modelRouterDecision = this._modelRouter.route(classification);
+      if (modelRouterDecision) {
+        const routedCandidates = this.prioritizeEndpointCandidate(
+          orderedCandidates,
+          modelRouterDecision.endpoint,
+        );
+        if (routedCandidates) {
+          orderedCandidates = routedCandidates;
+        } else {
+          logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
+        }
+      }
+    }
+
     const circuitBreaker = getCircuitBreakerV2();
+    const routedModel = modelRouterDecision?.endpoint.modelId ?? model;
     const availableCandidates = orderedCandidates.filter((p) =>
-      circuitBreaker.canExecute(p.id, 'default', model).allowed
+      circuitBreaker.canExecute(p.id, 'default', routedModel).allowed
     );
 
     // Find the first provider that has a streaming transformer
     for (const provider of availableCandidates) {
       const streamTransformer = registry.getStreamOutbound(provider.id);
       if (streamTransformer) {
-        return { provider, streamTransformer };
+        return {
+          provider,
+          request: this.buildInternalRequest(optimizedRequest, provider, modelRouterDecision?.endpoint),
+          streamTransformer,
+        };
       }
     }
 
@@ -626,9 +712,16 @@ export class Router {
     startTime: number,
     model: string = 'unknown',
     classification?: TaskClassification,
+    routedEndpoint?: ModelEndpoint,
   ): Promise<InternalLLMResponse> {
     const circuitBreaker = getCircuitBreakerV2();
     const outbound = registry.getOutbound(provider.id);
+    const attemptedModel = request.model ?? model;
+    const feedbackEndpointId = this.resolveFeedbackEndpointId(
+      provider,
+      attemptedModel,
+      routedEndpoint,
+    );
 
     if (!outbound) {
       // No transformer — try CLI fallback
@@ -642,27 +735,27 @@ export class Router {
           const result = await provider.generate({
             prompt,
             system,
-            model: request.model,
+            model: attemptedModel,
             maxTokens: request.maxTokens,
           });
 
-          circuitBreaker.recordSuccess(provider.id, 'default', model);
+          circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
           const response = cliOutbound.transformResponse(result);
           const latencyMs = Date.now() - startTime;
           this.recordUsage(provider.id, response.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
           if (classification) {
-            this._recordModelFeedback(provider.id, classification, true, latencyMs);
+            this._recordModelFeedback(feedbackEndpointId, classification, true, latencyMs);
           }
           return response;
         } catch (error) {
-          circuitBreaker.recordFailure(provider.id, 'default', model);
+          circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
           const message = error instanceof Error ? error.message : String(error);
           const latencyMs = Date.now() - startTime;
-          this.recordUsage(provider.id, model, 0, 0, latencyMs, false, undefined, message);
+          this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
           if (classification) {
-            this._recordModelFeedback(provider.id, classification, false, latencyMs);
+            this._recordModelFeedback(feedbackEndpointId, classification, false, latencyMs);
           }
-          logger.warn({ provider: provider.id, model, error: message }, 'Provider failed (CLI transformer)');
+          logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed (CLI transformer)');
           throw error;
         }
       }
@@ -678,7 +771,7 @@ export class Router {
       const adapterRequest: GenerateRequest = {
         prompt: this.extractPromptFromInternal(request),
         system: this.extractSystemFromInternal(request),
-        model: request.model,
+        model: attemptedModel,
         maxTokens: request.maxTokens,
         provider: provider.id,
       };
@@ -708,20 +801,87 @@ export class Router {
 
       this.recordUsage(provider.id, result.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
       if (classification) {
-        this._recordModelFeedback(provider.id, classification, true, latencyMs);
+        this._recordModelFeedback(feedbackEndpointId, classification, true, latencyMs);
       }
       return response;
     } catch (error) {
-      circuitBreaker.recordFailure(provider.id, 'default', model);
+      circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
       const message = error instanceof Error ? error.message : String(error);
       const latencyMs = Date.now() - startTime;
-      this.recordUsage(provider.id, model, 0, 0, latencyMs, false, undefined, message);
+      this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
       if (classification) {
-        this._recordModelFeedback(provider.id, classification, false, latencyMs);
+        this._recordModelFeedback(feedbackEndpointId, classification, false, latencyMs);
       }
-      logger.warn({ provider: provider.id, model, error: message }, 'Provider failed');
+      logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
       throw error;
     }
+  }
+
+  private prioritizeEndpointCandidate(
+    candidates: LLMProvider[],
+    endpoint: ModelEndpoint,
+  ): LLMProvider[] | null {
+    const selected = candidates.find((provider) => this.providerMatchesEndpoint(provider, endpoint));
+    if (!selected) {
+      return null;
+    }
+
+    return [selected, ...candidates.filter((provider) => provider !== selected)];
+  }
+
+  private providerMatchesEndpoint(provider: LLMProvider, endpoint: ModelEndpoint): boolean {
+    return provider.id === endpoint.provider || provider.id === endpoint.id;
+  }
+
+  private buildGenerateRequest(
+    request: GenerateRequest,
+    provider: LLMProvider,
+    routedEndpoint?: ModelEndpoint,
+  ): GenerateRequest {
+    return {
+      ...request,
+      provider: provider.id,
+      model: this.resolveProviderModel(request.model, provider, routedEndpoint),
+    };
+  }
+
+  private buildInternalRequest(
+    request: InternalLLMRequest,
+    provider: LLMProvider,
+    routedEndpoint?: ModelEndpoint,
+  ): InternalLLMRequest {
+    return {
+      ...request,
+      metadata: {
+        ...request.metadata,
+        provider: provider.id,
+      },
+      model: this.resolveProviderModel(request.model, provider, routedEndpoint),
+    };
+  }
+
+  private resolveProviderModel(
+    currentModel: string | undefined,
+    provider: LLMProvider,
+    routedEndpoint?: ModelEndpoint,
+  ): string | undefined {
+    if (routedEndpoint && this.providerMatchesEndpoint(provider, routedEndpoint)) {
+      return routedEndpoint.modelId;
+    }
+
+    return currentModel;
+  }
+
+  private resolveFeedbackEndpointId(
+    provider: LLMProvider,
+    model: string | undefined,
+    routedEndpoint?: ModelEndpoint,
+  ): string {
+    if (routedEndpoint && this.providerMatchesEndpoint(provider, routedEndpoint)) {
+      return routedEndpoint.id;
+    }
+
+    return this._modelRouter?.findEndpointForProvider(provider.id, model)?.id ?? provider.id;
   }
 
   /**
@@ -819,7 +979,7 @@ export class Router {
    * Non-blocking — failures are logged, not thrown.
    */
   private _recordModelFeedback(
-    providerId: string,
+    endpointId: string,
     classification: TaskClassification,
     success: boolean,
     latencyMs: number,
@@ -827,14 +987,14 @@ export class Router {
     if (!this._modelRouter) return;
     try {
       this._modelRouter.recordFeedback({
-        endpointId: providerId,
+        endpointId,
         taskPattern: classification.task,
         acceptable: success,
         latencyMs,
         timestamp: new Date().toISOString(),
       });
     } catch (error) {
-      logger.warn({ error, providerId }, 'Failed to record model routing feedback');
+      logger.warn({ error, endpointId }, 'Failed to record model routing feedback');
     }
   }
 

@@ -461,10 +461,10 @@ function handleStreamingRequest(
 			return;
 		}
 
-		const { provider, streamTransformer } = resolved;
+		const { provider, request: resolvedRequest, streamTransformer } = resolved;
 		const streamRecorder = costTracker?.recordStream(
 			provider.id,
-			model || "unknown",
+			resolvedRequest.model || model || "unknown",
 			project,
 		);
 
@@ -472,7 +472,7 @@ function handleStreamingRequest(
 			// Build providerCall using the vault for credentials
 			const providerCall = buildProviderStreamCall(provider.id, vault, project);
 			const chunks = streamTransformer.transformStream(
-				internalRequest,
+				resolvedRequest,
 				providerCall,
 			);
 
