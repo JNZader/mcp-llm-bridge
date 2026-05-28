@@ -473,8 +473,16 @@ describe('POST /v1/admin/models/sync', () => {
 
     assert.equal(res.status, 400);
 
-    const data = res.data as { error: string; code: string };
+    const data = res.data as {
+      error: string;
+      code: string;
+      details: { field: string; received: string; supportedProviders: string[] };
+    };
     assert.equal(data.code, 'VALIDATION_ERROR');
+    assert.equal(data.error, 'Invalid provider for provider');
+    assert.equal(data.details.field, 'provider');
+    assert.equal(data.details.received, 'invalid-provider');
+    assert.ok(Array.isArray(data.details.supportedProviders));
   });
 
   it('returns 400 when credentials are missing', async () => {
@@ -524,6 +532,99 @@ describe('GET /v1/admin/models/sync/history', () => {
     } finally {
       global.fetch = originalFetch;
     }
+  });
+
+  it('returns 400 for invalid provider filter', async () => {
+    const res = await request('GET', '/v1/admin/models/sync/history?provider=invalid-provider');
+    assert.equal(res.status, 400);
+
+    const data = res.data as {
+      error: string;
+      code: string;
+      details: { field: string; received: string; supportedProviders: string[] };
+    };
+
+    assert.equal(data.code, 'VALIDATION_ERROR');
+    assert.equal(data.error, 'Invalid provider for provider');
+    assert.equal(data.details.field, 'provider');
+    assert.equal(data.details.received, 'invalid-provider');
+    assert.ok(Array.isArray(data.details.supportedProviders));
+  });
+
+  it('returns 400 for invalid limit filter with clear error payload', async () => {
+    const res = await request('GET', '/v1/admin/models/sync/history?limit=0');
+    assert.equal(res.status, 400);
+
+    const data = res.data as {
+      error: string;
+      code: string;
+      details: { field: string; received: string; min: number; max: number };
+    };
+
+    assert.equal(data.code, 'VALIDATION_ERROR');
+    assert.equal(data.error, 'Invalid numeric value for limit');
+    assert.deepEqual(data.details, {
+      field: 'limit',
+      received: '0',
+      min: 1,
+      max: 500,
+    });
+  });
+});
+
+// ── POST /v1/admin/prices/sync ───────────────────────────
+
+describe('POST /v1/admin/prices/sync', () => {
+  it('syncs prices successfully', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = mockFetch({
+      providers: {
+        openai: {
+          'gpt-4o': {
+            name: 'GPT-4o',
+            input: { price: 0.000005, currency: 'USD' },
+            output: { price: 0.000015, currency: 'USD' },
+          },
+        },
+      },
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await request('POST', '/v1/admin/prices/sync');
+      assert.equal(res.status, 200);
+
+      const data = res.data as {
+        ok: boolean;
+        synced: number;
+        details: { added: number; updated: number; unchanged: number; timestamp: number };
+      };
+
+      assert.equal(data.ok, true);
+      assert.ok(data.synced >= 1);
+      assert.ok(data.details.timestamp > 0);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('returns 400 for invalid provider in body', async () => {
+    const res = await request('POST', '/v1/admin/prices/sync', {
+      provider: 'invalid-provider',
+    });
+
+    assert.equal(res.status, 400);
+
+    const data = res.data as {
+      error: string;
+      code: string;
+      details: { field: string; received: string; supportedProviders: string[] };
+    };
+
+    assert.equal(data.code, 'VALIDATION_ERROR');
+    assert.equal(data.error, 'Invalid provider for provider parameter');
+    assert.equal(data.details.field, 'provider');
+    assert.equal(data.details.received, 'invalid-provider');
+    assert.ok(Array.isArray(data.details.supportedProviders));
   });
 });
 
