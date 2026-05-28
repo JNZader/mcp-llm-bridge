@@ -109,6 +109,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       const channel = aggregator.query({ dimension: 'channel' });
       assert.strictEqual(channel.length, (1));
+      assert.strictEqual(channel[0]!.channelId, ('fast'));
       assert.strictEqual(channel[0]!.requests, (1));
     });
 
@@ -123,6 +124,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       const model = aggregator.query({ dimension: 'model' });
       assert.strictEqual(model.length, (1));
+      assert.strictEqual(model[0]!.model, ('gpt-4o'));
       assert.strictEqual(model[0]!.requests, (1));
     });
   });
@@ -417,6 +419,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       assert.strictEqual(fastChannel.length, (1));
+      assert.strictEqual(fastChannel[0]!.channelId, ('fast'));
       assert.strictEqual(fastChannel[0]!.requests, (1));
       assert.strictEqual(fastChannel[0]!.inputTokens, (100));
     });
@@ -444,6 +447,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       assert.strictEqual(modelQuery.length, (1));
+      assert.strictEqual(modelQuery[0]!.model, ('gpt-4o'));
       assert.strictEqual(modelQuery[0]!.requests, (1));
     });
 

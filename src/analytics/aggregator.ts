@@ -124,22 +124,22 @@ export class AnalyticsAggregator {
         if (channelId) {
           // Query specific channel
           const metrics = this.dimensions.channel.get(channelId);
-          return metrics ? [this.toDataPoint(0, metrics)] : [];
+          return metrics ? [this.toDataPoint(0, metrics, { channelId })] : [];
         }
         // Return all channels
         return Array.from(this.dimensions.channel.entries()).map(
-          ([id, metrics]) => this.toDataPoint(0, metrics, id)
+          ([id, metrics]) => this.toDataPoint(0, metrics, { channelId: id })
         );
 
       case 'model':
         if (modelFilter) {
           // Query specific model
           const metrics = this.dimensions.model.get(modelFilter);
-          return metrics ? [this.toDataPoint(0, metrics)] : [];
+          return metrics ? [this.toDataPoint(0, metrics, { model: modelFilter })] : [];
         }
         // Return all models
         return Array.from(this.dimensions.model.entries()).map(
-          ([name, metrics]) => this.toDataPoint(0, metrics, name)
+          ([name, metrics]) => this.toDataPoint(0, metrics, { model: name })
         );
 
       default:
@@ -246,7 +246,10 @@ export class AnalyticsAggregator {
   private toDataPoint(
     timestamp: number,
     metrics: AnalyticsMetrics,
-    _label?: string
+    identifiers?: {
+      channelId?: string;
+      model?: string;
+    }
   ): AggregatedDataPoint {
     const avgLatency =
       metrics.requests > 0
@@ -255,6 +258,8 @@ export class AnalyticsAggregator {
 
     const result: AggregatedDataPoint = {
       timestamp,
+      ...(identifiers?.channelId ? { channelId: identifiers.channelId } : {}),
+      ...(identifiers?.model ? { model: identifiers.model } : {}),
       requests: metrics.requests,
       inputTokens: metrics.inputTokens,
       outputTokens: metrics.outputTokens,
@@ -349,13 +354,13 @@ export class AnalyticsAggregator {
       channel: Array.from(this.dimensions.channel.entries()).map(
         ([id, metrics]) => ({
           id,
-          data: this.toDataPoint(0, metrics),
+          data: this.toDataPoint(0, metrics, { channelId: id }),
         })
       ),
       model: Array.from(this.dimensions.model.entries()).map(
         ([name, metrics]) => ({
           name,
-          data: this.toDataPoint(0, metrics),
+          data: this.toDataPoint(0, metrics, { model: name }),
         })
       ),
     };

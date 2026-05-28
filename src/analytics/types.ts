@@ -45,6 +45,10 @@ export interface AnalyticsDimensions {
 export interface AggregatedDataPoint {
   /** Timestamp for this data point (unix timestamp in ms) */
   timestamp: number;
+  /** Channel identifier when grouped by channel */
+  channelId?: string;
+  /** Model identifier when grouped by model */
+  model?: string;
   /** Number of requests */
   requests: number;
   /** Total input tokens */

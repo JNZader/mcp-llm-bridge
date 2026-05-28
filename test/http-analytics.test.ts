@@ -234,11 +234,12 @@ describe('GET /v1/analytics', () => {
       const res = await request('GET', '/v1/analytics?dimension=channel');
 
       assert.equal(res.status, 200);
-      const data = res.data as { data: Array<{ channel?: string }> };
+      const data = res.data as { data: Array<{ channelId?: string }> };
 
       assert.ok(Array.isArray(data.data), 'Should return channel data array');
       // Should have data for 'fast', 'cheap', 'balanced' channels
       assert.ok(data.data.length > 0, 'Should have channel data');
+      assert.ok(data.data.every((row) => typeof row.channelId === 'string' && row.channelId.length > 0));
     });
 
     it('should filter by model dimension', async () => {
@@ -249,6 +250,7 @@ describe('GET /v1/analytics', () => {
 
       assert.ok(Array.isArray(data.data), 'Should return model data array');
       assert.ok(data.data.length > 0, 'Should have model data');
+      assert.ok(data.data.every((row) => typeof row.model === 'string' && row.model.length > 0));
     });
 
     it('should filter by total dimension', async () => {
@@ -347,12 +349,13 @@ describe('GET /v1/analytics', () => {
 
       assert.equal(res.status, 200);
       const data = res.data as { 
-        data: Array<{ requests: number }>; 
+        data: Array<{ requests: number; model?: string }>;
         summary: { totalRequests: number } 
       };
 
       // Should have data for different models
       assert.ok(data.data.length > 0, 'Should have model data');
+      assert.ok(data.data.some((row) => row.model === 'gpt-4'), 'Should expose model identity');
       // Total requests across all models should match summary
       const totalFromData = data.data.reduce((sum, d) => sum + d.requests, 0);
       assert.equal(totalFromData, data.summary.totalRequests);
@@ -375,12 +378,13 @@ describe('GET /v1/analytics', () => {
 
       assert.equal(res.status, 200);
       const data = res.data as { 
-        data: Array<{ requests: number }>; 
+        data: Array<{ requests: number; channelId?: string }>;
         summary: { totalRequests: number } 
       };
 
       // Should have data for different channels
       assert.ok(data.data.length > 0, 'Should have channel data');
+      assert.ok(data.data.some((row) => row.channelId === 'fast'), 'Should expose channel identity');
       // Total requests across all channels should match summary
       const totalFromData = data.data.reduce((sum, d) => sum + d.requests, 0);
       assert.equal(totalFromData, data.summary.totalRequests);
