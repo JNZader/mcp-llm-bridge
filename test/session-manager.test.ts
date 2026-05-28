@@ -6,7 +6,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SessionManager } from '../src/session/session-manager.js';
-import type { SessionDashboardMetrics } from '../src/session/types.js';
+import { SESSION_ENTRY_KIND, type SessionDashboardMetrics } from '../src/session/types.js';
 
 describe('SessionManager', () => {
   let manager: SessionManager;
@@ -161,6 +161,52 @@ describe('SessionManager', () => {
     assert.ok(sticky!.expiresIn <= 2);
   });
 
+  it('returns router sticky session for active pin', () => {
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'openai', 'router-key-1', 2_000);
+
+    const sticky = manager.getRouterStickySession('client-1', 'gpt-4o');
+
+    assert.ok(sticky);
+    assert.equal(sticky!.provider, 'openai');
+    assert.equal(sticky!.keyId, 'router-key-1');
+    assert.equal(sticky!.model, 'gpt-4o');
+    assert.ok(sticky!.expiresIn > 0);
+  });
+
+  it('router sticky pin updates in place for same client and model', () => {
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'openai', 'router-key-1', 2_000);
+    const firstSession = manager.getActiveSessions().find((session) => session.kind === SESSION_ENTRY_KIND.ROUTER_STICKY);
+
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'anthropic', 'router-key-2', 2_000);
+
+    const sticky = manager.getRouterStickySession('client-1', 'gpt-4o');
+    const activeSessions = manager.getActiveSessions();
+    const routerSessions = activeSessions.filter((session) => session.kind === SESSION_ENTRY_KIND.ROUTER_STICKY);
+
+    assert.ok(firstSession);
+    assert.ok(sticky);
+    assert.equal(sticky!.provider, 'anthropic');
+    assert.equal(sticky!.keyId, 'router-key-2');
+    assert.equal(routerSessions.length, 1);
+    assert.equal(routerSessions[0]!.sessionId, firstSession!.sessionId);
+  });
+
+  it('unpinRouterStickySession removes only router sticky entry', () => {
+    const groupSession = manager.getOrCreateSession(
+      { apiKeyId: 1, provider: 'openai', model: 'gpt-4o' },
+      'openai',
+      'key-1',
+      'gpt-4o'
+    );
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'anthropic', 'router-key-1', 2_000);
+
+    manager.unpinRouterStickySession('client-1', 'gpt-4o');
+
+    assert.equal(manager.getRouterStickySession('client-1', 'gpt-4o'), null);
+    assert.ok(manager.getSession(groupSession.sessionId));
+    assert.ok(manager.getStickyKey({ apiKeyId: 1, provider: 'openai', model: 'gpt-4o' }));
+  });
+
   it('returns null for unknown sticky key', () => {
     const sticky = manager.getStickyKey({ apiKeyId: 999 });
     assert.equal(sticky, null);
@@ -242,12 +288,16 @@ describe('SessionManager', () => {
     let stats = shortTtlManager.getStats();
     assert.equal(stats.totalSessions, 1);
     assert.equal(stats.expiredSessions, 0);
+    assert.equal(stats.byKind.length, 1);
+    assert.equal(stats.byKind[0]?.kind, SESSION_ENTRY_KIND.API_GROUP);
+    assert.equal(stats.byKind[0]?.expiredSessions, 0);
 
     // After expiry
     await new Promise((resolve) => setTimeout(resolve, 1100));
     stats = shortTtlManager.getStats();
     assert.equal(stats.totalSessions, 1);
     assert.equal(stats.expiredSessions, 1);
+    assert.equal(stats.byKind[0]?.expiredSessions, 1);
     assert.ok(stats.averageSessionAge > 0);
 
     shortTtlManager.stopCleanup();
@@ -258,6 +308,7 @@ describe('SessionManager', () => {
     assert.equal(stats.totalSessions, 0);
     assert.equal(stats.expiredSessions, 0);
     assert.equal(stats.averageSessionAge, 0);
+    assert.equal(stats.byKind.length, 0);
   });
 
   // ── getDashboardMetrics ────────────────────────────────
@@ -282,19 +333,53 @@ describe('SessionManager', () => {
     assert.equal(metrics.activeSessionCount, 2);
     assert.ok(metrics.averageSessionAge >= 0);
     assert.ok(metrics.computedAt > 0);
+    assert.equal(metrics.byKind.length, 1);
+    assert.equal(metrics.byKind[0]?.kind, SESSION_ENTRY_KIND.API_GROUP);
+    assert.equal(metrics.byKind[0]?.sessionCount, 2);
     assert.equal(metrics.byProvider.length, 2);
 
     const openaiEntry = metrics.byProvider.find((p) => p.provider === 'openai');
     assert.ok(openaiEntry);
+    assert.equal(openaiEntry!.kind, SESSION_ENTRY_KIND.API_GROUP);
     assert.equal(openaiEntry!.sessionCount, 1);
     assert.ok(openaiEntry!.avgTtlRemaining > 0);
     assert.ok(openaiEntry!.avgTtlRemaining <= 2);
+  });
+
+  it('getDashboardMetrics reports api and router sessions separately by kind', () => {
+    manager.getOrCreateSession(
+      { apiKeyId: 1, provider: 'openai', model: 'gpt-4o' },
+      'openai',
+      'key-1',
+      'gpt-4o'
+    );
+    manager.pinRouterStickySession('client-1', 'gpt-4o', 'openai', 'router-key-1', 2_000);
+
+    const metrics = manager.getDashboardMetrics();
+
+    assert.equal(metrics.activeSessionCount, 2);
+    assert.equal(metrics.byKind.length, 2);
+
+    const apiKind = metrics.byKind.find((entry) => entry.kind === SESSION_ENTRY_KIND.API_GROUP);
+    const routerKind = metrics.byKind.find((entry) => entry.kind === SESSION_ENTRY_KIND.ROUTER_STICKY);
+    assert.equal(apiKind?.sessionCount, 1);
+    assert.equal(routerKind?.sessionCount, 1);
+
+    const apiProvider = metrics.byProvider.find(
+      (entry) => entry.kind === SESSION_ENTRY_KIND.API_GROUP && entry.provider === 'openai'
+    );
+    const routerProvider = metrics.byProvider.find(
+      (entry) => entry.kind === SESSION_ENTRY_KIND.ROUTER_STICKY && entry.provider === 'openai'
+    );
+    assert.equal(apiProvider?.sessionCount, 1);
+    assert.equal(routerProvider?.sessionCount, 1);
   });
 
   it('getDashboardMetrics returns empty state', () => {
     const metrics = manager.getDashboardMetrics();
     assert.equal(metrics.activeSessionCount, 0);
     assert.equal(metrics.averageSessionAge, 0);
+    assert.equal(metrics.byKind.length, 0);
     assert.equal(metrics.byProvider.length, 0);
     assert.ok(metrics.computedAt > 0);
   });
@@ -350,6 +435,7 @@ describe('SessionManager', () => {
     const session = manager.getSession(result.sessionId);
     assert.ok(session);
     assert.equal(session!.sessionId, result.sessionId);
+    assert.equal(session!.kind, SESSION_ENTRY_KIND.API_GROUP);
     assert.equal(session!.provider, 'openai');
   });
 
@@ -430,6 +516,7 @@ describe('SessionManager', () => {
 
     const active = manager.getActiveSessions();
     assert.equal(active.length, 1);
+    assert.equal(active[0]!.kind, SESSION_ENTRY_KIND.API_GROUP);
     assert.equal(active[0]!.apiKeyId, 1);
   });
 });

@@ -37,10 +37,15 @@ export { SessionManager } from './session-manager.js';
 export type {
   SessionConfig,
   SessionEntry,
+  SessionEntryKind,
+  ApiGroupSessionEntry,
+  RouterStickySessionEntry,
   SessionLookup,
   SessionResult,
   SessionStats,
+  StatsKindSessionBreakdown,
   StickyKey,
+  KindSessionBreakdown,
   ProviderSessionBreakdown,
   SessionDashboardMetrics,
 } from './types.js';
@@ -48,6 +53,7 @@ export type {
 // Constants and type guards
 export {
   DEFAULT_SESSION_CONFIG,
+  SESSION_ENTRY_KIND,
   isSessionEntry,
   isSessionLookup,
   isSessionConfig,

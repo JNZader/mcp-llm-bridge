@@ -15,8 +15,12 @@ import {
   SessionStats,
   StickyKey,
   ProviderSessionBreakdown,
+  KindSessionBreakdown,
   SessionDashboardMetrics,
   DEFAULT_SESSION_CONFIG,
+  SESSION_ENTRY_KIND,
+  type ApiGroupSessionEntry,
+  type RouterStickySessionEntry,
 } from './types.js';
 
 /**
@@ -25,9 +29,11 @@ import {
  */
 export class SessionManager {
   /** Map of sessionId -> SessionEntry */
-  private sessions: Map<string, SessionEntry>;
-  /** Map of lookupKey -> sessionId (for quick lookup) */
-  private lookupIndex: Map<string, string>;
+  private sessionsById: Map<string, SessionEntry>;
+  /** Map of api/group lookupKey -> sessionId */
+  private apiLookupIndex: Map<string, string>;
+  /** Map of router sticky lookupKey -> sessionId */
+  private routerLookupIndex: Map<string, string>;
   /** Configuration for this manager instance */
   private config: SessionConfig;
   /** Timer handle for cleanup interval */
@@ -38,8 +44,9 @@ export class SessionManager {
    * @param config - Optional partial configuration to override defaults
    */
   constructor(config?: Partial<SessionConfig>) {
-    this.sessions = new Map();
-    this.lookupIndex = new Map();
+    this.sessionsById = new Map();
+    this.apiLookupIndex = new Map();
+    this.routerLookupIndex = new Map();
     this.config = {
       ...DEFAULT_SESSION_CONFIG,
       ...config,
@@ -60,13 +67,13 @@ export class SessionManager {
     selectedKeyId: string,
     selectedModel: string
   ): SessionResult {
-    const lookupKey = this.generateLookupKey(lookup);
-    const existingSessionId = this.lookupIndex.get(lookupKey);
+    const lookupKey = this.generateApiLookupKey(lookup);
+    const existingSessionId = this.apiLookupIndex.get(lookupKey);
 
     // Check if existing session is valid and not expired
     if (existingSessionId) {
-      const session = this.sessions.get(existingSessionId);
-      if (session && session.expiresAt > Date.now()) {
+      const session = this.sessionsById.get(existingSessionId);
+      if (session?.kind === SESSION_ENTRY_KIND.API_GROUP && session.expiresAt > Date.now()) {
         // Valid existing session - touch it and return
         this.touchSession(existingSessionId);
         return { sessionId: existingSessionId, isNew: false };
@@ -80,19 +87,22 @@ export class SessionManager {
     // Create new session
     const sessionId = this.generateSessionId();
     const now = Date.now();
-    const session: SessionEntry = {
+    const ttlMs = this.config.ttlSeconds * 1000;
+    const session: ApiGroupSessionEntry = {
       sessionId,
+      kind: SESSION_ENTRY_KIND.API_GROUP,
       apiKeyId: lookup.apiKeyId,
       provider: selectedProvider,
       keyId: selectedKeyId,
       model: selectedModel,
       createdAt: now,
       lastUsedAt: now,
-      expiresAt: now + (this.config.ttlSeconds * 1000),
+      expiresAt: now + ttlMs,
+      ttlMs,
     };
 
-    this.sessions.set(sessionId, session);
-    this.lookupIndex.set(lookupKey, sessionId);
+    this.sessionsById.set(sessionId, session);
+    this.apiLookupIndex.set(lookupKey, sessionId);
 
     return { sessionId, isNew: true };
   }
@@ -103,7 +113,7 @@ export class SessionManager {
    * @returns The session entry or null if not found/expired
    */
   getSession(sessionId: string): SessionEntry | null {
-    const session = this.sessions.get(sessionId);
+    const session = this.sessionsById.get(sessionId);
     if (!session) return null;
 
     // Check if session has expired
@@ -120,12 +130,12 @@ export class SessionManager {
    * @param sessionId - The session to touch
    */
   touchSession(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
+    const session = this.sessionsById.get(sessionId);
     if (!session) return;
 
     const now = Date.now();
     session.lastUsedAt = now;
-    session.expiresAt = now + (this.config.ttlSeconds * 1000);
+    session.expiresAt = now + session.ttlMs;
   }
 
   /**
@@ -133,19 +143,23 @@ export class SessionManager {
    * @param sessionId - The session to end
    */
   endSession(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
+    const session = this.sessionsById.get(sessionId);
     if (!session) return;
 
-    // Remove from lookup index
-    const lookupKey = this.generateLookupKey({
-      apiKeyId: session.apiKeyId,
-      provider: session.provider,
-      model: session.model,
-    });
-    this.lookupIndex.delete(lookupKey);
+    if (session.kind === SESSION_ENTRY_KIND.API_GROUP) {
+      const lookupKey = this.generateApiLookupKey({
+        apiKeyId: session.apiKeyId,
+        provider: session.provider,
+        model: session.model,
+      });
+      this.apiLookupIndex.delete(lookupKey);
+    } else {
+      const lookupKey = this.generateRouterLookupKey(session.clientId, session.model);
+      this.routerLookupIndex.delete(lookupKey);
+    }
 
     // Remove from sessions map
-    this.sessions.delete(sessionId);
+    this.sessionsById.delete(sessionId);
   }
 
   /**
@@ -154,28 +168,69 @@ export class SessionManager {
    * @returns StickyKey info or null if no valid session exists
    */
   getStickyKey(lookup: SessionLookup): StickyKey | null {
-    const lookupKey = this.generateLookupKey(lookup);
-    const sessionId = this.lookupIndex.get(lookupKey);
+    const lookupKey = this.generateApiLookupKey(lookup);
+    const sessionId = this.apiLookupIndex.get(lookupKey);
 
-    if (!sessionId) return null;
+    return this.getStickyKeyBySessionId(sessionId, SESSION_ENTRY_KIND.API_GROUP);
+  }
 
-    const session = this.sessions.get(sessionId);
-    if (!session || session.expiresAt <= Date.now()) {
-      // Session expired - clean it up
-      if (session) {
-        this.endSession(sessionId);
+  getRouterStickySession(clientId: string, model: string): StickyKey | null {
+    const sessionId = this.routerLookupIndex.get(this.generateRouterLookupKey(clientId, model));
+
+    return this.getStickyKeyBySessionId(sessionId, SESSION_ENTRY_KIND.ROUTER_STICKY);
+  }
+
+  pinRouterStickySession(
+    clientId: string,
+    model: string,
+    provider: string,
+    keyId: string,
+    ttlMs: number,
+  ): void {
+    const lookupKey = this.generateRouterLookupKey(clientId, model);
+    const existingSessionId = this.routerLookupIndex.get(lookupKey);
+    const now = Date.now();
+
+    if (existingSessionId) {
+      const existingSession = this.sessionsById.get(existingSessionId);
+      if (existingSession?.kind === SESSION_ENTRY_KIND.ROUTER_STICKY && existingSession.expiresAt > now) {
+        existingSession.provider = provider;
+        existingSession.keyId = keyId;
+        existingSession.lastUsedAt = now;
+        existingSession.expiresAt = now + ttlMs;
+        existingSession.ttlMs = ttlMs;
+        return;
       }
-      return null;
+
+      if (existingSession) {
+        this.endSession(existingSessionId);
+      }
     }
 
-    const expiresIn = Math.floor((session.expiresAt - Date.now()) / 1000);
-
-    return {
-      provider: session.provider,
-      keyId: session.keyId,
-      model: session.model,
-      expiresIn,
+    const sessionId = this.generateSessionId();
+    const session: RouterStickySessionEntry = {
+      sessionId,
+      kind: SESSION_ENTRY_KIND.ROUTER_STICKY,
+      clientId,
+      provider,
+      keyId,
+      model,
+      createdAt: now,
+      lastUsedAt: now,
+      expiresAt: now + ttlMs,
+      ttlMs,
     };
+
+    this.sessionsById.set(sessionId, session);
+    this.routerLookupIndex.set(lookupKey, sessionId);
+  }
+
+  unpinRouterStickySession(clientId: string, model: string): void {
+    const sessionId = this.routerLookupIndex.get(this.generateRouterLookupKey(clientId, model));
+
+    if (!sessionId) return;
+
+    this.endSession(sessionId);
   }
 
   /**
@@ -214,7 +269,7 @@ export class SessionManager {
 
     // Find expired sessions
     const expiredSessionIds: string[] = [];
-    for (const [sessionId, session] of this.sessions.entries()) {
+    for (const [sessionId, session] of this.sessionsById.entries()) {
       if (session.expiresAt <= now) {
         expiredSessionIds.push(sessionId);
       }
@@ -237,7 +292,7 @@ export class SessionManager {
     const now = Date.now();
     const active: SessionEntry[] = [];
 
-    for (const session of this.sessions.values()) {
+    for (const session of this.sessionsById.values()) {
       if (session.expiresAt > now) {
         active.push(session);
       }
@@ -255,23 +310,37 @@ export class SessionManager {
     let totalSessions = 0;
     let expiredSessions = 0;
     let totalAge = 0;
+    const kindMap = new Map<string, { totalSessions: number; expiredSessions: number; totalAge: number }>();
 
-    for (const session of this.sessions.values()) {
+    for (const session of this.sessionsById.values()) {
       totalSessions++;
       const age = now - session.createdAt;
       totalAge += age;
+      const kindStats = kindMap.get(session.kind) ?? { totalSessions: 0, expiredSessions: 0, totalAge: 0 };
+      kindStats.totalSessions++;
+      kindStats.totalAge += age;
 
       if (session.expiresAt <= now) {
         expiredSessions++;
+        kindStats.expiredSessions++;
       }
+
+      kindMap.set(session.kind, kindStats);
     }
 
     const averageSessionAge = totalSessions > 0 ? Math.floor(totalAge / totalSessions) : 0;
+    const byKind = Array.from(kindMap.entries()).map(([kind, stats]) => ({
+      kind: kind as SessionEntry['kind'],
+      totalSessions: stats.totalSessions,
+      expiredSessions: stats.expiredSessions,
+      averageSessionAge: Math.floor(stats.totalAge / stats.totalSessions),
+    }));
 
     return {
       totalSessions,
       expiredSessions,
       averageSessionAge,
+      byKind,
     };
   }
 
@@ -290,23 +359,49 @@ export class SessionManager {
       ? Math.floor(totalAge / activeSessions.length)
       : 0;
 
-    // Group by provider
-    const providerMap = new Map<string, { count: number; totalTtl: number }>();
+    const kindMap = new Map<string, { count: number; totalAge: number }>();
     for (const session of activeSessions) {
-      const existing = providerMap.get(session.provider);
+      const existing = kindMap.get(session.kind);
+      const age = now - session.createdAt;
+
+      if (existing) {
+        existing.count++;
+        existing.totalAge += age;
+      } else {
+        kindMap.set(session.kind, { count: 1, totalAge: age });
+      }
+    }
+
+    const byKind: KindSessionBreakdown[] = Array.from(kindMap.entries()).map(([kind, data]) => ({
+      kind: kind as KindSessionBreakdown['kind'],
+      sessionCount: data.count,
+      averageSessionAge: Math.floor(data.totalAge / data.count),
+    }));
+
+    // Group by provider
+    const providerMap = new Map<string, { kind: SessionEntry['kind']; provider: string; count: number; totalTtl: number }>();
+    for (const session of activeSessions) {
+      const providerKey = `${session.kind}:${session.provider}`;
+      const existing = providerMap.get(providerKey);
       const ttlRemaining = session.expiresAt - now;
 
       if (existing) {
         existing.count++;
         existing.totalTtl += ttlRemaining;
       } else {
-        providerMap.set(session.provider, { count: 1, totalTtl: ttlRemaining });
+        providerMap.set(providerKey, {
+          kind: session.kind,
+          provider: session.provider,
+          count: 1,
+          totalTtl: ttlRemaining,
+        });
       }
     }
 
     const byProvider: ProviderSessionBreakdown[] = Array.from(providerMap.entries()).map(
-      ([provider, data]) => ({
-        provider,
+      ([, data]) => ({
+        kind: data.kind,
+        provider: data.provider,
         sessionCount: data.count,
         avgTtlRemaining: Math.floor(data.totalTtl / data.count / 1000), // in seconds
       })
@@ -315,6 +410,7 @@ export class SessionManager {
     return {
       activeSessionCount: activeSessions.length,
       averageSessionAge,
+      byKind,
       byProvider,
       computedAt,
     };
@@ -333,7 +429,35 @@ export class SessionManager {
    * @param lookup - The lookup criteria
    * @returns Lookup key string
    */
-  private generateLookupKey(lookup: SessionLookup): string {
+  private generateApiLookupKey(lookup: SessionLookup): string {
     return `${lookup.apiKeyId}:${lookup.provider || '*'}:${lookup.model || '*'}`;
+  }
+
+  private generateRouterLookupKey(clientId: string, model: string): string {
+    return `${clientId}:${model}`;
+  }
+
+  private getStickyKeyBySessionId(
+    sessionId: string | undefined,
+    expectedKind: SessionEntry['kind'],
+  ): StickyKey | null {
+    if (!sessionId) return null;
+
+    const session = this.sessionsById.get(sessionId);
+    if (!session || session.kind !== expectedKind || session.expiresAt <= Date.now()) {
+      if (session) {
+        this.endSession(sessionId);
+      }
+      return null;
+    }
+
+    const expiresIn = Math.floor((session.expiresAt - Date.now()) / 1000);
+
+    return {
+      provider: session.provider,
+      keyId: session.keyId,
+      model: session.model,
+      expiresIn,
+    };
   }
 }

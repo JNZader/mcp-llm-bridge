@@ -28,14 +28,18 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   cleanupIntervalMs: 60000,
 } as const;
 
-/**
- * Individual session entry tracking a conversation session
- */
-export interface SessionEntry {
+export const SESSION_ENTRY_KIND = {
+  API_GROUP: 'api-group',
+  ROUTER_STICKY: 'router-sticky',
+} as const;
+
+export type SessionEntryKind = (typeof SESSION_ENTRY_KIND)[keyof typeof SESSION_ENTRY_KIND];
+
+export interface SessionEntryBase {
   /** Unique session identifier */
   sessionId: string;
-  /** API key ID that owns this session */
-  apiKeyId: number;
+  /** Session kind discriminator */
+  kind: SessionEntryKind;
   /** Provider used for this session (e.g., "openai", "groq") */
   provider: string;
   /** Specific key identifier used */
@@ -48,7 +52,26 @@ export interface SessionEntry {
   lastUsedAt: number;
   /** Unix timestamp when session expires */
   expiresAt: number;
+  /** TTL used when extending this session */
+  ttlMs: number;
 }
+
+/**
+ * Individual session entry tracking a conversation session
+ */
+export interface ApiGroupSessionEntry extends SessionEntryBase {
+  kind: typeof SESSION_ENTRY_KIND.API_GROUP;
+  /** API key ID that owns this session */
+  apiKeyId: number;
+}
+
+export interface RouterStickySessionEntry extends SessionEntryBase {
+  kind: typeof SESSION_ENTRY_KIND.ROUTER_STICKY;
+  /** Client ID that owns this sticky router pin */
+  clientId: string;
+}
+
+export type SessionEntry = ApiGroupSessionEntry | RouterStickySessionEntry;
 
 /**
  * Lookup criteria for finding or creating sessions
@@ -96,18 +119,48 @@ export interface SessionStats {
   expiredSessions: number;
   /** Average session age in milliseconds */
   averageSessionAge: number;
+  /** Sessions grouped by kind */
+  byKind: StatsKindSessionBreakdown[];
+}
+
+/**
+ * Session stats breakdown by kind
+ */
+export interface StatsKindSessionBreakdown {
+  /** Session kind */
+  kind: SessionEntryKind;
+  /** Total number of sessions of this kind */
+  totalSessions: number;
+  /** Number of expired sessions of this kind */
+  expiredSessions: number;
+  /** Average session age in milliseconds for this kind */
+  averageSessionAge: number;
 }
 
 /**
  * Session breakdown by provider for monitoring
  */
 export interface ProviderSessionBreakdown {
+  /** Session kind for this provider bucket */
+  kind: SessionEntryKind;
   /** Provider name */
   provider: string;
   /** Number of active sessions for this provider */
   sessionCount: number;
   /** Average TTL remaining for this provider's sessions */
   avgTtlRemaining: number;
+}
+
+/**
+ * Session breakdown by kind for monitoring
+ */
+export interface KindSessionBreakdown {
+  /** Session kind */
+  kind: SessionEntryKind;
+  /** Number of sessions for this kind */
+  sessionCount: number;
+  /** Average session age in milliseconds for this kind */
+  averageSessionAge: number;
 }
 
 /**
@@ -118,6 +171,8 @@ export interface SessionDashboardMetrics {
   activeSessionCount: number;
   /** Average session age in milliseconds */
   averageSessionAge: number;
+  /** Sessions grouped by kind */
+  byKind: KindSessionBreakdown[];
   /** Sessions grouped by provider */
   byProvider: ProviderSessionBreakdown[];
   /** Timestamp when metrics were computed */
@@ -133,16 +188,28 @@ export function isSessionEntry(value: unknown): value is SessionEntry {
   if (typeof value !== 'object' || value === null) return false;
   const entry = value as Partial<SessionEntry>;
 
-  return (
+  const hasBaseShape = (
     typeof entry.sessionId === 'string' &&
-    typeof entry.apiKeyId === 'number' &&
     typeof entry.provider === 'string' &&
     typeof entry.keyId === 'string' &&
     typeof entry.model === 'string' &&
     typeof entry.createdAt === 'number' &&
     typeof entry.lastUsedAt === 'number' &&
-    typeof entry.expiresAt === 'number'
+    typeof entry.expiresAt === 'number' &&
+    typeof entry.ttlMs === 'number'
   );
+
+  if (!hasBaseShape) return false;
+
+  if (entry.kind === SESSION_ENTRY_KIND.API_GROUP) {
+    return typeof entry.apiKeyId === 'number';
+  }
+
+  if (entry.kind === SESSION_ENTRY_KIND.ROUTER_STICKY) {
+    return typeof entry.clientId === 'string';
+  }
+
+  return false;
 }
 
 /**
