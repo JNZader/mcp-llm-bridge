@@ -22,8 +22,8 @@ import {
 	jsonChatInvalidRequestError,
 	jsonChatValidationError,
 	jsonGenerateValidationError,
-	resolveRequestProject,
 } from "../http-helpers/request-validation.js";
+import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 
 export interface ExecutionRouteDeps {
 	router: Router;
@@ -383,37 +383,7 @@ export function registerExecutionRoutes(
 				throw error;
 			}
 
-			const project = resolveRequestProject(validated.project, c);
-
-			let prompt = validated.prompt ?? "";
-			let system = validated.system;
-
-			if (validated.context || validated.instruction) {
-				const parts: string[] = [];
-				if (validated.context) {
-					parts.push(`[Context]\n${validated.context}`);
-				}
-				if (validated.instruction) {
-					parts.push(`[Instruction]\n${validated.instruction}`);
-				}
-				prompt = parts.join("\n\n");
-			} else if (prompt && !system) {
-				const messages = [{ role: "user" as const, content: prompt }];
-				const optimized = optimizeMessages(messages);
-				if (
-					optimized.length > 1 &&
-					optimized[0]?.role === "system" &&
-					typeof optimized[0].content === "string"
-				) {
-					system = optimized[0].content;
-					const rest = optimized
-						.slice(1)
-						.map((m) => (typeof m.content === "string" ? m.content : ""))
-						.filter(Boolean)
-						.join("\n\n");
-					prompt = rest;
-				}
-			}
+			const generateRequest = prepareGenerateRequest(validated, c);
 
 			logCtx = requestLogger?.captureStart({
 				provider: validated.provider || "unknown",
@@ -421,15 +391,7 @@ export function registerExecutionRoutes(
 				startTime: Date.now(),
 			});
 
-			const result = await router.generate({
-				prompt,
-				model: validated.model,
-				provider: validated.provider,
-				system,
-				maxTokens: validated.maxTokens,
-				strict: validated.strict,
-				project,
-			});
+			const result = await router.generate(generateRequest);
 
 			if (logCtx && requestLogger) {
 				await requestLogger.captureEnd(logCtx, {
