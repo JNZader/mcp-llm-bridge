@@ -29,6 +29,7 @@ import {
   getCircuitBreakerRegistry,
   CircuitState,
 } from '../src/core/circuit-breaker.js';
+import { createDashboardJwt } from '../src/auth/github-oauth.js';
 import { migrate } from '../src/db/migrate.js';
 
 // ── Test infrastructure ──────────────────────────────────
@@ -281,6 +282,58 @@ describe('GET /v1/admin/health', () => {
     assert.ok(typeof data.memory.heapTotal === 'number');
     assert.ok(typeof data.memory.heapUsed === 'number');
     assert.ok(typeof data.memory.external === 'number');
+  });
+});
+
+// ── GET /v1/admin/me ─────────────────────────────────────
+
+describe('GET /v1/admin/me', () => {
+  it('returns token auth identity when using static admin auth', async () => {
+    const res = await request('GET', '/v1/admin/me');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.data, {
+      authMethod: 'token',
+      login: null,
+      name: 'Admin',
+      avatar: null,
+    });
+  });
+
+  it('returns GitHub identity when using a valid dashboard JWT', async () => {
+    process.env['GITHUB_OAUTH_SECRET'] = 'test-github-oauth-secret';
+    const token = createDashboardJwt({
+      id: 123,
+      login: 'octocat',
+      name: 'The Octocat',
+      avatar_url: 'https://github.example/octocat.png',
+    });
+
+    try {
+      const res = await request('GET', '/v1/admin/me', undefined, token);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data, {
+        authMethod: 'github',
+        login: 'octocat',
+        name: 'The Octocat',
+        avatar: 'https://github.example/octocat.png',
+      });
+    } finally {
+      delete process.env['GITHUB_OAUTH_SECRET'];
+    }
+  });
+});
+
+// ── GET /v1/admin/security-profile ───────────────────────
+
+describe('GET /v1/admin/security-profile', () => {
+  it('returns the default local-dev security shell payload', async () => {
+    const res = await request('GET', '/v1/admin/security-profile');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.data, {
+      profile: 'local-dev',
+      allowedCategories: ['destructive', 'read', 'generate', 'admin'],
+      rateLimit: null,
+    });
   });
 });
 

@@ -21,6 +21,7 @@ import { registerAdminApiKeyRoutes } from './routes/admin/api-keys.js';
 import { registerAdminDiscoveryRoutes } from './routes/admin/discovery.js';
 import { registerAdminDashboardRoutes } from './routes/admin/dashboard.js';
 import { registerAdminOperationsRoutes } from './routes/admin/operations.js';
+import { registerAdminShellRoutes } from './routes/admin/shell.js';
 import { registerAdminSecurityProfileRoutes } from './routes/admin/security-profiles.js';
 import { registerAdminSyncRoutes } from './routes/admin/sync.js';
 
@@ -121,40 +122,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
     freeModelRouter: deps.freeModelRouter,
   });
   registerAdminOperationsRoutes(app, { costTracker: deps.costTracker });
+  registerAdminShellRoutes(app, { config });
   registerAdminSecurityProfileRoutes(app, { db: deps.db });
   registerAdminSyncRoutes(app, { db: deps.db, vault: deps.vault });
-
-  // ── GET /v1/admin/me ───────────────────────────────────
-  // Returns GitHub user info if authenticated via OAuth, or {authMethod:'token'} for token auth.
-
-  app.get('/v1/admin/me', async (c) => {
-    const authHeader = c.req.header('Authorization');
-    const parts = authHeader?.split(' ');
-    const bearerToken = parts?.length === 2 && parts[0] === 'Bearer' ? parts[1] : null;
-
-    if (bearerToken) {
-      const { verifyDashboardJwt } = await import('../auth/github-oauth.js');
-      const payload = verifyDashboardJwt(bearerToken);
-      if (payload) {
-        return c.json({
-          authMethod: 'github',
-          login: payload.login,
-          name: payload.name,
-          avatar: payload.avatar,
-        });
-      }
-    }
-
-    return c.json({ authMethod: 'token', login: null, name: 'Admin', avatar: null });
-  });
-
-  // ── GET /v1/admin/security-profile ─────────────────────
-
-  app.get('/v1/admin/security-profile', (c) => {
-    return c.json({
-      profile: config.securityProfile ?? 'local-dev',
-      allowedCategories: ['destructive', 'read', 'generate', 'admin'],
-      rateLimit: null,
-    });
-  });
 }
