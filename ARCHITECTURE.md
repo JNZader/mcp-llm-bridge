@@ -182,7 +182,6 @@ HTTP tool catalog/search backed by the runtime MCP registry.
 ## Experimental / Not Fully Wired
 
 - `src/acp/*` — ACP protocol island, not part of active runtime
-- `src/workflow-builder/*` — workflow engine, not wired to HTTP/MCP
 - `src/sandbox/*` — sandbox infrastructure exists; execution tools do not
 
 ---

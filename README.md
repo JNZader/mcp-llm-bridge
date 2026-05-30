@@ -1537,10 +1537,6 @@ Clients (GHAGGA, OpenCode, curl, LangChain, any OpenAI-compatible tool)
 
 ### Experimental Modules
 
-- **`src/workflow-builder/builder.ts`** — DAG-based workflow engine for MCP tool orchestration.  
-  Exports: `createWorkflow`, `addNode`, `addEdge`, `validateWorkflow`, `getExecutionOrder`, `createExecution`, `serializeWorkflow`, `deserializeWorkflow`.  
-  Not yet wired to HTTP or MCP. Use programmatically if you want to experiment with visual workflow definitions.
-
 - **`src/acp/`** — Agent Client Protocol implementation (`server.ts`, `translator.ts`, `types.ts`).  
   Present in the repo but **not wired into the active runtime**. Treat it as an experimental protocol island until there is a dedicated ACP integration sprint.
 
