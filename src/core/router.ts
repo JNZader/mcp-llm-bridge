@@ -39,6 +39,14 @@ import { classifyForOffload } from '../local-llm/router.js';
 import { classify } from '../classification/index.js';
 import type { TaskClassification } from '../classification/index.js';
 import type { ModelEndpoint, RoutingDecision } from '../model-routing/types.js';
+import {
+  prioritizeEndpointCandidate,
+  providerMatchesEndpoint,
+  reorderByLatency,
+  resolveCandidates,
+  resolveGroupCandidates,
+  resolveProviderModel,
+} from './router-candidate-planner.js';
 
 /**
  * Minimal interface for a local LLM client.
@@ -47,11 +55,7 @@ import type { ModelEndpoint, RoutingDecision } from '../model-routing/types.js';
 export interface LocalLLMClient {
   generate(request: GenerateRequest): Promise<GenerateResponse>;
 }
-import { selectProviderWithLatency, buildLatencyMap } from '../latency/selector.js';
-import type { ProviderCandidate } from '../latency/types.js';
-import { createBalancer, memberKey } from './balancer.js';
 import { logger } from './logger.js';
-import { resolveModel } from './fuzzy.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 
 /**
@@ -262,7 +266,12 @@ export class Router {
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const startTime = Date.now();
-    let candidates = await this.resolveCandidates(request);
+    let candidates = await resolveCandidates(
+      this._providers,
+      request,
+      (orderedCandidates) =>
+        reorderByLatency(orderedCandidates, this._latencyMeasurer, this._explorationRate),
+    );
 
     if (candidates.length === 0) {
       throw new Error(
@@ -277,7 +286,7 @@ export class Router {
       classification = classify(request.prompt);
       modelRouterDecision = this._modelRouter.route(classification);
       if (modelRouterDecision) {
-        const routedCandidates = this.prioritizeEndpointCandidate(
+        const routedCandidates = prioritizeEndpointCandidate(
           candidates,
           modelRouterDecision.endpoint,
         );
@@ -524,7 +533,13 @@ export class Router {
     if (this._groupStore && model) {
       matchedGroup = this._groupStore.findByModel(model);
       if (matchedGroup) {
-        orderedCandidates = this.resolveGroupCandidates(matchedGroup, model);
+        orderedCandidates = resolveGroupCandidates(
+          this._providers,
+          matchedGroup,
+          (providerId, candidateModel) =>
+            getCircuitBreakerV2().canExecute(providerId, 'default', candidateModel).allowed,
+          model,
+        );
       }
     }
 
@@ -535,7 +550,11 @@ export class Router {
         model: optimizedRequest.model,
         provider: optimizedRequest.metadata?.['provider'] as string | undefined,
       };
-      orderedCandidates = await this.resolveCandidates(resolveRequest);
+      orderedCandidates = await resolveCandidates(
+        this._providers,
+        resolveRequest,
+        (candidates) => reorderByLatency(candidates, this._latencyMeasurer, this._explorationRate),
+      );
     }
 
     if (orderedCandidates.length === 0) {
@@ -552,7 +571,7 @@ export class Router {
       internalClassification = classify(prompt);
       modelRouterDecision = this._modelRouter.route(internalClassification);
       if (modelRouterDecision) {
-        const routedCandidates = this.prioritizeEndpointCandidate(
+        const routedCandidates = prioritizeEndpointCandidate(
           orderedCandidates,
           modelRouterDecision.endpoint,
         );
@@ -649,7 +668,13 @@ export class Router {
     if (this._groupStore && model) {
       const matchedGroup = this._groupStore.findByModel(model);
       if (matchedGroup) {
-        orderedCandidates = this.resolveGroupCandidates(matchedGroup, model);
+        orderedCandidates = resolveGroupCandidates(
+          this._providers,
+          matchedGroup,
+          (providerId, candidateModel) =>
+            getCircuitBreakerV2().canExecute(providerId, 'default', candidateModel).allowed,
+          model,
+        );
       }
     }
 
@@ -659,7 +684,11 @@ export class Router {
         model: optimizedRequest.model,
         provider: optimizedRequest.metadata?.['provider'] as string | undefined,
       };
-      orderedCandidates = await this.resolveCandidates(resolveRequest);
+      orderedCandidates = await resolveCandidates(
+        this._providers,
+        resolveRequest,
+        (candidates) => reorderByLatency(candidates, this._latencyMeasurer, this._explorationRate),
+      );
     }
 
     let modelRouterDecision: RoutingDecision | null = null;
@@ -667,7 +696,7 @@ export class Router {
       const classification = classify(this.extractPromptFromInternal(optimizedRequest));
       modelRouterDecision = this._modelRouter.route(classification);
       if (modelRouterDecision) {
-        const routedCandidates = this.prioritizeEndpointCandidate(
+        const routedCandidates = prioritizeEndpointCandidate(
           orderedCandidates,
           modelRouterDecision.endpoint,
         );
@@ -817,22 +846,6 @@ export class Router {
     }
   }
 
-  private prioritizeEndpointCandidate(
-    candidates: LLMProvider[],
-    endpoint: ModelEndpoint,
-  ): LLMProvider[] | null {
-    const selected = candidates.find((provider) => this.providerMatchesEndpoint(provider, endpoint));
-    if (!selected) {
-      return null;
-    }
-
-    return [selected, ...candidates.filter((provider) => provider !== selected)];
-  }
-
-  private providerMatchesEndpoint(provider: LLMProvider, endpoint: ModelEndpoint): boolean {
-    return provider.id === endpoint.provider || provider.id === endpoint.id;
-  }
-
   private buildGenerateRequest(
     request: GenerateRequest,
     provider: LLMProvider,
@@ -841,7 +854,7 @@ export class Router {
     return {
       ...request,
       provider: provider.id,
-      model: this.resolveProviderModel(request.model, provider, routedEndpoint),
+      model: resolveProviderModel(request.model, provider, routedEndpoint),
     };
   }
 
@@ -856,20 +869,8 @@ export class Router {
         ...request.metadata,
         provider: provider.id,
       },
-      model: this.resolveProviderModel(request.model, provider, routedEndpoint),
+      model: resolveProviderModel(request.model, provider, routedEndpoint),
     };
-  }
-
-  private resolveProviderModel(
-    currentModel: string | undefined,
-    provider: LLMProvider,
-    routedEndpoint?: ModelEndpoint,
-  ): string | undefined {
-    if (routedEndpoint && this.providerMatchesEndpoint(provider, routedEndpoint)) {
-      return routedEndpoint.modelId;
-    }
-
-    return currentModel;
   }
 
   private resolveFeedbackEndpointId(
@@ -877,54 +878,11 @@ export class Router {
     model: string | undefined,
     routedEndpoint?: ModelEndpoint,
   ): string {
-    if (routedEndpoint && this.providerMatchesEndpoint(provider, routedEndpoint)) {
+    if (routedEndpoint && providerMatchesEndpoint(provider, routedEndpoint)) {
       return routedEndpoint.id;
     }
 
     return this._modelRouter?.findEndpointForProvider(provider.id, model)?.id ?? provider.id;
-  }
-
-  /**
-   * Resolve candidates from a provider group using its balancer strategy.
-   * Returns providers ordered by the balancer, filtered by circuit breakers.
-   */
-  private resolveGroupCandidates(group: ProviderGroup, model: string = 'unknown'): LLMProvider[] {
-    const balancer = createBalancer(group.strategy);
-    const circuitBreaker = getCircuitBreakerV2();
-
-    // Build excluded set from circuit breakers (V2 with per-model granularity)
-    const excluded = new Set<string>();
-    for (const member of group.members) {
-      const key = memberKey(member);
-      if (!circuitBreaker.canExecute(member.provider, 'default', model).allowed) {
-        excluded.add(key);
-      }
-    }
-
-    // Get ordered list from balancer
-    const ordered: LLMProvider[] = [];
-    const used = new Set<string>();
-
-    // Keep selecting from balancer until all members are consumed or returned null
-    for (let i = 0; i < group.members.length; i++) {
-      const member = balancer.next(group.members, excluded);
-      if (!member) break;
-
-      const key = memberKey(member);
-      if (used.has(key)) continue;
-      used.add(key);
-
-      // Find matching registered provider
-      const provider = this._providers.find((p) => p.id === member.provider);
-      if (provider) {
-        ordered.push(provider);
-      }
-
-      // Add to excluded so next iteration picks a different member
-      excluded.add(key);
-    }
-
-    return ordered;
   }
 
   /**
@@ -1080,111 +1038,4 @@ export class Router {
     return results;
   }
 
-  /**
-   * Resolve the ordered list of candidate providers for a request.
-   *
-   * Resolution order:
-   * 1. If `model` specified — provider with that model goes first
-   * 2. If `provider` specified — that provider goes first
-   * 3. Default: API providers first, then CLI providers
-   */
-  private async resolveCandidates(
-    request: GenerateRequest,
-  ): Promise<LLMProvider[]> {
-    // Parallel availability check - avoids N sequential isAvailable() calls
-    const availabilityResults = await Promise.all(
-      this._providers.map(async (provider) => ({
-        provider,
-        available: await provider.isAvailable(),
-      })),
-    );
-    const available = availabilityResults
-      .filter((r) => r.available)
-      .map((r) => r.provider);
-
-    // 1. If model specified, find provider that has that model
-    if (request.model) {
-      const modelProvider = available.find((p) =>
-        p.models.some((m) => m.id === request.model),
-      );
-      if (modelProvider) {
-        return [modelProvider, ...available.filter((p) => p !== modelProvider)];
-      }
-
-      // Fuzzy fallback: try resolving against all available model IDs
-      const corpus = available.flatMap((p) => p.models.map((m) => m.id));
-      const fuzzyResult = resolveModel(request.model, corpus);
-      if (fuzzyResult) {
-        const fuzzyProvider = available.find((p) =>
-          p.models.some((m) => m.id === fuzzyResult.match),
-        );
-        if (fuzzyProvider) {
-          return [fuzzyProvider, ...available.filter((p) => p !== fuzzyProvider)];
-        }
-      }
-    }
-
-    // 2. If provider specified, put it first
-    if (request.provider) {
-      const preferred = available.find((p) => p.id === request.provider);
-      if (preferred) {
-        return [preferred, ...available.filter((p) => p !== preferred)];
-      }
-    }
-
-    // 3. Default: API providers first, then CLI
-    const sorted = available.sort((a, b) => {
-      if (a.type === 'api' && b.type === 'cli') return -1;
-      if (a.type === 'cli' && b.type === 'api') return 1;
-      return 0;
-    });
-
-    // 4. Latency-based reordering (when measurer is set)
-    return this.reorderByLatency(sorted);
-  }
-
-  /**
-   * Reorder candidates by latency measurements using epsilon-greedy strategy.
-   *
-   * - 90% of the time: pick the fastest provider (by latency data)
-   * - 10% of the time: pick a random provider (exploration to prevent starvation)
-   * - When no measurer is set or no latency data exists: return candidates unchanged
-   */
-  private reorderByLatency(candidates: LLMProvider[]): LLMProvider[] {
-    if (!this._latencyMeasurer || candidates.length <= 1) {
-      return candidates;
-    }
-
-    const measurements = this._latencyMeasurer.getAll();
-    const latencyMap = buildLatencyMap(measurements);
-
-    // No latency data available — skip reordering
-    if (latencyMap.size === 0) {
-      return candidates;
-    }
-
-    // Epsilon-greedy exploration: random selection to prevent provider starvation
-    if (Math.random() < this._explorationRate) {
-      const randomIndex = Math.floor(Math.random() * candidates.length);
-      const picked = candidates[randomIndex];
-      if (picked) {
-        const rest = candidates.filter((_, i) => i !== randomIndex);
-        return [picked, ...rest];
-      }
-    }
-
-    // Exploit: use latency-based selection to pick the best provider
-    const providerCandidates: ProviderCandidate[] = candidates.map((p) => ({
-      provider: p.id,
-    }));
-
-    const selected = selectProviderWithLatency(providerCandidates, latencyMap, 0);
-    const best = candidates.find((p) => p.id === selected.provider);
-
-    if (best) {
-      return [best, ...candidates.filter((p) => p !== best)];
-    }
-
-    return candidates;
-  }
 }
