@@ -1541,6 +1541,12 @@ Clients (GHAGGA, OpenCode, curl, LangChain, any OpenAI-compatible tool)
   Exports: `createWorkflow`, `addNode`, `addEdge`, `validateWorkflow`, `getExecutionOrder`, `createExecution`, `serializeWorkflow`, `deserializeWorkflow`.  
   Not yet wired to HTTP or MCP. Use programmatically if you want to experiment with visual workflow definitions.
 
+- **`src/acp/`** — Agent Client Protocol implementation (`server.ts`, `translator.ts`, `types.ts`).  
+  Present in the repo but **not wired into the active runtime**. Treat it as an experimental protocol island until there is a dedicated ACP integration sprint.
+
+- **`src/sandbox/`** — Docker/process sandbox runner.  
+  The `sandbox` flag now exists in security profiles, but the runtime still does **not** expose sandboxed execution tools like `execute_code` or `shell_command`. In other words: the infrastructure is prepared, but the feature is not complete.
+
 ### Session Systems
 
 The gateway now uses `SessionManager` for both session-affinity concerns:
