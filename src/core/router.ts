@@ -47,6 +47,7 @@ import {
   resolveGroupCandidates,
   resolveProviderModel,
 } from './router-candidate-planner.js';
+import { extractPromptFromInternal, tryProvider } from './router-executor.js';
 
 /**
  * Minimal interface for a local LLM client.
@@ -515,7 +516,18 @@ export class Router {
           const circuitBreaker = getCircuitBreakerV2();
           if (circuitBreaker.canExecute(stickyProvider.id, 'default', model).allowed) {
             try {
-              const result = await this.tryProvider(stickyProvider, request, registry, startTime, model);
+              const result = await tryProvider({
+                provider: stickyProvider,
+                request,
+                registry,
+                circuitBreaker,
+                startTime,
+                model,
+                resolveFeedbackEndpointId: (provider, resolvedModel, routedEndpoint) =>
+                  this.resolveFeedbackEndpointId(provider, resolvedModel, routedEndpoint),
+                recordUsage: (...args) => this.recordUsage(...args),
+                recordModelFeedback: (...args) => this._recordModelFeedback(...args),
+              });
               return result;
             } catch {
               // Sticky provider failed — fall through to normal routing
@@ -567,7 +579,7 @@ export class Router {
     let internalClassification: TaskClassification | null = null;
     let modelRouterDecision: RoutingDecision | null = null;
     if (this._modelRouter && this._modelRouter.enabled) {
-      const prompt = this.extractPromptFromInternal(optimizedRequest);
+      const prompt = extractPromptFromInternal(optimizedRequest);
       internalClassification = classify(prompt);
       modelRouterDecision = this._modelRouter.route(internalClassification);
       if (modelRouterDecision) {
@@ -600,15 +612,19 @@ export class Router {
 
     for (const provider of availableCandidates) {
       try {
-        const result = await this.tryProvider(
+        const result = await tryProvider({
           provider,
-          this.buildInternalRequest(optimizedRequest, provider, modelRouterDecision?.endpoint),
+          request: this.buildInternalRequest(optimizedRequest, provider, modelRouterDecision?.endpoint),
           registry,
+          circuitBreaker,
           startTime,
-          undefined,
-          internalClassification ?? undefined,
-          modelRouterDecision?.endpoint,
-        );
+          classification: internalClassification ?? undefined,
+          routedEndpoint: modelRouterDecision?.endpoint,
+          resolveFeedbackEndpointId: (candidateProvider, resolvedModel, routedEndpoint) =>
+            this.resolveFeedbackEndpointId(candidateProvider, resolvedModel, routedEndpoint),
+          recordUsage: (...args) => this.recordUsage(...args),
+          recordModelFeedback: (...args) => this._recordModelFeedback(...args),
+        });
 
         // Pin session on success if stickiness is enabled
         if (this._sessionManager && clientId && model && matchedGroup?.stickyTTL) {
@@ -693,7 +709,7 @@ export class Router {
 
     let modelRouterDecision: RoutingDecision | null = null;
     if (this._modelRouter && this._modelRouter.enabled) {
-      const classification = classify(this.extractPromptFromInternal(optimizedRequest));
+      const classification = classify(extractPromptFromInternal(optimizedRequest));
       modelRouterDecision = this._modelRouter.route(classification);
       if (modelRouterDecision) {
         const routedCandidates = prioritizeEndpointCandidate(
@@ -727,123 +743,6 @@ export class Router {
     }
 
     return null;
-  }
-
-  /**
-   * Try a single provider through the transformer pipeline.
-   * Handles both API providers (with outbound transformer) and CLI providers.
-   * Records circuit breaker success/failure.
-   */
-  private async tryProvider(
-    provider: LLMProvider,
-    request: InternalLLMRequest,
-    registry: TransformerRegistry,
-    startTime: number,
-    model: string = 'unknown',
-    classification?: TaskClassification,
-    routedEndpoint?: ModelEndpoint,
-  ): Promise<InternalLLMResponse> {
-    const circuitBreaker = getCircuitBreakerV2();
-    const outbound = registry.getOutbound(provider.id);
-    const attemptedModel = request.model ?? model;
-    const feedbackEndpointId = this.resolveFeedbackEndpointId(
-      provider,
-      attemptedModel,
-      routedEndpoint,
-    );
-
-    if (!outbound) {
-      // No transformer — try CLI fallback
-      const cliOutbound = registry.getOutbound('cli');
-      if (provider.type === 'cli' && cliOutbound) {
-        try {
-          const nativeRequest = cliOutbound.transformRequest(request);
-          const prompt = (nativeRequest as Record<string, unknown>)['prompt'] as string;
-          const system = (nativeRequest as Record<string, unknown>)['system'] as string | undefined;
-
-          const result = await provider.generate({
-            prompt,
-            system,
-            model: attemptedModel,
-            maxTokens: request.maxTokens,
-          });
-
-          circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
-          const response = cliOutbound.transformResponse(result);
-          const latencyMs = Date.now() - startTime;
-          this.recordUsage(provider.id, response.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
-          if (classification) {
-            this._recordModelFeedback(feedbackEndpointId, classification, true, latencyMs);
-          }
-          return response;
-        } catch (error) {
-          circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
-          const message = error instanceof Error ? error.message : String(error);
-          const latencyMs = Date.now() - startTime;
-          this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
-          if (classification) {
-            this._recordModelFeedback(feedbackEndpointId, classification, false, latencyMs);
-          }
-          logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed (CLI transformer)');
-          throw error;
-        }
-      }
-
-      logger.warn({ provider: provider.id }, 'No outbound transformer registered, skipping');
-      throw new Error(`no outbound transformer for ${provider.id}`);
-    }
-
-    try {
-      // Transform internal → provider native format (validates compatibility)
-      outbound.transformRequest(request);
-
-      const adapterRequest: GenerateRequest = {
-        prompt: this.extractPromptFromInternal(request),
-        system: this.extractSystemFromInternal(request),
-        model: attemptedModel,
-        maxTokens: request.maxTokens,
-        provider: provider.id,
-      };
-
-      const result = await provider.generate(adapterRequest);
-      circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
-
-      const latencyMs = Date.now() - startTime;
-
-      const response: InternalLLMResponse = {
-        content: result.text,
-        model: result.model,
-        finishReason: 'stop',
-        usage: {
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: result.tokensUsed ?? 0,
-        },
-        metadata: {
-          provider: result.provider,
-          fallbackUsed: false,
-          latencyMs,
-          resolvedProvider: result.provider,
-          resolvedModel: result.model,
-        },
-      };
-
-      this.recordUsage(provider.id, result.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
-      if (classification) {
-        this._recordModelFeedback(feedbackEndpointId, classification, true, latencyMs);
-      }
-      return response;
-    } catch (error) {
-      circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
-      const message = error instanceof Error ? error.message : String(error);
-      const latencyMs = Date.now() - startTime;
-      this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
-      if (classification) {
-        this._recordModelFeedback(feedbackEndpointId, classification, false, latencyMs);
-      }
-      logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
-      throw error;
-    }
   }
 
   private buildGenerateRequest(
@@ -954,49 +853,6 @@ export class Router {
     } catch (error) {
       logger.warn({ error, endpointId }, 'Failed to record model routing feedback');
     }
-  }
-
-  /**
-   * Extract a flat prompt string from InternalLLMRequest messages.
-   * Used to bridge to the legacy GenerateRequest format.
-   */
-  private extractPromptFromInternal(request: InternalLLMRequest): string {
-    const nonSystemMessages = request.messages.filter((m) => m.role !== 'system');
-    return nonSystemMessages
-      .map((m) => {
-        if (typeof m.content === 'string') return m.content;
-        if (Array.isArray(m.content)) {
-          return m.content
-            .filter((p) => p.type === 'text')
-            .map((p) => (p as { type: 'text'; text: string }).text)
-            .join('\n');
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-
-  /**
-   * Extract system prompt from InternalLLMRequest messages.
-   */
-  private extractSystemFromInternal(request: InternalLLMRequest): string | undefined {
-    const systemMessages = request.messages.filter((m) => m.role === 'system');
-    if (systemMessages.length === 0) return undefined;
-
-    return systemMessages
-      .map((m) => {
-        if (typeof m.content === 'string') return m.content;
-        if (Array.isArray(m.content)) {
-          return m.content
-            .filter((p) => p.type === 'text')
-            .map((p) => (p as { type: 'text'; text: string }).text)
-            .join('\n');
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n');
   }
 
   /** Return models from all registered providers. */
