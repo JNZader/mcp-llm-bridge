@@ -34,11 +34,6 @@ import type { GroupStore } from "../core/groups.js";
 import { CreateGroupSchema, UpdateGroupSchema } from "../core/groups.js";
 import type { InternalLLMRequest } from "../core/internal-model.js";
 import { logger } from "../core/logger.js";
-import {
-	getMetrics,
-	getMetricsContentType,
-	updateProviderAvailability,
-} from "../core/metrics.js";
 import { estimateCost, getPriceTable } from "../core/pricing.js";
 import type { Router } from "../core/router.js";
 import {
@@ -55,7 +50,6 @@ import type { LatencyMeasurer } from "../latency/index.js";
 import type { Vault } from "../vault/vault.js";
 import type { AnalyticsAggregator } from "../analytics/index.js";
 import type { SessionManager } from "../session/session-manager.js";
-import { LogQuerySchema } from "../logging/schemas.js";
 import type { RequestLogger } from "../logging/request-logger.js";
 import type { LogContext } from "../logging/types.js";
 import { registerAdminRoutes } from "./admin.js";
@@ -77,6 +71,7 @@ import {
 	createDashboardJwt,
 	isUserAllowed,
 } from "../auth/github-oauth.js";
+import { registerObservabilityRoutes } from "./routes/observability.js";
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -871,43 +866,10 @@ export function startHttpServer(
 		});
 	});
 
-	// ── Request Logs ──────────────────────────────────────
-
-	app.get("/v1/logs", async (c) => {
-		try {
-			if (!requestLogger) {
-				return c.json({ error: "Request logging not enabled" }, 503);
-			}
-			const query = LogQuerySchema.parse(c.req.query());
-			const logs = await requestLogger.getLogs(query);
-			return c.json(logs);
-		} catch (error) {
-			if (error && typeof error === "object" && "issues" in error) {
-				const issues = (
-					error as { issues: Array<{ message: string; path: string[] }> }
-				).issues;
-				const firstIssue = issues[0];
-				return c.json(
-					{
-						error: firstIssue?.message ?? "Validation error",
-						code: "VALIDATION_ERROR",
-						field: firstIssue?.path?.join(".") ?? "",
-					},
-					400,
-				);
-			}
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	// ── Metrics ─────────────────────────────────────────────
-
-	app.get("/metrics", async (c) => {
-		// Update provider availability before returning metrics
-		await updateProviderAvailability(router);
-		const metrics = await getMetrics();
-		return c.text(metrics, 200, { "Content-Type": getMetricsContentType() });
+	registerObservabilityRoutes(app, {
+		router,
+		analyticsAggregator,
+		requestLogger,
 	});
 
 	// ── Generate ───────────────────────────────────────────
@@ -1343,101 +1305,6 @@ export function startHttpServer(
 		}
 	});
 
-	// ── Analytics ──────────────────────────────────────────
-
-	app.get("/v1/analytics", (c) => {
-		try {
-			if (!analyticsAggregator) {
-				return c.json({ error: "Analytics not enabled" }, 503);
-			}
-
-			const dimension = (c.req.query("dimension") as any) || "hourly";
-			const fromStr = c.req.query("from");
-			const toStr = c.req.query("to");
-			const channelId = c.req.query("channelId") || undefined;
-			const model = c.req.query("model") || undefined;
-
-			// Validate dimension
-			const validDimensions = ["total", "hourly", "daily", "channel", "model"];
-			if (!validDimensions.includes(dimension)) {
-				return c.json(
-					{
-						error: "INVALID_PARAMS",
-						message: `Invalid dimension: ${dimension}`,
-					},
-					400,
-				);
-			}
-
-			// Parse from/to
-			let from: number | undefined;
-			let to: number | undefined;
-			if (fromStr !== undefined) {
-				from = parseInt(fromStr, 10);
-				if (isNaN(from)) {
-					return c.json(
-						{ error: "INVALID_PARAMS", message: "Invalid from timestamp" },
-						400,
-					);
-				}
-			}
-			if (toStr !== undefined) {
-				to = parseInt(toStr, 10);
-				if (isNaN(to)) {
-					return c.json(
-						{ error: "INVALID_PARAMS", message: "Invalid to timestamp" },
-						400,
-					);
-				}
-			}
-			if (from !== undefined && to !== undefined && from > to) {
-				return c.json(
-					{ error: "INVALID_PARAMS", message: "from must be <= to" },
-					400,
-				);
-			}
-
-			const data = analyticsAggregator.query({
-				dimension,
-				from,
-				to,
-				channelId,
-				model,
-			});
-
-			// Calculate summary
-			const totalRequests = data.reduce((sum, d) => sum + d.requests, 0);
-			const totalTokens = data.reduce(
-				(sum, d) => sum + d.inputTokens + d.outputTokens,
-				0,
-			);
-			const totalCost =
-				Math.round(
-					data.reduce((sum, d) => sum + d.cost, 0) * 1000000,
-				) / 1000000;
-			const avgLatency =
-				totalRequests > 0
-					? Math.round(
-							data.reduce((sum, d) => sum + d.avgLatency * d.requests, 0) /
-								totalRequests,
-						)
-					: 0;
-
-			return c.json({
-				data,
-				dimension,
-				summary: {
-					totalRequests,
-					totalTokens,
-					totalCost,
-					avgLatency,
-				},
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
 
 	// ── Cost Estimation ────────────────────────────────────
 
@@ -2067,18 +1934,6 @@ export function startHttpServer(
 			}
 		});
 	}
-
-	// ── Compression Analytics ────────────────────────────
-
-	app.get("/v1/compression/stats", async (c) => {
-		try {
-			const { compressionStats } = await import("../context-compression/output-compression.js");
-			return c.json(compressionStats.getSummary());
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
 
 	// ── Admin Dashboard API ────────────────────────────────
 
