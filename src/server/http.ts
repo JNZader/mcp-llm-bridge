@@ -62,6 +62,14 @@ import { registerObservabilityRoutes } from "./routes/observability.js";
 import { registerComparisonRoutes } from "./routes/comparison.js";
 import { registerToolingRoutes } from "./routes/tooling.js";
 import { registerPublicRoutes } from "./routes/public.js";
+import {
+	getHeaderProject,
+	getValidationIssue,
+	jsonChatInvalidRequestError,
+	jsonChatValidationError,
+	jsonGenerateValidationError,
+	resolveRequestProject,
+} from "./http-helpers/request-validation.js";
 
 export interface StartHttpServerDeps {
 	router: Router;
@@ -784,31 +792,18 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 		try {
 			const body = await c.req.json();
 
-			// Validate with Zod
 			let validated: ReturnType<typeof validateGenerateRequest>;
 			try {
 				validated = validateGenerateRequest(body);
 			} catch (error) {
-				// Handle ZodError in Zod 4 - issues are accessed via .issues property
-				if (error && typeof error === "object" && "issues" in error) {
-					const issues = (
-						error as { issues: Array<{ message: string; path: string[] }> }
-					).issues;
-					const firstIssue = issues[0];
-					return c.json(
-						{
-							error: firstIssue?.message ?? "Validation error",
-							code: "VALIDATION_ERROR",
-							field: firstIssue?.path?.join(".") ?? "",
-						},
-						400,
-					);
+				const issue = getValidationIssue(error);
+				if (issue) {
+					return jsonGenerateValidationError(c, issue);
 				}
 				throw error;
 			}
 
-			const headerProject = c.req.header("X-Project") ?? undefined;
-			const project = resolveProject(validated.project, headerProject);
+			const project = resolveRequestProject(validated.project, c);
 
 			// Build prompt and system from three-part fields or flat prompt
 			let prompt = validated.prompt ?? '';
@@ -885,28 +880,13 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 		try {
 			const body = await c.req.json();
 
-			// Validate with Zod
 			let validated: ReturnType<typeof validateChatCompletions>;
 			try {
 				validated = validateChatCompletions(body);
 			} catch (error) {
-				// Handle ZodError in Zod 4 - issues are accessed via .issues property
-				if (error && typeof error === "object" && "issues" in error) {
-					const issues = (
-						error as { issues: Array<{ message: string; path: string[] }> }
-					).issues;
-					const firstIssue = issues[0];
-					return c.json(
-						{
-							error: {
-								message: firstIssue?.message ?? "Validation error",
-								type: "invalid_request_error",
-								param: firstIssue?.path?.join(".") || undefined,
-								code: null,
-							},
-						},
-						400,
-					);
+				const issue = getValidationIssue(error);
+				if (issue) {
+					return jsonChatValidationError(c, issue);
 				}
 				throw error;
 			}
@@ -917,17 +897,7 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 				canonicalRequest = normalizeOpenAIRequest(validated);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				return c.json(
-					{
-						error: {
-							message,
-							type: "invalid_request_error",
-							param: null,
-							code: null,
-						},
-					},
-					400,
-				);
+				return jsonChatInvalidRequestError(c, message, null);
 			}
 
 			// Apply three-part prompt optimization to message array
@@ -989,7 +959,7 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 				prompt = `${context}\nuser: ${prompt}`;
 			}
 
-			const headerProject = c.req.header('X-Project') ?? undefined;
+			const headerProject = getHeaderProject(c);
 
 			logCtx = requestLogger?.captureStart({
 				provider: 'unknown',
