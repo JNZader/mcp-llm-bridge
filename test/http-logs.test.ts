@@ -466,19 +466,21 @@ describe('GET /v1/logs', () => {
       resetCircuitBreakerV2();
       const requestedModel = 'stream-requested-model';
       const resolvedModel = 'stream-resolved-model';
-      const originalResolveStreamingProvider = router.resolveStreamingProvider.bind(router);
+      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
 
-      (router as any).resolveStreamingProvider = async () => ({
-        provider: { id: 'mock-stream-provider' },
-        request: { model: resolvedModel, messages: [] },
-        streamTransformer: {
-          name: 'mock-stream-provider',
-          async *transformStream() {
-            yield { content: 'Hello', done: false };
-            yield { content: '', done: true, finishReason: 'stop' };
+      (router as any).resolveStreamingProviders = async () => ([
+        {
+          provider: { id: 'mock-stream-provider' },
+          request: { model: resolvedModel, messages: [] },
+          streamTransformer: {
+            name: 'mock-stream-provider',
+            async *transformStream() {
+              yield { content: 'Hello', done: false };
+              yield { content: '', done: true, finishReason: 'stop' };
+            },
           },
         },
-      });
+      ]);
 
       try {
         const res = await requestText('POST', '/v1/chat/completions', {
@@ -498,32 +500,34 @@ describe('GET /v1/logs', () => {
         );
         assert.ok(breaker.getState('mock-stream-provider', 'default', resolvedModel));
       } finally {
-        (router as any).resolveStreamingProvider = originalResolveStreamingProvider;
+        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
       }
     });
 
     it('logs successful streaming completions', async () => {
       const streamModel = 'stream-success-model';
-      const originalResolveStreamingProvider = router.resolveStreamingProvider.bind(router);
+      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
 
-      (router as any).resolveStreamingProvider = async () => ({
-        provider: { id: 'mock-stream-provider' },
-        request: { model: streamModel, messages: [] },
-        streamTransformer: {
-          name: 'mock-stream-provider',
-          async *transformStream() {
-            yield { content: 'Hello', done: false, model: streamModel };
-            yield {
-              content: '',
-              done: true,
-              model: streamModel,
-              finishReason: 'stop',
-              tokensIn: 7,
-              tokensOut: 11,
-            };
+      (router as any).resolveStreamingProviders = async () => ([
+        {
+          provider: { id: 'mock-stream-provider' },
+          request: { model: streamModel, messages: [] },
+          streamTransformer: {
+            name: 'mock-stream-provider',
+            async *transformStream() {
+              yield { content: 'Hello', done: false, model: streamModel };
+              yield {
+                content: '',
+                done: true,
+                model: streamModel,
+                finishReason: 'stop',
+                tokensIn: 7,
+                tokensOut: 11,
+              };
+            },
           },
         },
-      });
+      ]);
 
       try {
         const res = await requestText('POST', '/v1/chat/completions', {
@@ -558,17 +562,17 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.outputTokens, 11);
         assert.equal(data.logs[0]?.error, undefined);
       } finally {
-        (router as any).resolveStreamingProvider = originalResolveStreamingProvider;
+        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);
       }
     });
 
     it('logs streaming fallback completions', async () => {
       const streamModel = 'stream-fallback-model';
-      const originalResolveStreamingProvider = router.resolveStreamingProvider.bind(router);
+      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
       const originalGenerate = router.generate.bind(router);
 
-      (router as any).resolveStreamingProvider = async () => null;
+      (router as any).resolveStreamingProviders = async () => [];
       (router as any).generate = async () => ({
         text: 'Fallback response',
         model: streamModel,
@@ -611,27 +615,40 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.outputTokens, 5);
         assert.equal(data.logs[0]?.error, undefined);
       } finally {
-        (router as any).resolveStreamingProvider = originalResolveStreamingProvider;
+        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         (router as any).generate = originalGenerate;
         deleteLogsByModel(streamModel);
       }
     });
 
-    it('logs streaming errors when the stream fails', async () => {
-      const streamModel = 'stream-error-model';
-      const originalResolveStreamingProvider = router.resolveStreamingProvider.bind(router);
+    it('retries the next streaming-capable provider when failure happens before content', async () => {
+      const streamModel = 'stream-prestart-fallback-model';
+      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
 
-      (router as any).resolveStreamingProvider = async () => ({
-        provider: { id: 'mock-stream-provider' },
-        request: { model: streamModel, messages: [] },
-        streamTransformer: {
-          name: 'mock-stream-provider',
-          async *transformStream() {
-            yield { content: 'partial', done: false, model: streamModel };
-            throw new Error('mock stream failure');
+      (router as any).resolveStreamingProviders = async () => ([
+        {
+          provider: { id: 'failing-stream-provider' },
+          request: { model: streamModel, messages: [] },
+          streamTransformer: {
+            name: 'failing-stream-provider',
+            async *transformStream() {
+              yield { content: '', done: false, model: streamModel };
+              throw new Error('startup failure');
+            },
           },
         },
-      });
+        {
+          provider: { id: 'recovery-stream-provider' },
+          request: { model: streamModel, messages: [] },
+          streamTransformer: {
+            name: 'recovery-stream-provider',
+            async *transformStream() {
+              yield { content: 'Recovered', done: false, model: streamModel };
+              yield { content: '', done: true, model: streamModel, finishReason: 'stop' };
+            },
+          },
+        },
+      ]);
 
       try {
         const res = await requestText('POST', '/v1/chat/completions', {
@@ -643,7 +660,8 @@ describe('GET /v1/logs', () => {
         });
 
         assert.equal(res.status, 200);
-        assert.match(res.data, /mock stream failure/);
+        assert.doesNotMatch(res.data, /startup failure/);
+        assert.match(res.data, /Recovered/);
         assert.match(res.data, /data: \[DONE\]/);
 
         const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
@@ -659,11 +677,133 @@ describe('GET /v1/logs', () => {
         };
 
         assert.equal(data.total, 1);
-        assert.equal(data.logs[0]?.provider, 'mock-stream-provider');
+        assert.equal(data.logs[0]?.provider, 'recovery-stream-provider');
         assert.equal(data.logs[0]?.model, streamModel);
-        assert.equal(data.logs[0]?.error, 'mock stream failure');
+        assert.equal(data.logs[0]?.error, undefined);
       } finally {
-        (router as any).resolveStreamingProvider = originalResolveStreamingProvider;
+        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
+        deleteLogsByModel(streamModel);
+      }
+    });
+
+    it('returns a streaming error when all streaming candidates fail before content', async () => {
+      const streamModel = 'stream-exhausted-model';
+      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
+
+      (router as any).resolveStreamingProviders = async () => ([
+        {
+          provider: { id: 'first-failing-provider' },
+          request: { model: streamModel, messages: [] },
+          streamTransformer: {
+            name: 'first-failing-provider',
+            async *transformStream() {
+              throw new Error('first startup failure');
+            },
+          },
+        },
+        {
+          provider: { id: 'last-failing-provider' },
+          request: { model: streamModel, messages: [] },
+          streamTransformer: {
+            name: 'last-failing-provider',
+            async *transformStream() {
+              throw new Error('last startup failure');
+            },
+          },
+        },
+      ]);
+
+      try {
+        const res = await requestText('POST', '/v1/chat/completions', {
+          body: {
+            model: streamModel,
+            messages: [{ role: 'user', content: 'Hello exhausted' }],
+            stream: true,
+          },
+        });
+
+        assert.equal(res.status, 200);
+        assert.match(res.data, /last startup failure/);
+        assert.match(res.data, /data: \[DONE\]/);
+
+        const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
+        assert.equal(logsRes.status, 200);
+
+        const data = logsRes.data as {
+          total: number;
+          logs: Array<{ provider: string; model: string; error?: string }>;
+        };
+
+        assert.equal(data.total, 1);
+        assert.equal(data.logs[0]?.provider, 'last-failing-provider');
+        assert.equal(data.logs[0]?.model, streamModel);
+        assert.equal(data.logs[0]?.error, 'last startup failure');
+      } finally {
+        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
+        deleteLogsByModel(streamModel);
+      }
+    });
+
+    it('does not switch providers once stream content has been emitted', async () => {
+      const streamModel = 'stream-no-midflight-fallback-model';
+      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
+      let recoveryProviderCalls = 0;
+
+      (router as any).resolveStreamingProviders = async () => ([
+        {
+          provider: { id: 'primary-stream-provider' },
+          request: { model: streamModel, messages: [] },
+          streamTransformer: {
+            name: 'primary-stream-provider',
+            async *transformStream() {
+              yield { content: 'partial', done: false, model: streamModel };
+              throw new Error('mid-stream failure');
+            },
+          },
+        },
+        {
+          provider: { id: 'recovery-stream-provider' },
+          request: { model: streamModel, messages: [] },
+          streamTransformer: {
+            name: 'recovery-stream-provider',
+            async *transformStream() {
+              recoveryProviderCalls += 1;
+              yield { content: 'should-not-appear', done: false, model: streamModel };
+              yield { content: '', done: true, model: streamModel, finishReason: 'stop' };
+            },
+          },
+        },
+      ]);
+
+      try {
+        const res = await requestText('POST', '/v1/chat/completions', {
+          body: {
+            model: streamModel,
+            messages: [{ role: 'user', content: 'Hello mid-stream' }],
+            stream: true,
+          },
+        });
+
+        assert.equal(res.status, 200);
+        assert.match(res.data, /partial/);
+        assert.match(res.data, /mid-stream failure/);
+        assert.doesNotMatch(res.data, /should-not-appear/);
+        assert.equal(recoveryProviderCalls, 0);
+
+        const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
+        assert.equal(logsRes.status, 200);
+
+        const data = logsRes.data as {
+          total: number;
+          logs: Array<{ provider: string; model: string; error?: string }>;
+        };
+
+        assert.equal(data.total, 1);
+        assert.equal(data.logs[0]?.provider, 'primary-stream-provider');
+        assert.equal(data.logs[0]?.model, streamModel);
+        assert.equal(data.logs[0]?.error, 'mid-stream failure');
+      } finally {
+        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);
       }
     });

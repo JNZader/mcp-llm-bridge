@@ -60,6 +60,43 @@ function buildGatewayMetadata(result: {
 	};
 }
 
+function buildStreamingChunkPayload(
+	chatId: string,
+	model: string,
+	chunk: {
+		content: string;
+		done: boolean;
+		model?: string;
+		finishReason?: string | null;
+		tokensIn?: number;
+		tokensOut?: number;
+	},
+): string {
+	return JSON.stringify({
+		id: chatId,
+		object: "chat.completion.chunk",
+		created: Math.floor(Date.now() / 1000),
+		model: chunk.model || model,
+		choices: [
+			{
+				index: 0,
+				delta: chunk.content ? { content: chunk.content } : {},
+				finish_reason: chunk.done ? (chunk.finishReason ?? "stop") : null,
+			},
+		],
+		...(chunk.done &&
+		(chunk.tokensIn !== undefined || chunk.tokensOut !== undefined)
+			? {
+				usage: {
+					prompt_tokens: chunk.tokensIn ?? 0,
+					completion_tokens: chunk.tokensOut ?? 0,
+					total_tokens: (chunk.tokensIn ?? 0) + (chunk.tokensOut ?? 0),
+				},
+			}
+			: {}),
+	});
+}
+
 /**
  * Handle a streaming chat completion request via SSE.
  *
@@ -133,9 +170,11 @@ function handleStreamingRequest(
 		c.req.raw.signal.addEventListener("abort", abortHandler, { once: true });
 
 		try {
-			const resolved = await router.resolveStreamingProvider(internalRequest);
+			const resolvedCandidates = await router.resolveStreamingProviders(
+				internalRequest,
+			);
 
-			if (!resolved) {
+			if (resolvedCandidates.length === 0) {
 				let result;
 				try {
 					result = await router.generate({
@@ -191,124 +230,148 @@ function handleStreamingRequest(
 				return;
 			}
 
-			const { provider, request: resolvedRequest, streamTransformer, recordResult } =
-				resolved;
-			let breakerModel = resolvedRequest.model || model || "unknown";
-			if (logCtx) {
-				logCtx.provider = provider.id;
-				logCtx.model = breakerModel;
-			}
-			const streamRecorder = costTracker?.recordStream(
-				provider.id,
-				breakerModel,
-				project,
-			);
+			let lastStreamingError: Error | undefined;
 
-			try {
-				const providerCall = buildProviderStreamCall(provider.id, vault, project);
-				const chunks = streamTransformer.transformStream(
-					resolvedRequest,
-					providerCall,
+			for (const resolved of resolvedCandidates) {
+				const { provider, request: resolvedRequest, streamTransformer, recordResult } =
+					resolved;
+				let breakerModel = resolvedRequest.model || model || "unknown";
+				let attemptInputTokens: number | undefined;
+				let attemptOutputTokens: number | undefined;
+				let emittedMeaningfulContent = false;
+				const pendingChunks: string[] = [];
+				if (logCtx) {
+					logCtx.provider = provider.id;
+					logCtx.model = breakerModel;
+				}
+				const streamRecorder = costTracker?.recordStream(
+					provider.id,
+					breakerModel,
+					project,
 				);
 
-				for await (const chunk of chunks) {
-					streamRecorder?.addChunk(
-						{ tokensIn: chunk.tokensIn, tokensOut: chunk.tokensOut },
-						chunk.content.length,
+				try {
+					const providerCall = buildProviderStreamCall(provider.id, vault, project);
+					const chunks = streamTransformer.transformStream(
+						resolvedRequest,
+						providerCall,
 					);
 
-					if (chunk.tokensIn !== undefined) {
-						inputTokens = chunk.tokensIn;
-					}
-					if (chunk.tokensOut !== undefined) {
-						outputTokens = chunk.tokensOut;
-					}
-					if (chunk.model && logCtx) {
-						logCtx.model = chunk.model;
-						breakerModel = chunk.model;
-					} else if (chunk.model) {
-						breakerModel = chunk.model;
+					for await (const chunk of chunks) {
+						streamRecorder?.addChunk(
+							{ tokensIn: chunk.tokensIn, tokensOut: chunk.tokensOut },
+							chunk.content.length,
+						);
+
+						if (chunk.tokensIn !== undefined) {
+							attemptInputTokens = chunk.tokensIn;
+						}
+						if (chunk.tokensOut !== undefined) {
+							attemptOutputTokens = chunk.tokensOut;
+						}
+						if (chunk.model && logCtx) {
+							logCtx.model = chunk.model;
+							breakerModel = chunk.model;
+						} else if (chunk.model) {
+							breakerModel = chunk.model;
+						}
+
+						const payload = buildStreamingChunkPayload(chatId, model, chunk);
+						const chunkHasContent = chunk.content.length > 0;
+
+						if (!emittedMeaningfulContent && !chunkHasContent && !chunk.done) {
+							pendingChunks.push(payload);
+							continue;
+						}
+
+						if (!emittedMeaningfulContent && (chunkHasContent || chunk.done)) {
+							emittedMeaningfulContent = chunkHasContent;
+							for (const pendingChunk of pendingChunks) {
+								await stream.writeSSE({ data: pendingChunk });
+							}
+						}
+
+						await stream.writeSSE({ data: payload });
 					}
 
-					await stream.writeSSE({
-						data: JSON.stringify({
-							id: chatId,
-							object: "chat.completion.chunk",
-							created: Math.floor(Date.now() / 1000),
-							model: chunk.model || model,
-							choices: [
-								{
-									index: 0,
-									delta: chunk.content ? { content: chunk.content } : {},
-									finish_reason: chunk.done
-										? (chunk.finishReason ?? "stop")
-										: null,
-								},
-							],
-							...(chunk.done &&
-							(chunk.tokensIn !== undefined || chunk.tokensOut !== undefined)
-								? {
-									usage: {
-										prompt_tokens: chunk.tokensIn ?? 0,
-										completion_tokens: chunk.tokensOut ?? 0,
-										total_tokens:
-											(chunk.tokensIn ?? 0) + (chunk.tokensOut ?? 0),
-									},
-								}
-								: {}),
-						}),
-					});
-				}
-
-				await stream.writeSSE({ data: "[DONE]" });
-				getCircuitBreakerV2().recordSuccess(provider.id, "default", breakerModel);
-				streamRecorder?.finish();
-				recordResult?.({
-					model: breakerModel,
-					tokensIn: inputTokens,
-					tokensOut: outputTokens,
-					latencyMs: Date.now() - streamStartTime,
-					success: true,
-					project,
-				});
-				await finalizeRequestLog({
-					inputTokens,
-					outputTokens,
-					responseData: {
-						stream: true,
-						provider: provider.id,
-						model: logCtx?.model,
-					},
-				});
-			} catch (error) {
-				getCircuitBreakerV2().recordFailure(provider.id, "default", breakerModel);
-				const message = error instanceof Error ? error.message : String(error);
-				streamRecorder?.finish(message);
-				recordResult?.({
-					model: breakerModel,
-					tokensIn: inputTokens,
-					tokensOut: outputTokens,
-					latencyMs: Date.now() - streamStartTime,
-					success: false,
-					project,
-					errorMessage: message,
-				});
-				await finalizeRequestLog({
-					inputTokens,
-					outputTokens,
-					error: error instanceof Error ? error : new Error(String(error)),
-				});
-
-				try {
-					await stream.writeSSE({
-						data: JSON.stringify({
-							error: { message, type: "server_error", code: null },
-						}),
-					});
+					inputTokens = attemptInputTokens;
+					outputTokens = attemptOutputTokens;
 					await stream.writeSSE({ data: "[DONE]" });
-				} catch {
-					// Stream may already be closed
+					getCircuitBreakerV2().recordSuccess(provider.id, "default", breakerModel);
+					streamRecorder?.finish();
+					recordResult?.({
+						model: breakerModel,
+						tokensIn: inputTokens,
+						tokensOut: outputTokens,
+						latencyMs: Date.now() - streamStartTime,
+						success: true,
+						project,
+					});
+					await finalizeRequestLog({
+						inputTokens,
+						outputTokens,
+						responseData: {
+							stream: true,
+							provider: provider.id,
+							model: logCtx?.model,
+						},
+					});
+					return;
+				} catch (error) {
+					getCircuitBreakerV2().recordFailure(provider.id, "default", breakerModel);
+					const resolvedError =
+						error instanceof Error ? error : new Error(String(error));
+					const message = resolvedError.message;
+					streamRecorder?.finish(message);
+					recordResult?.({
+						model: breakerModel,
+						tokensIn: attemptInputTokens,
+						tokensOut: attemptOutputTokens,
+						latencyMs: Date.now() - streamStartTime,
+						success: false,
+						project,
+						errorMessage: message,
+					});
+
+					if (!emittedMeaningfulContent) {
+						lastStreamingError = resolvedError;
+						continue;
+					}
+
+					inputTokens = attemptInputTokens;
+					outputTokens = attemptOutputTokens;
+					await finalizeRequestLog({
+						inputTokens,
+						outputTokens,
+						error: resolvedError,
+					});
+
+					try {
+						await stream.writeSSE({
+							data: JSON.stringify({
+								error: { message, type: "server_error", code: null },
+							}),
+						});
+						await stream.writeSSE({ data: "[DONE]" });
+					} catch {
+						// Stream may already be closed
+					}
+					return;
 				}
+			}
+
+			const resolvedError = lastStreamingError ?? new Error("No streaming providers available");
+			await finalizeRequestLog({ error: resolvedError });
+
+			try {
+				await stream.writeSSE({
+					data: JSON.stringify({
+						error: { message: resolvedError.message, type: "server_error", code: null },
+					}),
+				});
+				await stream.writeSSE({ data: "[DONE]" });
+			} catch {
+				// Stream may already be closed
 			}
 		} finally {
 			c.req.raw.signal.removeEventListener("abort", abortHandler);
