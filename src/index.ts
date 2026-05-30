@@ -37,7 +37,10 @@ import {
 	loadCatalog,
 } from "./free-models/index.js";
 import { LatencyMeasurer } from "./latency/index.js";
-import { startHttpServerWithDeps } from "./server/http.js";
+import {
+	startHttpServerWithDeps,
+	type StartHttpServerDeps,
+} from "./server/http.js";
 import { startMcpServer } from "./server/mcp.js";
 import { Vault } from "./vault/index.js";
 import { migrate } from "./db/migrate.js";
@@ -254,9 +257,8 @@ const comparisonService = new ComparisonService(router, {
 	maxCostCeiling: maxComparisonCostUsd,
 });
 
-if (mode === "serve") {
-	// HTTP only
-	startHttpServerWithDeps({
+function buildHttpServerDeps(): StartHttpServerDeps {
+	return {
 		router,
 		vault,
 		config,
@@ -271,7 +273,12 @@ if (mode === "serve") {
 		approvalStore,
 		sessionManager,
 		requestLogger,
-	});
+	};
+}
+
+if (mode === "serve") {
+	// HTTP only
+	startHttpServerWithDeps(buildHttpServerDeps());
 } else {
 	// MCP stdio (default — backward compatible)
 	await startMcpServer(
@@ -287,21 +294,6 @@ if (mode === "serve") {
 		pageIndexTools,
 	);
 	if (mode === "--http") {
-		startHttpServerWithDeps({
-			router,
-			vault,
-			config,
-			groupStore,
-			costTracker,
-			latencyMeasurer,
-			freeModelRouter,
-			db,
-			analyticsAggregator,
-			comparisonService,
-			securityProfile: config.securityProfile,
-			approvalStore,
-			sessionManager,
-			requestLogger,
-		});
+		startHttpServerWithDeps(buildHttpServerDeps());
 	}
 }
