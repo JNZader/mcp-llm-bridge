@@ -50,6 +50,21 @@ import { buildInternalRoutingPlan } from './router-internal-plan.js';
 import { logger } from './logger.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 
+export interface ResolvedStreamingProvider {
+  provider: LLMProvider;
+  request: InternalLLMRequest;
+  streamTransformer: StreamingOutboundTransformer;
+  recordResult: (input: {
+    model?: string;
+    tokensIn?: number;
+    tokensOut?: number;
+    latencyMs: number;
+    success: boolean;
+    project?: string;
+    errorMessage?: string;
+  }) => void;
+}
+
 /**
  * Global Circuit Breaker V2 instance for per-(provider,key,model) granularity.
  * Used alongside the legacy registry for octopus-style circuit breaking.
@@ -550,20 +565,17 @@ export class Router {
    */
   async resolveStreamingProvider(
     request: InternalLLMRequest,
-  ): Promise<{
-    provider: LLMProvider;
-    request: InternalLLMRequest;
-    streamTransformer: StreamingOutboundTransformer;
-    recordResult: (input: {
-      model?: string;
-      tokensIn?: number;
-      tokensOut?: number;
-      latencyMs: number;
-      success: boolean;
-      project?: string;
-      errorMessage?: string;
-    }) => void;
-  } | null> {
+  ): Promise<ResolvedStreamingProvider | null> {
+    const candidates = await this.resolveStreamingProviders(request);
+    return candidates[0] ?? null;
+  }
+
+  /**
+   * Resolve all ordered streaming-capable providers for this request.
+   */
+  async resolveStreamingProviders(
+    request: InternalLLMRequest,
+  ): Promise<ResolvedStreamingProvider[]> {
     if (!this._transformerRegistry) {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
     }
@@ -580,12 +592,13 @@ export class Router {
       optimizeMessages: optimizeMessagesEnabled(),
     });
 
-    // Find the first provider that has a streaming transformer
+    const resolvedProviders: ResolvedStreamingProvider[] = [];
+
     for (const provider of plan.availableCandidates) {
       const streamTransformer = registry.getStreamOutbound(provider.id);
       if (streamTransformer) {
         const routedEndpoint = plan.modelRouterDecision?.endpoint;
-        return {
+        resolvedProviders.push({
           provider,
           request: this.buildInternalRequest(
             plan.optimizedRequest,
@@ -623,11 +636,11 @@ export class Router {
               );
             }
           },
-        };
+        });
       }
     }
 
-    return null;
+    return resolvedProviders;
   }
 
   private buildGenerateRequest(
