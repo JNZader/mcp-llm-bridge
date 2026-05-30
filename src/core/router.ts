@@ -24,7 +24,7 @@ import type {
 import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.js';
 import type { TransformerRegistry } from './transformer.js';
 import type { StreamingOutboundTransformer } from '../transformers/streaming.js';
-import type { GroupStore, ProviderGroup } from './groups.js';
+import type { GroupStore } from './groups.js';
 import type { SessionManager } from '../session/session-manager.js';
 import type { CostTracker } from './cost-tracker.js';
 import type { FreeModelRouter } from '../free-models/router.js';
@@ -33,7 +33,6 @@ import type { ModelRouter } from '../model-routing/router.js';
 import type { ApprovalStore } from '../approval/index.js';
 import type { AnalyticsAggregator } from '../analytics/index.js';
 import { calculateCost } from './pricing.js';
-import { optimizeMessages } from '../transformers/three-part-prompt.js';
 import { LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload } from '../local-llm/router.js';
 import { classify } from '../classification/index.js';
@@ -44,10 +43,10 @@ import {
   providerMatchesEndpoint,
   reorderByLatency,
   resolveCandidates,
-  resolveGroupCandidates,
   resolveProviderModel,
 } from './router-candidate-planner.js';
-import { extractPromptFromInternal, tryProvider } from './router-executor.js';
+import { tryProvider } from './router-executor.js';
+import { buildInternalRoutingPlan } from './router-internal-plan.js';
 
 /**
  * Minimal interface for a local LLM client.
@@ -496,15 +495,23 @@ export class Router {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
     }
 
-    // Apply three-part prompt optimization to message array
-    const optimizedRequest: InternalLLMRequest = optimizeMessagesEnabled()
-      ? { ...request, messages: optimizeMessages(request.messages) }
-      : request;
-
     const registry = this._transformerRegistry;
     const startTime = Date.now();
+    const circuitBreaker = getCircuitBreakerV2();
 
-    const model = optimizedRequest.model ?? '';
+    const plan = await buildInternalRoutingPlan({
+      providers: this._providers,
+      request,
+      groupStore: this._groupStore,
+      latencyMeasurer: this._latencyMeasurer,
+      explorationRate: this._explorationRate,
+      modelRouter: this._modelRouter,
+      circuitBreaker,
+      optimizeMessages: optimizeMessagesEnabled(),
+    });
+    const { optimizedRequest } = plan;
+
+    const model = plan.model;
     const clientId = optimizedRequest.metadata?.['clientId'] as string | undefined;
 
     // 1. Check session stickiness
@@ -513,7 +520,6 @@ export class Router {
       if (pinned) {
         const stickyProvider = this._providers.find((p) => p.id === pinned.provider);
         if (stickyProvider) {
-          const circuitBreaker = getCircuitBreakerV2();
           if (circuitBreaker.canExecute(stickyProvider.id, 'default', model).allowed) {
             try {
               const result = await tryProvider({
@@ -538,71 +544,14 @@ export class Router {
       }
     }
 
-    // 2. Check group-based routing
-    let matchedGroup: ProviderGroup | null = null;
-    let orderedCandidates: LLMProvider[] | null = null;
-
-    if (this._groupStore && model) {
-      matchedGroup = this._groupStore.findByModel(model);
-      if (matchedGroup) {
-        orderedCandidates = resolveGroupCandidates(
-          this._providers,
-          matchedGroup,
-          (providerId, candidateModel) =>
-            getCircuitBreakerV2().canExecute(providerId, 'default', candidateModel).allowed,
-          model,
-        );
-      }
-    }
-
-    // 3. Fallback to standard resolution if no group matched
-    if (!orderedCandidates) {
-      const resolveRequest: GenerateRequest = {
-        prompt: '',
-        model: optimizedRequest.model,
-        provider: optimizedRequest.metadata?.['provider'] as string | undefined,
-      };
-      orderedCandidates = await resolveCandidates(
-        this._providers,
-        resolveRequest,
-        (candidates) => reorderByLatency(candidates, this._latencyMeasurer, this._explorationRate),
-      );
-    }
-
-    if (orderedCandidates.length === 0) {
+    if (plan.orderedCandidates.length === 0) {
       throw new Error(
         'No providers available. Store API credentials via vault_store or install a CLI tool.',
       );
     }
 
-    // ── Model Routing: classify and route to optimal endpoint ──
-    let internalClassification: TaskClassification | null = null;
-    let modelRouterDecision: RoutingDecision | null = null;
-    if (this._modelRouter && this._modelRouter.enabled) {
-      const prompt = extractPromptFromInternal(optimizedRequest);
-      internalClassification = classify(prompt);
-      modelRouterDecision = this._modelRouter.route(internalClassification);
-      if (modelRouterDecision) {
-        const routedCandidates = prioritizeEndpointCandidate(
-          orderedCandidates,
-          modelRouterDecision.endpoint,
-        );
-        if (routedCandidates) {
-          orderedCandidates = routedCandidates;
-        } else {
-          logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
-        }
-      }
-    }
-
-    const circuitBreaker = getCircuitBreakerV2();
-    const routedModel = modelRouterDecision?.endpoint.modelId ?? model;
-    const availableCandidates = orderedCandidates.filter((p) =>
-      circuitBreaker.canExecute(p.id, 'default', routedModel).allowed
-    );
-
-    if (availableCandidates.length === 0) {
-      const openProviders = orderedCandidates.map((p) => p.id).join(', ');
+    if (plan.availableCandidates.length === 0) {
+      const openProviders = plan.orderedCandidates.map((provider) => provider.id).join(', ');
       throw new Error(
         `All providers have circuit breakers open: ${openProviders}. Wait for recovery or check provider status.`,
       );
@@ -610,16 +559,20 @@ export class Router {
 
     const errors: string[] = [];
 
-    for (const provider of availableCandidates) {
+    for (const provider of plan.availableCandidates) {
       try {
         const result = await tryProvider({
           provider,
-          request: this.buildInternalRequest(optimizedRequest, provider, modelRouterDecision?.endpoint),
+          request: this.buildInternalRequest(
+            optimizedRequest,
+            provider,
+            plan.modelRouterDecision?.endpoint,
+          ),
           registry,
           circuitBreaker,
           startTime,
-          classification: internalClassification ?? undefined,
-          routedEndpoint: modelRouterDecision?.endpoint,
+          classification: plan.classification ?? undefined,
+          routedEndpoint: plan.modelRouterDecision?.endpoint,
           resolveFeedbackEndpointId: (candidateProvider, resolvedModel, routedEndpoint) =>
             this.resolveFeedbackEndpointId(candidateProvider, resolvedModel, routedEndpoint),
           recordUsage: (...args) => this.recordUsage(...args),
@@ -627,13 +580,13 @@ export class Router {
         });
 
         // Pin session on success if stickiness is enabled
-        if (this._sessionManager && clientId && model && matchedGroup?.stickyTTL) {
+        if (this._sessionManager && clientId && model && plan.matchedGroup?.stickyTTL) {
           this._sessionManager.pinRouterStickySession(
             clientId,
             model,
             provider.id,
             'default',
-            matchedGroup.stickyTTL * 1000,
+            plan.matchedGroup.stickyTTL * 1000,
           );
         }
 
@@ -670,73 +623,29 @@ export class Router {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
     }
 
-    // Apply three-part prompt optimization
-    const optimizedRequest: InternalLLMRequest = optimizeMessagesEnabled()
-      ? { ...request, messages: optimizeMessages(request.messages) }
-      : request;
-
     const registry = this._transformerRegistry;
-    const model = optimizedRequest.model ?? '';
-
-    // Resolve ordered candidates (same logic as generateFromInternal)
-    let orderedCandidates: LLMProvider[] | null = null;
-
-    if (this._groupStore && model) {
-      const matchedGroup = this._groupStore.findByModel(model);
-      if (matchedGroup) {
-        orderedCandidates = resolveGroupCandidates(
-          this._providers,
-          matchedGroup,
-          (providerId, candidateModel) =>
-            getCircuitBreakerV2().canExecute(providerId, 'default', candidateModel).allowed,
-          model,
-        );
-      }
-    }
-
-    if (!orderedCandidates) {
-      const resolveRequest: GenerateRequest = {
-        prompt: '',
-        model: optimizedRequest.model,
-        provider: optimizedRequest.metadata?.['provider'] as string | undefined,
-      };
-      orderedCandidates = await resolveCandidates(
-        this._providers,
-        resolveRequest,
-        (candidates) => reorderByLatency(candidates, this._latencyMeasurer, this._explorationRate),
-      );
-    }
-
-    let modelRouterDecision: RoutingDecision | null = null;
-    if (this._modelRouter && this._modelRouter.enabled) {
-      const classification = classify(extractPromptFromInternal(optimizedRequest));
-      modelRouterDecision = this._modelRouter.route(classification);
-      if (modelRouterDecision) {
-        const routedCandidates = prioritizeEndpointCandidate(
-          orderedCandidates,
-          modelRouterDecision.endpoint,
-        );
-        if (routedCandidates) {
-          orderedCandidates = routedCandidates;
-        } else {
-          logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
-        }
-      }
-    }
-
-    const circuitBreaker = getCircuitBreakerV2();
-    const routedModel = modelRouterDecision?.endpoint.modelId ?? model;
-    const availableCandidates = orderedCandidates.filter((p) =>
-      circuitBreaker.canExecute(p.id, 'default', routedModel).allowed
-    );
+    const plan = await buildInternalRoutingPlan({
+      providers: this._providers,
+      request,
+      groupStore: this._groupStore,
+      latencyMeasurer: this._latencyMeasurer,
+      explorationRate: this._explorationRate,
+      modelRouter: this._modelRouter,
+      circuitBreaker: getCircuitBreakerV2(),
+      optimizeMessages: optimizeMessagesEnabled(),
+    });
 
     // Find the first provider that has a streaming transformer
-    for (const provider of availableCandidates) {
+    for (const provider of plan.availableCandidates) {
       const streamTransformer = registry.getStreamOutbound(provider.id);
       if (streamTransformer) {
         return {
           provider,
-          request: this.buildInternalRequest(optimizedRequest, provider, modelRouterDecision?.endpoint),
+          request: this.buildInternalRequest(
+            plan.optimizedRequest,
+            provider,
+            plan.modelRouterDecision?.endpoint,
+          ),
           streamTransformer,
         };
       }
