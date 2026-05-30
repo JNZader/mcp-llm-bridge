@@ -1,4 +1,5 @@
 import { getCircuitBreakerV2 } from '../core/router.js';
+import { circuitBreakerEnabled } from '../core/runtime-flags.js';
 
 const LEGACY_CIRCUIT_STATE = {
   CLOSED: 'CLOSED',
@@ -34,10 +35,6 @@ export interface ProviderCircuitBreakerSummary {
   consecutiveFailures: number;
 }
 
-function isCircuitBreakerEnabled(): boolean {
-  return process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] !== 'false';
-}
-
 function statePriority(state: LegacyCircuitState): number {
   switch (state) {
     case LEGACY_CIRCUIT_STATE.OPEN:
@@ -53,7 +50,7 @@ export function getCircuitBreakerAdminConfig(): LegacyCircuitBreakerConfigView {
   const config = getCircuitBreakerV2().getConfig();
 
   return {
-    enabled: isCircuitBreakerEnabled(),
+    enabled: circuitBreakerEnabled(),
     failureThreshold: config.failureThreshold,
     backoffBaseMs: config.baseCooldownMs,
     backoffMultiplier: config.backoffMultiplier,

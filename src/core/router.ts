@@ -46,6 +46,7 @@ import {
 } from './router-candidate-planner.js';
 import { executeGenerateAttempt, tryProvider } from './router-executor.js';
 import { buildInternalRoutingPlan } from './router-internal-plan.js';
+import { optimizeMessagesEnabled, useTransformers } from './runtime-flags.js';
 
 import { logger } from './logger.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
@@ -88,21 +89,7 @@ export function resetCircuitBreakerV2(): void {
   circuitBreakerV2 = null;
 }
 
-/**
- * Check if the transformer pipeline is enabled via env flag.
- * Default: false (backward compat).
- */
-export function useTransformers(): boolean {
-  return process.env['USE_TRANSFORMERS'] === 'true';
-}
-
-/**
- * Check if three-part prompt optimization is enabled.
- * Default: true.
- */
-export function optimizeMessagesEnabled(): boolean {
-  return process.env['OPTIMIZE_MESSAGES_ENABLED'] !== 'false';
-}
+export { optimizeMessagesEnabled, useTransformers } from './runtime-flags.js';
 
 export class Router {
   private _providers: LLMProvider[] = [];

@@ -4,6 +4,7 @@ import { detectLocalLLMs, pickBestLocalModel } from '../local-llm/detector.js';
 import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
 import { discoverModels } from '../model-discovery/discovery.js';
+import { localLLMEnabled } from '../core/runtime-flags.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
 
@@ -56,8 +57,7 @@ export async function handleLocalLlmGenerateTool(
   const preferredModel = args['preferredModel'] as string | undefined;
   const maxTokens = args['maxTokens'] as number | undefined;
 
-  const localEnabled = process.env['LOCAL_LLM_ENABLED'] === 'true';
-  if (!localEnabled) {
+  if (!localLLMEnabled()) {
     const result = await router.generate({ prompt, system, maxTokens });
     return jsonResult({ ...result, backend: 'cloud', reason: 'LOCAL_LLM_ENABLED=false' });
   }

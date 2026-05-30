@@ -5,6 +5,8 @@
  * Exponential backoff: cooldown doubles after each trip (60s → 120s → 240s... capped at 10min).
  */
 
+import { circuitBreakerEnabled } from '../core/runtime-flags.js';
+
 // ── Const Types Pattern (REQUIRED by TypeScript skill) ──────────────────────
 
 const CIRCUIT_STATE = {
@@ -66,7 +68,7 @@ export class CircuitBreakerV2 {
   }
 
   private isEnabled(): boolean {
-    return process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] !== 'false';
+    return circuitBreakerEnabled();
   }
 
   /**

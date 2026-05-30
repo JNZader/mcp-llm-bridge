@@ -27,6 +27,13 @@ import { CostTracker } from "./core/cost-tracker.js";
 import { GroupStore } from "./core/groups.js";
 import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
+import {
+	autoDiscoverModelsEnabled,
+	freeModelCatalogEnabled,
+	latencyRoutingEnabled,
+	localLLMEnabled,
+	modelRoutingEnabled,
+} from "./core/runtime-flags.js";
 import { Router } from "./core/router.js";
 import { SessionManager } from "./session/index.js";
 import { registry } from "./core/transformer.js";
@@ -116,7 +123,7 @@ if (freeModelEnabled) {
 }
 
 // Load free model catalog at startup (opt-in via FREE_MODEL_CATALOG=true)
-const catalogEnabled = process.env["FREE_MODEL_CATALOG"] === "true";
+const catalogEnabled = freeModelCatalogEnabled();
 if (catalogEnabled) {
 	const catalog = loadCatalog();
 	if (catalog) {
@@ -127,16 +134,16 @@ if (catalogEnabled) {
 }
 
 // Initialize latency-based routing (opt-in via LATENCY_ROUTING=true)
-const latencyRoutingEnabled = process.env["LATENCY_ROUTING"] === "true";
+const latencyRouting = latencyRoutingEnabled();
 const latencyMeasurer = new LatencyMeasurer();
-if (latencyRoutingEnabled) {
+if (latencyRouting) {
 	router.setLatencyMeasurer(latencyMeasurer);
 	logger.info("Latency-based routing enabled");
 }
 
 // ── Model Routing ───────────────────────────────────────
-const modelRoutingEnabled = process.env["MODEL_ROUTING_ENABLED"] === "true";
-if (modelRoutingEnabled) {
+const modelRouting = modelRoutingEnabled();
+if (modelRouting) {
 	const { bootstrapModelRouter } = await import("./model-routing/index.js");
 	const modelRouter = bootstrapModelRouter(router.providers);
 	if (modelRouter) {
@@ -164,10 +171,10 @@ const pageIndex = createPageIndex(config.dbPath);
 const pageIndexTools = new PageIndexTools(pageIndex.service);
 
 // ── Local LLM Provider ────────────────────────────────────
-const localLLMEnabled = process.env["LOCAL_LLM_ENABLED"] === "true";
+const localLLMRuntimeEnabled = localLLMEnabled();
 let localLLMProvider: LocalLLMProvider | null = null;
 
-if (localLLMEnabled) {
+if (localLLMRuntimeEnabled) {
 	localLLMProvider = new LocalLLMProvider({
 		enabled: true,
 		ollamaUrl: process.env["OLLAMA_URL"] ?? "http://localhost:11434",
@@ -190,20 +197,20 @@ if (localLLMEnabled) {
 }
 
 // ── HF Auto-Discovery ───────────────────────────────────
-const autoDiscoverEnabled = process.env["AUTO_DISCOVER_MODELS"] === "true";
-	if (autoDiscoverEnabled && localLLMEnabled) {
-		try {
-			const discoveryResult = await discoverModels(
-				{
-					hfToken: process.env["HF_TOKEN"],
-					enabled: true,
-				},
-				{
-					ollamaUrl: process.env["OLLAMA_URL"] ?? "http://localhost:11434",
-					lmStudioUrl: process.env["LM_STUDIO_URL"] ?? "http://localhost:1234",
-				},
-				db,
-			);
+const autoDiscoverEnabled = autoDiscoverModelsEnabled();
+if (autoDiscoverEnabled && localLLMRuntimeEnabled) {
+	try {
+		const discoveryResult = await discoverModels(
+			{
+				hfToken: process.env["HF_TOKEN"],
+				enabled: true,
+			},
+			{
+				ollamaUrl: process.env["OLLAMA_URL"] ?? "http://localhost:11434",
+				lmStudioUrl: process.env["LM_STUDIO_URL"] ?? "http://localhost:1234",
+			},
+			db,
+		);
 		logger.info(
 			{
 				models: discoveryResult.models.length,

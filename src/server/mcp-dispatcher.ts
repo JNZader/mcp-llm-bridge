@@ -10,6 +10,7 @@ import { ProfileEnforcer } from '../security/enforcer.js';
 import { TOOL_CATEGORIES } from '../security/profiles.js';
 import type { ApprovalStore } from '../approval/index.js';
 import { requiresApproval, DEFAULT_CONFIG as APPROVAL_DEFAULT_CONFIG } from '../approval/index.js';
+import { approvalFlowsEnabled } from '../core/runtime-flags.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 import {
   handleDiscoverModelsTool,
@@ -133,8 +134,7 @@ export async function dispatchToolCall(
   } = context;
 
   try {
-    const approvalFlowsEnabled = process.env['APPROVAL_FLOWS_ENABLED'] !== 'false';
-    if (approvalFlowsEnabled && approvalStore && securityProfile && securityProfile !== 'local-dev') {
+    if (approvalFlowsEnabled() && approvalStore && securityProfile && securityProfile !== 'local-dev') {
       const category = TOOL_CATEGORIES[toolName];
       if (category === 'destructive' && requiresApproval(toolName, APPROVAL_DEFAULT_CONFIG)) {
         return approvalRequiredResult(toolName, args, approvalStore, securityProfile);

@@ -16,6 +16,7 @@ import type { TrustLevel } from '../core/types.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
 import type { ApprovalStore } from '../approval/index.js';
 import { compressOutput, compressionStats } from '../context-compression/output-compression.js';
+import { outputCompressionEnabled } from '../core/runtime-flags.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 import { TOOLS } from './mcp-tool-registry.js';
 import {
@@ -24,14 +25,6 @@ import {
   startMcpServer as startMcpServerBootstrap,
 } from './mcp-server.js';
 import { dispatchToolCall } from './mcp-dispatcher.js';
-
-/**
- * Check if output compression is enabled for MCP tool responses.
- * Default: true.
- */
-function outputCompressionEnabled(): boolean {
-  return process.env['ENABLE_OUTPUT_COMPRESSION'] !== 'false';
-}
 
 /** Compression threshold in characters. Outputs exceeding this are compressed. */
 const COMPRESSION_THRESHOLD = 1000;
