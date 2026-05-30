@@ -5,13 +5,6 @@
  * on an MCP server using stdin/stdout transport.
  */
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-
 import type { Router } from '../core/router.js';
 import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
@@ -22,8 +15,6 @@ import type { StateManager } from '../crdt/index.js';
 import type { CRDTType, StateSnapshot } from '../crdt/types.js';
 import type { TrustLevel } from '../core/types.js';
 import { CreateGroupSchema } from '../core/groups.js';
-import { VERSION } from '../core/constants.js';
-import { logger } from '../core/logger.js';
 import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
 import { TOOL_CATEGORIES } from '../security/profiles.js';
@@ -35,13 +26,13 @@ import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
 import { discoverModels } from '../model-discovery/discovery.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
-import { McpDefinitionAdapter } from '../mcp-builder/adapter.js';
-import { loadPlugins } from '../mcp-builder/loader.js';
 import { PageIndexTools } from '../pageindex/tools.js';
-import { TOOLS, getRuntimeMcpTools as getRuntimeMcpToolsFromRegistry } from './mcp-tool-registry.js';
-
-/** Adapter for dynamic MCP tools loaded from plugin directory. */
-export let dynamicToolAdapter: McpDefinitionAdapter | undefined;
+import { TOOLS } from './mcp-tool-registry.js';
+import {
+  dynamicToolAdapter,
+  getRuntimeMcpTools,
+  startMcpServer as startMcpServerBootstrap,
+} from './mcp-server.js';
 
 /**
  * Check if output compression is enabled for MCP tool responses.
@@ -54,11 +45,7 @@ function outputCompressionEnabled(): boolean {
 /** Compression threshold in characters. Outputs exceeding this are compressed. */
 const COMPRESSION_THRESHOLD = 1000;
 
-export { TOOLS };
-
-export function getRuntimeMcpTools() {
-  return getRuntimeMcpToolsFromRegistry(dynamicToolAdapter);
-}
+export { TOOLS, dynamicToolAdapter, getRuntimeMcpTools };
 
 /**
  * Handle a tool call by dispatching to the appropriate router/vault method.
@@ -813,72 +800,18 @@ export async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore, pageIndexTools?: PageIndexTools): Promise<Server> {
-  const server = new Server(
-    {
-      name: 'mcp-llm-bridge',
-      version: VERSION,
-    },
-    {
-      capabilities: { tools: {} },
-    },
-  );
-
-  // Default handlers (no security filtering)
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: getRuntimeMcpTools(),
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-    return handleToolCall(name, (args ?? {}) as Record<string, unknown>, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile, enforcer, pageIndexTools);
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore, pageIndexTools?: PageIndexTools) {
+  return startMcpServerBootstrap({
+    router,
+    vault,
+    groupStore,
+    costTracker,
+    bridge,
+    codeSearch,
+    stateManager,
+    securityProfile,
+    approvalStore,
+    pageIndexTools,
+    handleToolCall,
   });
-
-  // Apply security profile enforcement — overwrites handlers above with
-  // filtered ListTools and authorized + rate-limited CallTool.
-  let enforcer: ProfileEnforcer | undefined;
-  const profileName = securityProfile ?? 'local-dev';
-
-  if (profileName !== 'local-dev') {
-    enforcer = new ProfileEnforcer(profileName);
-    enforcer.wrapHandlers(
-      server,
-      TOOLS,
-      (name, args) =>
-        handleToolCall(name, args, router, vault, groupStore, costTracker, bridge, codeSearch, stateManager, approvalStore, securityProfile, enforcer, pageIndexTools),
-    );
-  }
-
-  // Dynamic plugin loading
-  const dynamicServersEnabled = process.env.MCP_DYNAMIC_SERVERS === 'true';
-  const pluginsDir = process.env.MCP_SERVERS_DIR || './mcp-servers';
-
-  if (dynamicServersEnabled) {
-    dynamicToolAdapter = new McpDefinitionAdapter();
-    loadPlugins(pluginsDir).then((plugins) => {
-      for (const plugin of plugins) {
-        dynamicToolAdapter!.register(server, plugin.definition);
-        console.log(`[MCP] Loaded dynamic server: ${plugin.name} (${plugin.definition.tools.length} tools)`);
-      }
-
-      // Register dynamic tools with enforcer and update ListTools handler
-      if (enforcer && dynamicToolAdapter) {
-        for (const name of dynamicToolAdapter.getToolNames()) {
-          enforcer.registerDynamicTool(name, 'read');
-        }
-        server.setRequestHandler(ListToolsRequestSchema, async () => ({
-          tools: enforcer.filterTools(getRuntimeMcpTools()),
-        }));
-      }
-    }).catch((e) => {
-      console.error('[MCP] Failed to load dynamic servers:', e);
-    });
-  }
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  logger.info({ securityProfile: profileName }, 'MCP server started on stdio');
-
-  return server;
 }
