@@ -1538,7 +1538,7 @@ Clients (GHAGGA, OpenCode, curl, LangChain, any OpenAI-compatible tool)
 ### Experimental Modules
 
 - **`src/acp/`** — Agent Client Protocol implementation (`server.ts`, `translator.ts`, `types.ts`).  
-  Present in the repo but **not wired into the active runtime**. Treat it as an experimental protocol island until there is a dedicated ACP integration sprint.
+  Present in the repo but **not wired into the active runtime**. There is no import path from `src/index.ts`, no active HTTP/stdio ACP transport, and no live MCP tool-execution bridge yet. Treat it as a tested protocol prototype that still needs a dedicated ACP integration sprint.
 
 - **`src/sandbox/`** — Docker/process sandbox runner.  
   The `sandbox` flag now exists in security profiles, but the runtime still does **not** expose sandboxed execution tools like `execute_code` or `shell_command`. In other words: the infrastructure is prepared, but the feature is not complete.

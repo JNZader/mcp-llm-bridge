@@ -181,7 +181,7 @@ HTTP tool catalog/search backed by the runtime MCP registry.
 
 ## Experimental / Not Fully Wired
 
-- `src/acp/*` — ACP protocol island, not part of active runtime
+- `src/acp/*` — ACP protocol island, not part of active runtime. It is a tested protocol prototype, but there is currently no bootstrap path from `src/index.ts`, no active ACP transport surface, and no live integration with the MCP/HTTP execution runtime.
 - `src/sandbox/*` — sandbox infrastructure exists; execution tools do not
 
 ---
