@@ -15,6 +15,7 @@
 import type { Context, Next } from 'hono';
 import type Database from 'better-sqlite3';
 import type { CostTracker } from '../core/cost-tracker.js';
+import { parseBearerToken } from '../server/auth-helpers/bearer.js';
 import type { UserContext } from './types.js';
 import { hashApiKey, lookupByHash } from './keys.js';
 import { checkRateLimit, checkBudget } from './quotas.js';
@@ -35,12 +36,10 @@ export function apiKeyAuth(db: Database.Database, costTracker?: CostTracker) {
       return c.json({ error: 'Unauthorized', code: 'MISSING_AUTH' }, 401);
     }
 
-    const parts = authHeader.split(' ');
-    if (parts.length !== 2 || parts[0] !== 'Bearer' || !parts[1]) {
+    const token = parseBearerToken(authHeader);
+    if (!token) {
       return c.json({ error: 'Unauthorized', code: 'INVALID_AUTH_FORMAT' }, 401);
     }
-
-    const token = parts[1];
 
     // Hash the token and look up in db (timing-safe comparison inside lookupByHash)
     const hash = hashApiKey(token);

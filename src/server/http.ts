@@ -7,7 +7,7 @@
  * Supports per-project scoping via `project` body field or `X-Project` header.
  */
 
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { type ServerType, serve } from "@hono/node-server";
 import type { Context, Next } from "hono";
 import { Hono } from "hono";
@@ -39,6 +39,7 @@ import type { RequestLogger } from "../logging/request-logger.js";
 import { registerAdminRoutes } from "./admin.js";
 import { RateLimiter } from "./rate-limit.js";
 import { securityProfileMiddleware } from "../security/enforcer.js";
+import { hasStaticBearerToken, parseBearerToken } from "./auth-helpers/bearer.js";
 import { registerObservabilityRoutes } from "./routes/observability.js";
 import { registerComparisonRoutes } from "./routes/comparison.js";
 import { registerToolingRoutes } from "./routes/tooling.js";
@@ -78,18 +79,6 @@ function isStartHttpServerDeps(
 		"vault" in input &&
 		"config" in input
 	);
-}
-
-/**
- * Timing-safe comparison for bearer tokens.
- * Returns true if both tokens are equal, using constant-time comparison
- * to prevent timing attacks.
- */
-function tokenEquals(a: string, b: string): boolean {
-	const bufA = Buffer.from(a, "utf8");
-	const bufB = Buffer.from(b, "utf8");
-	if (bufA.length !== bufB.length) return false;
-	return timingSafeEqual(bufA, bufB);
 }
 
 /**
@@ -135,12 +124,11 @@ function bearerAuth(config: GatewayConfig) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 
-		const parts = authHeader.split(" ");
-		if (parts.length !== 2 || parts[0] !== "Bearer" || !parts[1]) {
+		if (!parseBearerToken(authHeader)) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 
-		if (!tokenEquals(parts[1], config.authToken)) {
+		if (!hasStaticBearerToken(authHeader, config.authToken)) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 

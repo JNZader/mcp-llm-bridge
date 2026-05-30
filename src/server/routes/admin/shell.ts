@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 
 import type { GatewayConfig } from '../../../core/types.js';
+import { parseBearerToken } from '../../auth-helpers/bearer.js';
 
 export interface AdminShellRouteDeps {
   config: GatewayConfig;
@@ -10,9 +11,7 @@ export function registerAdminShellRoutes(app: Hono, deps: AdminShellRouteDeps): 
   const { config } = deps;
 
   app.get('/v1/admin/me', async (c) => {
-    const authHeader = c.req.header('Authorization');
-    const parts = authHeader?.split(' ');
-    const bearerToken = parts?.length === 2 && parts[0] === 'Bearer' ? parts[1] : null;
+    const bearerToken = parseBearerToken(c.req.header('Authorization'));
 
     if (bearerToken) {
       const { verifyDashboardJwt } = await import('../../../auth/github-oauth.js');

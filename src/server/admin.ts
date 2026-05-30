@@ -15,8 +15,8 @@ import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
 import type { GatewayConfig } from '../core/types.js';
-import { timingSafeEqual } from 'node:crypto';
 import type { SessionManager } from '../session/session-manager.js';
+import { parseBearerToken, tokenEquals } from './auth-helpers/bearer.js';
 import { registerAdminApiKeyRoutes } from './routes/admin/api-keys.js';
 import { registerAdminDiscoveryRoutes } from './routes/admin/discovery.js';
 import { registerAdminDashboardRoutes } from './routes/admin/dashboard.js';
@@ -26,16 +26,6 @@ import { registerAdminSecurityProfileRoutes } from './routes/admin/security-prof
 import { registerAdminSyncRoutes } from './routes/admin/sync.js';
 
 // ── Admin Auth Middleware ─────────────────────────────────
-
-/**
- * Timing-safe comparison for bearer tokens.
- */
-function tokenEquals(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, 'utf8');
-  const bufB = Buffer.from(b, 'utf8');
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}
 
 /**
  * Admin auth middleware.
@@ -52,9 +42,7 @@ export function adminAuth(config: GatewayConfig) {
       return next();
     }
 
-    const authHeader = c.req.header('Authorization');
-    const parts = authHeader?.split(' ');
-    const bearerToken = parts?.length === 2 && parts[0] === 'Bearer' ? parts[1] : null;
+    const bearerToken = parseBearerToken(c.req.header('Authorization'));
 
     // Accept a valid GitHub OAuth JWT (verifyDashboardJwt returns null if secret not set)
     if (bearerToken) {
