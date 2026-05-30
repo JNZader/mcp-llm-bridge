@@ -1,21 +1,16 @@
 import type { Hono } from "hono";
 
-import { getCircuitBreakerRegistry } from "../../core/circuit-breaker.js";
+import {
+	type LegacyCircuitBreakerConfigView,
+	getCircuitBreakerAdminConfig,
+	getCircuitBreakerAdminStats,
+	updateCircuitBreakerAdminConfig,
+} from "../../circuit-breaker/admin-compat.js";
 
 export function registerCircuitBreakerRoutes(app: Hono): void {
 	app.get("/v1/circuit-breaker/config", (c) => {
 		try {
-			const cbRegistry = getCircuitBreakerRegistry();
-			const config = cbRegistry.getDefaultConfig();
-			return c.json({
-				enabled: cbRegistry.isEnabled(),
-				failureThreshold: config.failureThreshold,
-				backoffBaseMs: config.backoffBaseMs,
-				backoffMultiplier: config.backoffMultiplier,
-				backoffMaxMs: config.backoffMaxMs,
-				resetTimeoutMs: config.resetTimeoutMs,
-				halfOpenSuccessThreshold: config.halfOpenSuccessThreshold,
-			});
+			return c.json(getCircuitBreakerAdminConfig());
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json({ error: message }, 500);
@@ -25,9 +20,8 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 	app.put("/v1/circuit-breaker/config", async (c) => {
 		try {
 			const body = await c.req.json();
-			const cbRegistry = getCircuitBreakerRegistry();
 
-			const update: Record<string, unknown> = {};
+			const update: Partial<LegacyCircuitBreakerConfigView> = {};
 			if (
 				typeof body.failureThreshold === "number" &&
 				body.failureThreshold > 0
@@ -66,19 +60,9 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 				);
 			}
 
-			cbRegistry.updateDefaultConfig(update as Record<string, number>);
-			const newConfig = cbRegistry.getDefaultConfig();
 			return c.json({
 				updated: true,
-				config: {
-					enabled: cbRegistry.isEnabled(),
-					failureThreshold: newConfig.failureThreshold,
-					backoffBaseMs: newConfig.backoffBaseMs,
-					backoffMultiplier: newConfig.backoffMultiplier,
-					backoffMaxMs: newConfig.backoffMaxMs,
-					resetTimeoutMs: newConfig.resetTimeoutMs,
-					halfOpenSuccessThreshold: newConfig.halfOpenSuccessThreshold,
-				},
+				config: updateCircuitBreakerAdminConfig(update),
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -88,11 +72,10 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 
 	app.get("/v1/circuit-breaker/stats", (c) => {
 		try {
-			const cbRegistry = getCircuitBreakerRegistry();
-			const stats = cbRegistry.getAllStats();
+			const config = getCircuitBreakerAdminConfig();
 			return c.json({
-				enabled: cbRegistry.isEnabled(),
-				breakers: stats,
+				enabled: config.enabled,
+				breakers: getCircuitBreakerAdminStats(),
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

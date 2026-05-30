@@ -26,9 +26,10 @@ import { GroupStore } from '../src/core/groups.js';
 import { CostTracker } from '../src/core/cost-tracker.js';
 import { SessionManager } from '../src/session/session-manager.js';
 import {
-  getCircuitBreakerRegistry,
-  CircuitState,
-} from '../src/core/circuit-breaker.js';
+  getCircuitBreakerV2,
+  resetCircuitBreakerV2,
+} from '../src/core/router.js';
+import { CircuitState } from '../src/circuit-breaker/index.js';
 import { createDashboardJwt } from '../src/auth/github-oauth.js';
 import { migrate } from '../src/db/migrate.js';
 
@@ -113,6 +114,7 @@ after(() => {
 afterEach(() => {
   // Clean up environment variables between tests
   delete process.env['ADMIN_TOKEN'];
+  resetCircuitBreakerV2();
 });
 
 // ── HTTP helper ──────────────────────────────────────────
@@ -248,6 +250,30 @@ describe('GET /v1/admin/providers', () => {
     assert.ok(Array.isArray(first.models));
     assert.ok(typeof first.circuitBreaker === 'object');
     assert.ok(typeof first.circuitBreaker.state === 'string');
+  });
+
+  it('reflects runtime V2 breaker state in provider details', async () => {
+    const breaker = getCircuitBreakerV2();
+    breaker.recordFailure('openai', 'default', 'gpt-4o');
+    breaker.recordFailure('openai', 'default', 'gpt-4o');
+    breaker.recordFailure('openai', 'default', 'gpt-4o');
+    breaker.recordFailure('openai', 'default', 'gpt-4o');
+    breaker.recordFailure('openai', 'default', 'gpt-4o');
+
+    const res = await request('GET', '/v1/admin/providers');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      providers: Array<{
+        id: string;
+        circuitBreaker: { state: string; failures: number; consecutiveFailures: number };
+      }>;
+    };
+
+    const openai = data.providers.find((provider) => provider.id === 'openai');
+    assert.ok(openai);
+    assert.equal(openai!.circuitBreaker.state, CircuitState.OPEN);
+    assert.equal(openai!.circuitBreaker.failures, 5);
   });
 });
 
@@ -386,12 +412,16 @@ describe('GET /v1/admin/sessions', () => {
 
 describe('POST /v1/admin/reset-circuit-breaker/:provider', () => {
   it('resets a circuit breaker', async () => {
-    // Trip a breaker first
-    const cbRegistry = getCircuitBreakerRegistry();
-    const breaker = cbRegistry.get('test-provider-reset');
-    // Force to OPEN state
-    breaker.forceState(CircuitState.OPEN);
-    assert.equal(breaker.getState(), CircuitState.OPEN);
+    const breaker = getCircuitBreakerV2();
+    breaker.recordFailure('test-provider-reset', 'default', 'gpt-4o');
+    breaker.recordFailure('test-provider-reset', 'default', 'gpt-4o');
+    breaker.recordFailure('test-provider-reset', 'default', 'gpt-4o');
+    breaker.recordFailure('test-provider-reset', 'default', 'gpt-4o');
+    breaker.recordFailure('test-provider-reset', 'default', 'gpt-4o');
+    assert.equal(
+      breaker.getState('test-provider-reset', 'default', 'gpt-4o')?.state,
+      CircuitState.OPEN,
+    );
 
     // Reset via API
     const res = await request('POST', '/v1/admin/reset-circuit-breaker/test-provider-reset');
@@ -403,7 +433,10 @@ describe('POST /v1/admin/reset-circuit-breaker/:provider', () => {
     assert.equal(data.state, 'CLOSED');
 
     // Verify it's actually reset
-    assert.equal(breaker.getState(), CircuitState.CLOSED);
+    assert.equal(
+      breaker.getState('test-provider-reset', 'default', 'gpt-4o')?.state,
+      CircuitState.CLOSED,
+    );
   });
 
   it('returns 404 for unknown provider', async () => {

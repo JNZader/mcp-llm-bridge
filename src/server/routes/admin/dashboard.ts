@@ -1,6 +1,10 @@
 import type { Hono } from 'hono';
 
-import { getCircuitBreakerRegistry, CircuitState } from '../../../core/circuit-breaker.js';
+import {
+  getCircuitBreakerAdminStats,
+  getProviderCircuitBreakerSummary,
+} from '../../../circuit-breaker/admin-compat.js';
+import { CircuitState } from '../../../circuit-breaker/index.js';
 import { VERSION } from '../../../core/constants.js';
 import type { CostTracker } from '../../../core/cost-tracker.js';
 import type { GroupStore } from '../../../core/groups.js';
@@ -27,8 +31,7 @@ export function registerAdminDashboardRoutes(
       const providers = await router.getProviderStatuses();
       const groups = groupStore ? groupStore.list() : [];
 
-      const cbRegistry = getCircuitBreakerRegistry();
-      const cbStats = cbRegistry.getAllStats();
+      const cbStats = getCircuitBreakerAdminStats();
       const cbSummary = {
         total: cbStats.length,
         open: cbStats.filter((s) => s.state === CircuitState.OPEN).length,
@@ -84,20 +87,8 @@ export function registerAdminDashboardRoutes(
   app.get('/v1/admin/providers', async (c) => {
     try {
       const providers = await router.getProviderStatuses();
-      const cbRegistry = getCircuitBreakerRegistry();
-      const cbStats = cbRegistry.getAllStats();
-
-      const cbByProvider = new Map<string, { state: string; failures: number; consecutiveFailures: number }>();
-      for (const stat of cbStats) {
-        cbByProvider.set(stat.name, {
-          state: stat.state,
-          failures: stat.failures,
-          consecutiveFailures: stat.consecutiveFailures,
-        });
-      }
-
       const detailed = providers.map((p) => {
-        const cb = cbByProvider.get(p.id);
+        const cb = getProviderCircuitBreakerSummary(p.id);
         const models = router.getProviderModels(p.id);
 
         return {

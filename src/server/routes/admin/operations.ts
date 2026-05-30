@@ -1,6 +1,6 @@
 import type { Hono } from 'hono';
 
-import { getCircuitBreakerRegistry, CircuitState } from '../../../core/circuit-breaker.js';
+import { resetProviderCircuitBreakers } from '../../../circuit-breaker/admin-compat.js';
 import type { CostTracker } from '../../../core/cost-tracker.js';
 
 export interface AdminOperationsRouteDeps {
@@ -14,17 +14,11 @@ export function registerAdminOperationsRoutes(
   app.post('/v1/admin/reset-circuit-breaker/:provider', (c) => {
     try {
       const provider = c.req.param('provider');
-      const cbRegistry = getCircuitBreakerRegistry();
+      const resetCount = resetProviderCircuitBreakers(provider);
 
-      const stats = cbRegistry.getAllStats();
-      const found = stats.find((s) => s.name === provider);
-
-      if (!found) {
+      if (resetCount === 0) {
         return c.json({ error: `No circuit breaker found for: ${provider}`, code: 'NOT_FOUND' }, 404);
       }
-
-      const breaker = cbRegistry.get(provider);
-      breaker.forceState(CircuitState.CLOSED);
 
       return c.json({
         ok: true,

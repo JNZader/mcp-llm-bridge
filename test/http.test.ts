@@ -2,7 +2,7 @@
  * HTTP endpoint tests — verify REST API behavior.
  */
 
-import { describe, it, after, before } from 'node:test';
+import { describe, it, after, afterEach, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { unlinkSync, existsSync } from 'node:fs';
@@ -14,6 +14,7 @@ import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { TOOLS } from '../src/server/mcp.js';
 import { createAllAdapters } from '../src/adapters/index.js';
+import { getCircuitBreakerV2, resetCircuitBreakerV2 } from '../src/core/router.js';
 
 // Create test components once
 const config: GatewayConfig = {
@@ -58,6 +59,10 @@ after(() => {
       resolve();
     });
   });
+});
+
+afterEach(() => {
+  resetCircuitBreakerV2();
 });
 
 // Helper function to make HTTP requests
@@ -241,6 +246,76 @@ describe('GET /v1/providers', () => {
     const provider = data.providers[0] as Record<string, unknown>;
     assert.ok(provider.id);
     assert.ok(typeof provider.available === 'boolean');
+  });
+});
+
+describe('Circuit breaker routes', () => {
+  it('returns runtime V2 config through the legacy-shaped endpoint', async () => {
+    const breaker = getCircuitBreakerV2();
+    breaker.updateConfig({
+      failureThreshold: 7,
+      baseCooldownMs: 1234,
+      backoffMultiplier: 3,
+      maxCooldownMs: 9999,
+      halfOpenMaxRequests: 4,
+    });
+
+    const res = await request('GET', '/v1/circuit-breaker/config');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      enabled: boolean;
+      failureThreshold: number;
+      backoffBaseMs: number;
+      backoffMultiplier: number;
+      backoffMaxMs: number;
+      resetTimeoutMs: number;
+      halfOpenSuccessThreshold: number;
+    };
+
+    assert.equal(data.enabled, true);
+    assert.equal(data.failureThreshold, 7);
+    assert.equal(data.backoffBaseMs, 1234);
+    assert.equal(data.backoffMultiplier, 3);
+    assert.equal(data.backoffMaxMs, 9999);
+    assert.equal(data.resetTimeoutMs, 1234);
+    assert.equal(data.halfOpenSuccessThreshold, 4);
+  });
+
+  it('updates runtime V2 config via the public config endpoint', async () => {
+    const res = await request('PUT', '/v1/circuit-breaker/config', {
+      failureThreshold: 6,
+      backoffBaseMs: 2222,
+      backoffMultiplier: 4,
+      backoffMaxMs: 8888,
+      halfOpenSuccessThreshold: 5,
+    });
+    assert.equal(res.status, 200);
+
+    const config = getCircuitBreakerV2().getConfig();
+    assert.equal(config.failureThreshold, 6);
+    assert.equal(config.baseCooldownMs, 2222);
+    assert.equal(config.backoffMultiplier, 4);
+    assert.equal(config.maxCooldownMs, 8888);
+    assert.equal(config.halfOpenMaxRequests, 5);
+  });
+
+  it('returns runtime V2 stats through the public stats endpoint', async () => {
+    const breaker = getCircuitBreakerV2();
+    breaker.recordFailure('openai', 'default', 'gpt-4o');
+
+    const res = await request('GET', '/v1/circuit-breaker/stats');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      enabled: boolean;
+      breakers: Array<{ name: string; failures: number; consecutiveFailures: number }>;
+    };
+
+    const openai = data.breakers.find((entry) => entry.name === 'openai:default:gpt-4o');
+    assert.ok(openai);
+    assert.equal(openai!.failures, 1);
+    assert.equal(openai!.consecutiveFailures, 1);
   });
 });
 

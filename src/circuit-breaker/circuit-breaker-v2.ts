@@ -24,6 +24,8 @@ export interface CircuitBreakerConfig {
   failureThreshold: number;
   /** Initial cooldown in ms after first trip (default: 60000 = 60s) */
   baseCooldownMs: number;
+  /** Exponential backoff multiplier (default: 2). */
+  backoffMultiplier: number;
   /** Maximum cooldown cap in ms (default: 600000 = 10min) */
   maxCooldownMs: number;
   /** Number of successful test requests to close from HALF_OPEN (default: 3) */
@@ -47,6 +49,7 @@ interface CanExecuteResult {
 const DEFAULT_CONFIG: CircuitBreakerConfig = {
   failureThreshold: 5,
   baseCooldownMs: 60_000, // 60 seconds
+  backoffMultiplier: 2,
   maxCooldownMs: 600_000, // 10 minutes
   halfOpenMaxRequests: 3,
 };
@@ -60,6 +63,10 @@ export class CircuitBreakerV2 {
   constructor(config?: Partial<CircuitBreakerConfig>) {
     this.circuits = new Map();
     this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  private isEnabled(): boolean {
+    return process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] !== 'false';
   }
 
   /**
@@ -95,10 +102,10 @@ export class CircuitBreakerV2 {
    */
   private getCooldown(tripCount: number): number {
     const base = this.config.baseCooldownMs;
+    const multiplier = this.config.backoffMultiplier;
     const max = this.config.maxCooldownMs;
 
-    // 60s, 120s, 240s, 480s, 960s, capped at 600s
-    const cooldown = base * Math.pow(2, tripCount - 1);
+    const cooldown = base * Math.pow(multiplier, tripCount - 1);
     return Math.min(cooldown, max);
   }
 
@@ -133,6 +140,10 @@ export class CircuitBreakerV2 {
    * Check if request is allowed for the given provider/key/model combo.
    */
   canExecute(provider: string, key: string, model: string): CanExecuteResult {
+    if (!this.isEnabled()) {
+      return { allowed: true, state: CIRCUIT_STATE.CLOSED };
+    }
+
     const entry = this.getOrCreateEntry(provider, key, model);
 
     switch (entry.state) {
@@ -172,6 +183,10 @@ export class CircuitBreakerV2 {
    * Record a successful request.
    */
   recordSuccess(provider: string, key: string, model: string): void {
+    if (!this.isEnabled()) {
+      return;
+    }
+
     const entry = this.getOrCreateEntry(provider, key, model);
 
     switch (entry.state) {
@@ -197,6 +212,10 @@ export class CircuitBreakerV2 {
    * Record a failed request.
    */
   recordFailure(provider: string, key: string, model: string): void {
+    if (!this.isEnabled()) {
+      return;
+    }
+
     const entry = this.getOrCreateEntry(provider, key, model);
 
     switch (entry.state) {

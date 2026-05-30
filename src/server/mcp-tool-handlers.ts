@@ -6,7 +6,12 @@ import type { StateManager } from '../crdt/index.js';
 import type { CRDTType, StateSnapshot } from '../crdt/types.js';
 import type { ApprovalStore } from '../approval/index.js';
 import { CreateGroupSchema } from '../core/groups.js';
-import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
+import {
+  type LegacyCircuitBreakerConfigView,
+  getCircuitBreakerAdminConfig,
+  getCircuitBreakerAdminStats,
+  updateCircuitBreakerAdminConfig,
+} from '../circuit-breaker/admin-compat.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 
 export interface McpToolTextContent {
@@ -124,23 +129,31 @@ export function handleCircuitBreakerTool(
   toolName: string,
   args: Record<string, unknown>,
 ): McpToolResult | null {
-  const cbRegistry = getCircuitBreakerRegistry();
-
   switch (toolName) {
     case 'configure_circuit_breaker': {
-      const update: Record<string, number> = {};
+      const update: Partial<LegacyCircuitBreakerConfigView> = {};
       if (typeof args['failureThreshold'] === 'number') update['failureThreshold'] = args['failureThreshold'];
       if (typeof args['backoffBaseMs'] === 'number') update['backoffBaseMs'] = args['backoffBaseMs'];
       if (typeof args['backoffMultiplier'] === 'number') update['backoffMultiplier'] = args['backoffMultiplier'];
       if (typeof args['backoffMaxMs'] === 'number') update['backoffMaxMs'] = args['backoffMaxMs'];
       if (typeof args['resetTimeoutMs'] === 'number') update['resetTimeoutMs'] = args['resetTimeoutMs'];
 
-      cbRegistry.updateDefaultConfig(update);
-      return jsonResult({ updated: true, config: cbRegistry.getDefaultConfig() });
+      const config = updateCircuitBreakerAdminConfig(update);
+      return jsonResult({
+        updated: true,
+        config: {
+          failureThreshold: config.failureThreshold,
+          backoffBaseMs: config.backoffBaseMs,
+          backoffMultiplier: config.backoffMultiplier,
+          backoffMaxMs: config.backoffMaxMs,
+          resetTimeoutMs: config.resetTimeoutMs,
+          halfOpenSuccessThreshold: config.halfOpenSuccessThreshold,
+        },
+      });
     }
 
     case 'circuit_breaker_stats':
-      return jsonResult({ enabled: cbRegistry.isEnabled(), breakers: cbRegistry.getAllStats() });
+      return jsonResult({ enabled: getCircuitBreakerAdminConfig().enabled, breakers: getCircuitBreakerAdminStats() });
 
     default:
       return null;
