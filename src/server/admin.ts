@@ -17,10 +17,9 @@ import type { CostTracker } from '../core/cost-tracker.js';
 import type { GatewayConfig } from '../core/types.js';
 import { timingSafeEqual } from 'node:crypto';
 import { getCircuitBreakerRegistry, CircuitState } from '../core/circuit-breaker.js';
-import { loadCatalog, importCatalog } from '../free-models/registry.js';
-import { discoverModels } from '../model-discovery/discovery.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { registerAdminApiKeyRoutes } from './routes/admin/api-keys.js';
+import { registerAdminDiscoveryRoutes } from './routes/admin/discovery.js';
 import { registerAdminDashboardRoutes } from './routes/admin/dashboard.js';
 import { registerAdminSecurityProfileRoutes } from './routes/admin/security-profiles.js';
 import { registerAdminSyncRoutes } from './routes/admin/sync.js';
@@ -117,6 +116,10 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
     serverStartTime: deps.serverStartTime,
     sessionManager: deps.sessionManager,
   });
+  registerAdminDiscoveryRoutes(app, {
+    db: deps.db,
+    freeModelRouter: deps.freeModelRouter,
+  });
   registerAdminSecurityProfileRoutes(app, { db: deps.db });
   registerAdminSyncRoutes(app, { db: deps.db, vault: deps.vault });
 
@@ -208,68 +211,4 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
     }
   });
 
-  // ── POST /v1/admin/catalog/refresh ────────────────────────
-
-  app.post('/v1/admin/catalog/refresh', (c) => {
-    try {
-      const { freeModelRouter } = deps;
-      if (!freeModelRouter) {
-        return c.json({ error: 'Free model router not configured', code: 'NOT_CONFIGURED' }, 404);
-      }
-
-      const catalog = loadCatalog();
-      if (!catalog) {
-        return c.json({ error: 'Failed to load catalog file', code: 'LOAD_FAILED' }, 500);
-      }
-
-      const entries = importCatalog(catalog, freeModelRouter.getHealthChecker());
-      const registry = freeModelRouter.getRegistry();
-      const imported = registry.importModels(entries);
-
-      return c.json({
-        ok: true,
-        imported,
-        catalogVersion: catalog.version,
-        providers: catalog.providers.length,
-        message: `Catalog refreshed: ${imported} models imported from ${catalog.providers.length} providers`,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
-    }
-  });
-
-  // ── POST /v1/admin/discover ─────────────────────────────
-
-  app.post('/v1/admin/discover', async (c) => {
-    try {
-      const body = await c.req.json().catch(() => ({}));
-      const hfToken = body['hfToken'] ?? process.env['HF_TOKEN'];
-
-      const result = await discoverModels(
-        {
-          hfToken,
-          enabled: true,
-        },
-        {
-          ollamaUrl: process.env['OLLAMA_URL'] ?? 'http://localhost:11434',
-          lmStudioUrl: process.env['LM_STUDIO_URL'] ?? 'http://localhost:1234',
-        },
-        deps.db,
-      );
-
-      return c.json({
-        ok: true,
-        models: result.models,
-        backendsScanned: result.backendsScanned,
-        enrichedCount: result.enrichedCount,
-        unenrichedCount: result.unenrichedCount,
-        errors: result.errors,
-        timestamp: result.timestamp,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
-    }
-  });
 }
