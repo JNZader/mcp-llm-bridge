@@ -14,32 +14,16 @@ import type { CodeSearchService } from '../code-search/index.js';
 import type { StateManager } from '../crdt/index.js';
 import type { TrustLevel } from '../core/types.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
-import { TOOL_CATEGORIES } from '../security/profiles.js';
 import type { ApprovalStore } from '../approval/index.js';
-import { requiresApproval, DEFAULT_CONFIG as APPROVAL_DEFAULT_CONFIG } from '../approval/index.js';
 import { compressOutput, compressionStats } from '../context-compression/output-compression.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 import { TOOLS } from './mcp-tool-registry.js';
-import {
-  handleDiscoverModelsTool,
-  handleLlmGenerateTool,
-  handleLocalLlmGenerateTool,
-} from './mcp-llm-handlers.js';
-import {
-  handleApprovalTool,
-  handleCircuitBreakerTool,
-  handleCodeSearchTool,
-  handleGroupStoreTool,
-  handlePageIndexTool,
-  handleSharedStateTool,
-  handleUsageTool,
-  handleVaultTool,
-} from './mcp-tool-handlers.js';
 import {
   dynamicToolAdapter,
   getRuntimeMcpTools,
   startMcpServer as startMcpServerBootstrap,
 } from './mcp-server.js';
+import { dispatchToolCall } from './mcp-dispatcher.js';
 
 /**
  * Check if output compression is enabled for MCP tool responses.
@@ -84,204 +68,6 @@ function compressToolResult(
 }
 
 /**
- * Internal handler — contains all tool logic.
- */
-async function _handleToolCall(
-  toolName: string,
-  args: Record<string, unknown>,
-  router: Router,
-  vault: Vault,
-  groupStore?: GroupStore,
-  costTracker?: CostTracker,
-  bridge?: BridgeOrchestrator | null,
-  codeSearch?: CodeSearchService | null,
-  stateManager?: StateManager | null,
-  approvalStore?: ApprovalStore | null,
-  securityProfile?: TrustLevel,
-  enforcer?: ProfileEnforcer,
-  pageIndexTools?: PageIndexTools,
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  try {
-    // ── Approval flow gate for destructive tools ────────────
-    const approvalFlowsEnabled = process.env['APPROVAL_FLOWS_ENABLED'] !== 'false';
-    if (approvalFlowsEnabled && approvalStore && securityProfile && securityProfile !== 'local-dev') {
-      const category = TOOL_CATEGORIES[toolName];
-      if (category === 'destructive' && requiresApproval(toolName, APPROVAL_DEFAULT_CONFIG)) {
-        const request = approvalStore.create({
-          toolName,
-          toolArgs: args,
-          requester: 'mcp-client',
-          reason: `Destructive tool "${toolName}" requires approval under "${securityProfile}" profile`,
-        });
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              approvalRequired: true,
-              requestId: request.id,
-              toolName,
-              reason: request.reason,
-            }),
-          }],
-          isError: false,
-        };
-      }
-    }
-
-    switch (toolName) {
-      case 'llm_generate': {
-        return handleLlmGenerateTool(args, router, bridge);
-      }
-
-      case 'vault_store': {
-        return handleVaultTool(toolName, args, vault)!;
-      }
-
-      case 'vault_list': {
-        return handleVaultTool(toolName, args, vault)!;
-      }
-
-      case 'vault_delete': {
-        return handleVaultTool(toolName, args, vault)!;
-      }
-
-      case 'llm_models': {
-        const models = await router.getAvailableModels();
-        return {
-          content: [{ type: 'text', text: JSON.stringify(models) }],
-        };
-      }
-
-      case 'vault_store_file': {
-        return handleVaultTool(toolName, args, vault)!;
-      }
-
-      case 'vault_list_files': {
-        return handleVaultTool(toolName, args, vault)!;
-      }
-
-      case 'vault_delete_file': {
-        return handleVaultTool(toolName, args, vault)!;
-      }
-
-      case 'list_groups': {
-        return handleGroupStoreTool(toolName, args, groupStore)!;
-      }
-
-      case 'create_group': {
-        return handleGroupStoreTool(toolName, args, groupStore)!;
-      }
-
-      case 'delete_group': {
-        return handleGroupStoreTool(toolName, args, groupStore)!;
-      }
-
-      case 'configure_circuit_breaker': {
-        return handleCircuitBreakerTool(toolName, args)!;
-      }
-
-      case 'circuit_breaker_stats': {
-        return handleCircuitBreakerTool(toolName, args)!;
-      }
-
-      case 'usage_summary': {
-        return handleUsageTool(toolName, args, costTracker)!;
-      }
-
-      case 'usage_query': {
-        return handleUsageTool(toolName, args, costTracker)!;
-      }
-
-      case 'code_search': {
-        return (await handleCodeSearchTool(toolName, args, codeSearch))!;
-      }
-
-      case 'index_codebase': {
-        return (await handleCodeSearchTool(toolName, args, codeSearch))!;
-      }
-
-      case 'shared_state': {
-        return handleSharedStateTool(toolName, args, stateManager)!;
-      }
-
-      case 'approval_list': {
-        return handleApprovalTool(toolName, args, approvalStore)!;
-      }
-
-      case 'approval_approve': {
-        return handleApprovalTool(toolName, args, approvalStore)!;
-      }
-
-      case 'approval_deny': {
-        return handleApprovalTool(toolName, args, approvalStore)!;
-      }
-
-      case 'local_llm_generate': {
-        return handleLocalLlmGenerateTool(args, router);
-      }
-
-      case 'discover_models': {
-        return handleDiscoverModelsTool(args);
-      }
-
-      case 'conversation_paginate':
-      case 'conversation_get_page':
-      case 'conversation_context':
-      case 'conversation_navigate':
-      case 'conversation_info':
-      case 'conversation_find_relevant':
-      case 'conversation_check_compaction': {
-        return (await handlePageIndexTool(toolName, args, pageIndexTools))!;
-      }
-
-      default: {
-        if (enforcer && !enforcer.authorize(toolName)) {
-          return {
-            content: [
-              { type: 'text', text: JSON.stringify({ error: `Tool '${toolName}' denied by security profile` }) },
-            ],
-            isError: true,
-          };
-        }
-
-        const dynamicTool = dynamicToolAdapter?.getTool(toolName);
-        if (dynamicTool) {
-          try {
-            const result = await dynamicTool.handler(args);
-            const content = result.content.map((item) => {
-              if (item.type === 'text') return item;
-              return { type: 'text' as const, text: `[image: ${item.mimeType}]` };
-            });
-            return {
-              content,
-              ...(result.isError ? { isError: true } : {}),
-            };
-          } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
-              isError: true,
-            };
-          }
-        }
-        return {
-          content: [
-            { type: 'text', text: JSON.stringify({ error: `Unknown tool: ${toolName}` }) },
-          ],
-          isError: true,
-        };
-      }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
-      isError: true,
-    };
-  }
-}
-
-/**
  * Exported handleToolCall — wraps the internal handler with output compression.
  */
 export async function handleToolCall(
@@ -299,9 +85,7 @@ export async function handleToolCall(
   enforcer?: ProfileEnforcer,
   pageIndexTools?: PageIndexTools,
 ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  const result = await _handleToolCall(
-    toolName,
-    args,
+  const result = await dispatchToolCall(toolName, args, {
     router,
     vault,
     groupStore,
@@ -313,7 +97,7 @@ export async function handleToolCall(
     securityProfile,
     enforcer,
     pageIndexTools,
-  );
+  });
   return compressToolResult(result);
 }
 
