@@ -1,9 +1,10 @@
-import type { GenerateRequest, LLMProvider } from './types.js';
+import type { GenerateRequest, GenerateResponse, LLMProvider } from './types.js';
 import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.js';
 import type { TransformerRegistry } from './transformer.js';
 import type { TaskClassification } from '../classification/index.js';
 import type { ModelEndpoint } from '../model-routing/types.js';
 import type { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
+import { LocalLLMError } from '../local-llm/client.js';
 import { logger } from './logger.js';
 
 type RecordUsageFn = (
@@ -23,6 +24,31 @@ type RecordModelFeedbackFn = (
   success: boolean,
   latencyMs: number,
 ) => void;
+
+type LogGenerateFailureFn = (context: {
+  provider: LLMProvider;
+  attemptedModel: string;
+  message: string;
+  error: unknown;
+}) => void;
+
+export interface ExecuteGenerateAttemptOptions {
+  provider: LLMProvider;
+  request: GenerateRequest;
+  routedEndpoint?: ModelEndpoint;
+  circuitBreaker: CircuitBreakerV2;
+  startTime: number;
+  defaultModel: string;
+  classification?: TaskClassification | null;
+  resolveFeedbackEndpointId: (
+    provider: LLMProvider,
+    model: string | undefined,
+    routedEndpoint?: ModelEndpoint,
+  ) => string;
+  recordUsage: RecordUsageFn;
+  recordModelFeedback: RecordModelFeedbackFn;
+  logFailure?: LogGenerateFailureFn;
+}
 
 export interface TryProviderOptions {
   provider: LLMProvider;
@@ -204,6 +230,77 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       recordModelFeedback(feedbackEndpointId, classification, false, latencyMs);
     }
     logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
+    throw error;
+  }
+}
+
+export async function executeGenerateAttempt(
+  options: ExecuteGenerateAttemptOptions,
+): Promise<GenerateResponse> {
+  const {
+    provider,
+    request,
+    routedEndpoint,
+    circuitBreaker,
+    startTime,
+    defaultModel,
+    classification,
+    resolveFeedbackEndpointId,
+    recordUsage,
+    recordModelFeedback,
+    logFailure,
+  } = options;
+
+  const attemptedModel = request.model ?? defaultModel;
+
+  try {
+    const result = await provider.generate(request);
+    circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
+    const latencyMs = Date.now() - startTime;
+    const resolvedModel = result.model ?? attemptedModel;
+    recordUsage(
+      provider.id,
+      resolvedModel,
+      result.tokensUsed ?? 0,
+      0,
+      latencyMs,
+      true,
+      request.project,
+    );
+    if (classification) {
+      recordModelFeedback(
+        resolveFeedbackEndpointId(provider, resolvedModel, routedEndpoint),
+        classification,
+        true,
+        latencyMs,
+      );
+    }
+    return result;
+  } catch (error) {
+    circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
+    const message = error instanceof Error ? error.message : String(error);
+    const latencyMs = Date.now() - startTime;
+    recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, request.project, message);
+    if (classification) {
+      recordModelFeedback(
+        resolveFeedbackEndpointId(provider, attemptedModel, routedEndpoint),
+        classification,
+        false,
+        latencyMs,
+      );
+    }
+
+    if (logFailure) {
+      logFailure({ provider, attemptedModel, message, error });
+    } else if (error instanceof LocalLLMError) {
+      logger.warn(
+        { provider: provider.id, model: attemptedModel, backend: error.backend, error: message },
+        'Local LLM failed — falling back to cloud provider',
+      );
+    } else {
+      logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
+    }
+
     throw error;
   }
 }

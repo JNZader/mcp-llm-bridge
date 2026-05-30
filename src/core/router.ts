@@ -44,7 +44,7 @@ import {
   resolveCandidates,
   resolveProviderModel,
 } from './router-candidate-planner.js';
-import { tryProvider } from './router-executor.js';
+import { executeGenerateAttempt, tryProvider } from './router-executor.js';
 import { buildInternalRoutingPlan } from './router-internal-plan.js';
 
 import { logger } from './logger.js';
@@ -305,122 +305,88 @@ export class Router {
         );
       }
 
-      try {
-        const providerRequest = this.buildGenerateRequest(
+      const result = await executeGenerateAttempt({
+        provider,
+        request: this.buildGenerateRequest(
           request,
           provider,
           modelRouterDecision?.endpoint,
-        );
-        const attemptedModel = providerRequest.model ?? model;
-        const result = await provider.generate(providerRequest);
-        circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
-        const latencyMs = Date.now() - startTime;
-        const resolvedModel = result.model ?? attemptedModel;
-        this.recordUsage(provider.id, resolvedModel, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
-        if (classification) {
-          this._recordModelFeedback(
-            this.resolveFeedbackEndpointId(provider, resolvedModel, modelRouterDecision?.endpoint),
-            classification,
-            true,
-            latencyMs,
-          );
-        }
-        return this.withResolutionMetadata(request, result, false, latencyMs);
-      } catch (error) {
-        const providerRequest = this.buildGenerateRequest(
-          request,
-          provider,
-          modelRouterDecision?.endpoint,
-        );
-        const attemptedModel = providerRequest.model ?? model;
-        circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
-        const message = error instanceof Error ? error.message : String(error);
-        const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, request.project, message);
-        if (classification) {
-          this._recordModelFeedback(
-            this.resolveFeedbackEndpointId(provider, attemptedModel, modelRouterDecision?.endpoint),
-            classification,
-            false,
-            latencyMs,
-          );
-        }
-        logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
-        throw error;
-      }
+        ),
+        routedEndpoint: modelRouterDecision?.endpoint,
+        circuitBreaker,
+        startTime,
+        defaultModel: model,
+        classification,
+        resolveFeedbackEndpointId: (candidateProvider, resolvedModel, routedEndpoint) =>
+          this.resolveFeedbackEndpointId(candidateProvider, resolvedModel, routedEndpoint),
+        recordUsage: (...args) => this.recordUsage(...args),
+        recordModelFeedback: (...args) => this._recordModelFeedback(...args),
+        logFailure: ({ provider: failedProvider, attemptedModel, message }) => {
+          logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
+        },
+      });
+      const latencyMs = Date.now() - startTime;
+      return this.withResolutionMetadata(request, result, false, latencyMs);
     }
 
     const errors: string[] = [];
 
     for (const [index, provider] of availableCandidates.entries()) {
       try {
-        const providerRequest = this.buildGenerateRequest(
-          request,
+        const result = await executeGenerateAttempt({
           provider,
-          modelRouterDecision?.endpoint,
-        );
-        const attemptedModel = providerRequest.model ?? model;
-        const result = await provider.generate(providerRequest);
-        circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
+          request: this.buildGenerateRequest(
+            request,
+            provider,
+            modelRouterDecision?.endpoint,
+          ),
+          routedEndpoint: modelRouterDecision?.endpoint,
+          circuitBreaker,
+          startTime,
+          defaultModel: model,
+          classification,
+          resolveFeedbackEndpointId: (candidateProvider, resolvedModel, routedEndpoint) =>
+            this.resolveFeedbackEndpointId(candidateProvider, resolvedModel, routedEndpoint),
+          recordUsage: (...args) => this.recordUsage(...args),
+          recordModelFeedback: (...args) => this._recordModelFeedback(...args),
+          logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
+            if (error instanceof LocalLLMError) {
+              logger.warn(
+                {
+                  provider: failedProvider.id,
+                  model: attemptedModel,
+                  backend: error.backend,
+                  error: message,
+                },
+                'Local LLM failed — falling back to cloud provider',
+              );
+              // Emit metric for local-llm fallback
+              if (this._costTracker) {
+                try {
+                  this._costTracker.record({
+                    provider: 'local-llm-fallback',
+                    model: attemptedModel,
+                    tokensIn: 0,
+                    tokensOut: 0,
+                    latencyMs: Date.now() - startTime,
+                    success: false,
+                    project: request.project,
+                    errorMessage: `local-llm-fallback: ${message}`,
+                  });
+                } catch {
+                  // Non-blocking metric emission
+                }
+              }
+              return;
+            }
+
+            logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
+          },
+        });
         const latencyMs = Date.now() - startTime;
-        const resolvedModel = result.model ?? attemptedModel;
-        this.recordUsage(provider.id, resolvedModel, result.tokensUsed ?? 0, 0, latencyMs, true, request.project);
-        if (classification) {
-          this._recordModelFeedback(
-            this.resolveFeedbackEndpointId(provider, resolvedModel, modelRouterDecision?.endpoint),
-            classification,
-            true,
-            latencyMs,
-          );
-        }
         return this.withResolutionMetadata(request, result, index > 0, latencyMs);
       } catch (error) {
-        const providerRequest = this.buildGenerateRequest(
-          request,
-          provider,
-          modelRouterDecision?.endpoint,
-        );
-        const attemptedModel = providerRequest.model ?? model;
-        circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
         const message = error instanceof Error ? error.message : String(error);
-        const latencyMs = Date.now() - startTime;
-        this.recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, request.project, message);
-        if (classification) {
-          this._recordModelFeedback(
-            this.resolveFeedbackEndpointId(provider, attemptedModel, modelRouterDecision?.endpoint),
-            classification,
-            false,
-            latencyMs,
-          );
-        }
-
-        // ── Sprint 3: Specific metric/log for LocalLLMError fallback ──
-        if (error instanceof LocalLLMError) {
-          logger.warn(
-            { provider: provider.id, model: attemptedModel, backend: error.backend, error: message },
-            'Local LLM failed — falling back to cloud provider',
-          );
-          // Emit metric for local-llm fallback
-          if (this._costTracker) {
-            try {
-              this._costTracker.record({
-                provider: 'local-llm-fallback',
-                model: attemptedModel,
-                tokensIn: 0,
-                tokensOut: 0,
-                latencyMs: Date.now() - startTime,
-                success: false,
-                project: request.project,
-                errorMessage: `local-llm-fallback: ${message}`,
-              });
-            } catch {
-              // Non-blocking metric emission
-            }
-          }
-        } else {
-          logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
-        }
-
         errors.push(`${provider.id}: ${message}`);
         continue;
       }
