@@ -24,18 +24,14 @@ import type Database from "better-sqlite3";
 import { apiKeyAuth } from "../auth/middleware.js";
 import type { ComparisonService } from "../comparison/service.js";
 import { getCircuitBreakerRegistry } from "../core/circuit-breaker.js";
-import { MAX_BODY_SIZE, VALID_PROVIDERS } from "../core/constants.js";
+import { MAX_BODY_SIZE } from "../core/constants.js";
 import type { CostTracker } from "../core/cost-tracker.js";
 import type { GroupStore } from "../core/groups.js";
 import { CreateGroupSchema, UpdateGroupSchema } from "../core/groups.js";
 import { logger } from "../core/logger.js";
 import { estimateCost, getPriceTable } from "../core/pricing.js";
 import type { Router } from "../core/router.js";
-import {
-	costEstimateQuerySchema,
-	validateCredentialStore,
-	validateFileStore,
-} from "../core/schemas.js";
+import { costEstimateQuerySchema } from "../core/schemas.js";
 import type { GatewayConfig, TrustLevel } from "../core/types.js";
 import type { ApprovalStore } from "../approval/index.js";
 import type { FreeModelRouter } from "../free-models/router.js";
@@ -52,6 +48,7 @@ import { registerComparisonRoutes } from "./routes/comparison.js";
 import { registerToolingRoutes } from "./routes/tooling.js";
 import { registerPublicRoutes } from "./routes/public.js";
 import { registerExecutionRoutes } from "./routes/execution.js";
+import { registerStorageRoutes } from "./routes/storage.js";
 
 export interface StartHttpServerDeps {
 	router: Router;
@@ -148,16 +145,6 @@ function bearerAuth(config: GatewayConfig) {
 
 		return next();
 	};
-}
-
-/**
- * Extract project from request: body field takes priority, then X-Project header.
- */
-function resolveProject(
-	bodyProject: string | undefined,
-	headerProject: string | undefined,
-): string | undefined {
-	return bodyProject ?? headerProject ?? undefined;
 }
 
 /**
@@ -430,6 +417,7 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 	});
 	registerComparisonRoutes(app, { comparisonService });
 	registerToolingRoutes(app);
+	registerStorageRoutes(app, { vault });
 	registerExecutionRoutes(app, {
 		router,
 		vault,
@@ -565,186 +553,6 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 			return c.json(table);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	// ── Credentials CRUD ───────────────────────────────────
-
-	app.post("/v1/credentials", async (c) => {
-		try {
-			const body = await c.req.json();
-
-			// Validate with Zod
-			let validated: ReturnType<typeof validateCredentialStore>;
-			try {
-				validated = validateCredentialStore(body);
-			} catch (error) {
-				// Handle ZodError in Zod 4 - issues are accessed via .issues property
-				if (error && typeof error === "object" && "issues" in error) {
-					const issues = (
-						error as { issues: Array<{ message: string; path: string[] }> }
-					).issues;
-					const firstIssue = issues[0];
-					return c.json(
-						{
-							error: firstIssue?.message ?? "Validation error",
-							code: "VALIDATION_ERROR",
-							field: firstIssue?.path?.join(".") ?? "",
-							validProviders: [...VALID_PROVIDERS],
-						},
-						400,
-					);
-				}
-				throw error;
-			}
-
-			const keyName = validated.keyName ?? "default";
-			const headerProject = c.req.header("X-Project") ?? undefined;
-			const project = resolveProject(validated.project, headerProject);
-			const id = vault.store(
-				validated.provider,
-				keyName,
-				validated.apiKey,
-				project,
-			);
-			return c.json(
-				{
-					id,
-					provider: validated.provider,
-					keyName,
-					project: project ?? "_global",
-				},
-				201,
-			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	app.get("/v1/credentials", (c) => {
-		try {
-			const project =
-				c.req.query("project") ?? c.req.header("X-Project") ?? undefined;
-			const credentials = vault.listMasked(project);
-			return c.json({ credentials });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	app.delete("/v1/credentials/:id", (c) => {
-		try {
-			const id = Number(c.req.param("id"));
-
-			if (isNaN(id)) {
-				return c.json({ error: "id must be a number" }, 400);
-			}
-
-			const project =
-				c.req.query("project") ?? c.req.header("X-Project") ?? undefined;
-			vault.delete(id, project);
-			return c.json({ ok: true });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			// Return 403 for authorization errors, 404 for not found
-			if (message.includes("Unauthorized")) {
-				return c.json({ error: message, code: "UNAUTHORIZED" }, 403);
-			}
-			if (message.includes("not found")) {
-				return c.json({ error: message, code: "NOT_FOUND" }, 404);
-			}
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	// ── Files CRUD ─────────────────────────────────────────
-
-	app.post("/v1/files", async (c) => {
-		try {
-			const body = await c.req.json();
-
-			// Validate with Zod
-			let validated: ReturnType<typeof validateFileStore>;
-			try {
-				validated = validateFileStore(body);
-			} catch (error) {
-				// Handle ZodError in Zod 4 - issues are accessed via .issues property
-				if (error && typeof error === "object" && "issues" in error) {
-					const issues = (
-						error as { issues: Array<{ message: string; path: string[] }> }
-					).issues;
-					const firstIssue = issues[0];
-					return c.json(
-						{
-							error: firstIssue?.message ?? "Validation error",
-							code: "VALIDATION_ERROR",
-							field: firstIssue?.path?.join(".") ?? "",
-						},
-						400,
-					);
-				}
-				throw error;
-			}
-
-			const headerProject = c.req.header("X-Project") ?? undefined;
-			const project = resolveProject(validated.project, headerProject);
-			const id = vault.storeFile(
-				validated.provider,
-				validated.fileName,
-				validated.content,
-				project,
-			);
-			return c.json(
-				{
-					id,
-					provider: validated.provider,
-					fileName: validated.fileName,
-					project: project ?? "_global",
-				},
-				201,
-			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	app.get("/v1/files", (c) => {
-		try {
-			const project =
-				c.req.query("project") ?? c.req.header("X-Project") ?? undefined;
-			const files = vault.listFiles(project);
-			return c.json({ files });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	app.delete("/v1/files/:id", (c) => {
-		try {
-			const id = Number(c.req.param("id"));
-
-			if (isNaN(id)) {
-				return c.json({ error: "id must be a number" }, 400);
-			}
-
-			const project =
-				c.req.query("project") ?? c.req.header("X-Project") ?? undefined;
-			vault.deleteFile(id, project);
-			return c.json({ ok: true });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			// Return 403 for authorization errors, 404 for not found
-			if (message.includes("Unauthorized")) {
-				return c.json({ error: message, code: "UNAUTHORIZED" }, 403);
-			}
-			if (message.includes("not found")) {
-				return c.json({ error: message, code: "NOT_FOUND" }, 404);
-			}
 			return c.json({ error: message }, 500);
 		}
 	});
