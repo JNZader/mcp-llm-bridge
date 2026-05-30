@@ -276,11 +276,15 @@ function buildHttpServerDeps(): StartHttpServerDeps {
 	};
 }
 
-if (mode === "serve") {
-	// HTTP only
+function startServeMode(): void {
 	startHttpServerWithDeps(buildHttpServerDeps());
-} else {
-	// MCP stdio (default — backward compatible)
+}
+
+function startHttpOnlyMode(): void {
+	startHttpServerWithDeps(buildHttpServerDeps());
+}
+
+async function startDefaultMcpMode(): Promise<void> {
 	await startMcpServer(
 		router,
 		vault,
@@ -293,7 +297,15 @@ if (mode === "serve") {
 		approvalStore,
 		pageIndexTools,
 	);
+}
+
+if (mode === "serve") {
+	// HTTP only
+	startServeMode();
+} else {
+	// MCP stdio (default — backward compatible)
+	await startDefaultMcpMode();
 	if (mode === "--http") {
-		startHttpServerWithDeps(buildHttpServerDeps());
+		startHttpOnlyMode();
 	}
 }
