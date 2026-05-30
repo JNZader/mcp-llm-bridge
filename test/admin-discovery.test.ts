@@ -37,7 +37,7 @@ let server: http.Server;
 let port = 0;
 
 before(async () => {
-  server = startHttpServer(router, vault, config) as unknown as http.Server;
+  server = startHttpServer({ router, vault, config }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();
