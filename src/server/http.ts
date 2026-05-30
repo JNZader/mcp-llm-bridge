@@ -70,6 +70,35 @@ import { registerObservabilityRoutes } from "./routes/observability.js";
 import { registerComparisonRoutes } from "./routes/comparison.js";
 import { registerToolingRoutes } from "./routes/tooling.js";
 
+export interface StartHttpServerDeps {
+	router: Router;
+	vault: Vault;
+	config: GatewayConfig;
+	groupStore?: GroupStore;
+	costTracker?: CostTracker;
+	latencyMeasurer?: LatencyMeasurer;
+	freeModelRouter?: FreeModelRouter;
+	db?: Database.Database;
+	analyticsAggregator?: AnalyticsAggregator;
+	comparisonService?: ComparisonService;
+	securityProfile?: TrustLevel;
+	approvalStore?: ApprovalStore;
+	sessionManager?: SessionManager;
+	requestLogger?: RequestLogger;
+}
+
+function isStartHttpServerDeps(
+	input: Router | StartHttpServerDeps,
+): input is StartHttpServerDeps {
+	return (
+		typeof input === "object" &&
+		input !== null &&
+		"router" in input &&
+		"vault" in input &&
+		"config" in input
+	);
+}
+
 /**
  * Timing-safe comparison for bearer tokens.
  * Returns true if both tokens are equal, using constant-time comparison
@@ -672,23 +701,24 @@ function buildProviderStreamCall(
  *
  * @returns The HTTP server instance
  */
-export function startHttpServer(
-	router: Router,
-	vault: Vault,
-	config: GatewayConfig,
-	groupStore?: GroupStore,
-	costTracker?: CostTracker,
-	latencyMeasurer?: LatencyMeasurer,
-	freeModelRouter?: FreeModelRouter,
-	db?: Database.Database,
-	analyticsAggregator?: AnalyticsAggregator,
-	comparisonService?: ComparisonService,
-	securityProfile?: TrustLevel,
-	approvalStore?: ApprovalStore,
-	sessionManager?: SessionManager,
-	requestLogger?: RequestLogger,
-	..._rest: unknown[]
-): ServerType {
+export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
+	const {
+		router,
+		vault,
+		config,
+		groupStore,
+		costTracker,
+		latencyMeasurer,
+		freeModelRouter,
+		db,
+		analyticsAggregator,
+		comparisonService,
+		securityProfile,
+		approvalStore,
+		sessionManager,
+		requestLogger,
+	} = deps;
+
 	// Reset start time on server creation
 	serverStartTime = Date.now();
 
@@ -1804,4 +1834,65 @@ export function startHttpServer(
 	);
 
 	return server;
+}
+
+export function startHttpServer(deps: StartHttpServerDeps): ServerType;
+export function startHttpServer(
+	router: Router,
+	vault: Vault,
+	config: GatewayConfig,
+	groupStore?: GroupStore,
+	costTracker?: CostTracker,
+	latencyMeasurer?: LatencyMeasurer,
+	freeModelRouter?: FreeModelRouter,
+	db?: Database.Database,
+	analyticsAggregator?: AnalyticsAggregator,
+	comparisonService?: ComparisonService,
+	securityProfile?: TrustLevel,
+	approvalStore?: ApprovalStore,
+	sessionManager?: SessionManager,
+	requestLogger?: RequestLogger,
+	..._rest: unknown[]
+): ServerType;
+export function startHttpServer(
+	routerOrDeps: Router | StartHttpServerDeps,
+	vault?: Vault,
+	config?: GatewayConfig,
+	groupStore?: GroupStore,
+	costTracker?: CostTracker,
+	latencyMeasurer?: LatencyMeasurer,
+	freeModelRouter?: FreeModelRouter,
+	db?: Database.Database,
+	analyticsAggregator?: AnalyticsAggregator,
+	comparisonService?: ComparisonService,
+	securityProfile?: TrustLevel,
+	approvalStore?: ApprovalStore,
+	sessionManager?: SessionManager,
+	requestLogger?: RequestLogger,
+	..._rest: unknown[]
+): ServerType {
+	if (isStartHttpServerDeps(routerOrDeps)) {
+		return startHttpServerWithDeps(routerOrDeps);
+	}
+
+	if (!vault || !config) {
+		throw new Error("startHttpServer requires vault and config");
+	}
+
+	return startHttpServerWithDeps({
+		router: routerOrDeps,
+		vault,
+		config,
+		groupStore,
+		costTracker,
+		latencyMeasurer,
+		freeModelRouter,
+		db,
+		analyticsAggregator,
+		comparisonService,
+		securityProfile,
+		approvalStore,
+		sessionManager,
+		requestLogger,
+	});
 }

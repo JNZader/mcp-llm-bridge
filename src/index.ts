@@ -37,7 +37,7 @@ import {
 	loadCatalog,
 } from "./free-models/index.js";
 import { LatencyMeasurer } from "./latency/index.js";
-import { startHttpServer } from "./server/http.js";
+import { startHttpServerWithDeps } from "./server/http.js";
 import { startMcpServer } from "./server/mcp.js";
 import { Vault } from "./vault/index.js";
 import { migrate } from "./db/migrate.js";
@@ -259,7 +259,7 @@ const comparisonService = new ComparisonService(router, {
 
 if (mode === "serve") {
 	// HTTP only
-	startHttpServer(
+	startHttpServerWithDeps({
 		router,
 		vault,
 		config,
@@ -270,11 +270,11 @@ if (mode === "serve") {
 		db,
 		analyticsAggregator,
 		comparisonService,
-		config.securityProfile,
+		securityProfile: config.securityProfile,
 		approvalStore,
 		sessionManager,
 		requestLogger,
-	);
+	});
 } else {
 	// MCP stdio (default — backward compatible)
 	await startMcpServer(
@@ -290,7 +290,7 @@ if (mode === "serve") {
 		pageIndexTools,
 	);
 	if (mode === "--http") {
-		startHttpServer(
+		startHttpServerWithDeps({
 			router,
 			vault,
 			config,
@@ -301,10 +301,10 @@ if (mode === "serve") {
 			db,
 			analyticsAggregator,
 			comparisonService,
-			config.securityProfile,
+			securityProfile: config.securityProfile,
 			approvalStore,
 			sessionManager,
 			requestLogger,
-		);
+		});
 	}
 }
