@@ -387,6 +387,79 @@ describe('POST /v1/admin/flush-usage', () => {
   });
 });
 
+// ── /v1/admin/keys ───────────────────────────────────────
+
+describe('/v1/admin/keys', () => {
+  it('creates, lists, and revokes API keys', async () => {
+    const createRes = await request('POST', '/v1/admin/keys', {
+      userId: 'admin-route-test-user',
+      project: 'admin-route-test-project',
+      budgetUsd: 25,
+    });
+    assert.equal(createRes.status, 201);
+
+    const created = createRes.data as {
+      ok: boolean;
+      id: string;
+      key: string;
+      keyPrefix: string;
+      userId: string;
+      project: string | null;
+      budgetUsd: number;
+    };
+    assert.equal(created.ok, true);
+    assert.equal(created.userId, 'admin-route-test-user');
+    assert.equal(created.project, 'admin-route-test-project');
+    assert.equal(created.budgetUsd, 25);
+    assert.ok(typeof created.id === 'string');
+    assert.ok(typeof created.key === 'string');
+    assert.ok(created.key.startsWith('mlb_sk_'));
+    assert.ok(created.key.startsWith(created.keyPrefix));
+
+    const listRes = await request('GET', '/v1/admin/keys?userId=admin-route-test-user');
+    assert.equal(listRes.status, 200);
+
+    const listData = listRes.data as {
+      keys: Array<{
+        id: string;
+        keyPrefix: string;
+        userId: string;
+        project: string | null;
+        budgetUsd: number;
+        enabled: boolean;
+        keyHash?: string;
+      }>;
+    };
+    assert.ok(Array.isArray(listData.keys));
+    assert.ok(listData.keys.length >= 1);
+    const listed = listData.keys.find((key) => key.id === created.id);
+    assert.ok(listed);
+    assert.equal(listed!.keyPrefix, created.keyPrefix);
+    assert.equal(listed!.userId, 'admin-route-test-user');
+    assert.equal(listed!.project, 'admin-route-test-project');
+    assert.equal(listed!.budgetUsd, 25);
+    assert.equal(listed!.enabled, true);
+    assert.equal('keyHash' in listed!, false);
+
+    const revokeRes = await request('DELETE', `/v1/admin/keys/${created.id}`);
+    assert.equal(revokeRes.status, 200);
+
+    const revoked = revokeRes.data as { ok: boolean; id: string; message: string };
+    assert.equal(revoked.ok, true);
+    assert.equal(revoked.id, created.id);
+
+    const listAfterRevokeRes = await request('GET', '/v1/admin/keys?userId=admin-route-test-user');
+    assert.equal(listAfterRevokeRes.status, 200);
+
+    const listAfterRevoke = listAfterRevokeRes.data as {
+      keys: Array<{ id: string; enabled: boolean }>;
+    };
+    const revokedKey = listAfterRevoke.keys.find((key) => key.id === created.id);
+    assert.ok(revokedKey);
+    assert.equal(revokedKey!.enabled, false);
+  });
+});
+
 // ── POST /v1/admin/models/sync ────────────────────────
 
 function mockFetch(response: unknown): typeof fetch {
