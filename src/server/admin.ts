@@ -16,11 +16,11 @@ import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
 import type { GatewayConfig } from '../core/types.js';
 import { timingSafeEqual } from 'node:crypto';
-import { getCircuitBreakerRegistry, CircuitState } from '../core/circuit-breaker.js';
 import type { SessionManager } from '../session/session-manager.js';
 import { registerAdminApiKeyRoutes } from './routes/admin/api-keys.js';
 import { registerAdminDiscoveryRoutes } from './routes/admin/discovery.js';
 import { registerAdminDashboardRoutes } from './routes/admin/dashboard.js';
+import { registerAdminOperationsRoutes } from './routes/admin/operations.js';
 import { registerAdminSecurityProfileRoutes } from './routes/admin/security-profiles.js';
 import { registerAdminSyncRoutes } from './routes/admin/sync.js';
 
@@ -104,7 +104,7 @@ export interface AdminDeps {
  * Register all /v1/admin/* routes on the Hono app.
  */
 export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
-  const { config, costTracker } = deps;
+  const { config } = deps;
   // Admin auth middleware for all /v1/admin/* routes
   app.use('/v1/admin/*', adminAuth(config));
 
@@ -120,6 +120,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
     db: deps.db,
     freeModelRouter: deps.freeModelRouter,
   });
+  registerAdminOperationsRoutes(app, { costTracker: deps.costTracker });
   registerAdminSecurityProfileRoutes(app, { db: deps.db });
   registerAdminSyncRoutes(app, { db: deps.db, vault: deps.vault });
 
@@ -156,59 +157,4 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
       rateLimit: null,
     });
   });
-
-  // ── POST /v1/admin/reset-circuit-breaker/:provider ────
-
-  app.post('/v1/admin/reset-circuit-breaker/:provider', (c) => {
-    try {
-      const provider = c.req.param('provider');
-      const cbRegistry = getCircuitBreakerRegistry();
-
-      // Check if breaker exists
-      const stats = cbRegistry.getAllStats();
-      const found = stats.find((s) => s.name === provider);
-
-      if (!found) {
-        return c.json({ error: `No circuit breaker found for: ${provider}`, code: 'NOT_FOUND' }, 404);
-      }
-
-      // Reset by forcing to CLOSED state
-      const breaker = cbRegistry.get(provider);
-      breaker.forceState(CircuitState.CLOSED);
-
-      return c.json({
-        ok: true,
-        provider,
-        state: 'CLOSED',
-        message: `Circuit breaker for ${provider} has been reset`,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
-    }
-  });
-
-  // ── POST /v1/admin/flush-usage ─────────────────────────
-
-  app.post('/v1/admin/flush-usage', (c) => {
-    try {
-      if (!costTracker) {
-        return c.json({ error: 'Cost tracker not configured', code: 'NOT_CONFIGURED' }, 404);
-      }
-
-      const bufferBefore = costTracker.bufferSize;
-      costTracker.flush();
-      const bufferAfter = costTracker.bufferSize;
-
-      return c.json({
-        ok: true,
-        flushed: bufferBefore - bufferAfter,
-        remainingBuffer: bufferAfter,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
-    }
-  });
-
 }
