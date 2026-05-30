@@ -4,7 +4,6 @@ import { streamSSE } from "hono/streaming";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
 import type { InternalLLMRequest } from "../../core/internal-model.js";
-import { getCircuitBreakerV2 } from "../../core/router.js";
 import type { Router } from "../../core/router.js";
 import { validateChatCompletions, validateGenerateRequest } from "../../core/schemas.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
@@ -28,6 +27,12 @@ import {
 } from "../http-helpers/chat-request.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 import { buildProviderStreamCall } from "../streaming/provider-stream-client.js";
+import {
+	createStreamingRequestLogFinalizer,
+	finalizeStreamingAttemptFailure,
+	finalizeStreamingAttemptSuccess,
+	normalizeStreamingError,
+} from "../streaming/stream-finalizer.js";
 
 export interface ExecutionRouteDeps {
 	router: Router;
@@ -123,35 +128,12 @@ function handleStreamingRequest(
 
 	return streamSSE(c, async (stream) => {
 		const streamStartTime = Date.now();
-		const logCtx = requestLogger?.captureStart({
-			provider: "unknown",
-			model: canonical.model || "unknown",
-			startTime: Date.now(),
-		});
-		let logCompleted = false;
+		const { logCtx, finalizeRequestLog } = createStreamingRequestLogFinalizer(
+			requestLogger,
+			canonical.model,
+		);
 		let inputTokens: number | undefined;
 		let outputTokens: number | undefined;
-
-		const finalizeRequestLog = async (input: {
-			inputTokens?: number;
-			outputTokens?: number;
-			error?: Error;
-			requestData?: unknown;
-			responseData?: unknown;
-		} = {}) => {
-			if (!requestLogger || !logCtx || logCompleted) {
-				return;
-			}
-
-			logCompleted = true;
-			await requestLogger.captureEnd(logCtx, {
-				inputTokens: input.inputTokens,
-				outputTokens: input.outputTokens,
-				error: input.error,
-				requestData: input.requestData,
-				responseData: input.responseData,
-			});
-		};
 
 		const abortHandler = () => {
 			void finalizeRequestLog({
@@ -187,7 +169,7 @@ function handleStreamingRequest(
 					});
 				} catch (error) {
 					await finalizeRequestLog({
-						error: error instanceof Error ? error : new Error(String(error)),
+						error: normalizeStreamingError(error),
 					});
 					throw error;
 				}
@@ -291,41 +273,34 @@ function handleStreamingRequest(
 					inputTokens = attemptInputTokens;
 					outputTokens = attemptOutputTokens;
 					await stream.writeSSE({ data: "[DONE]" });
-					getCircuitBreakerV2().recordSuccess(provider.id, "default", breakerModel);
-					streamRecorder?.finish();
-					recordResult?.({
-						model: breakerModel,
-						tokensIn: inputTokens,
-						tokensOut: outputTokens,
-						latencyMs: Date.now() - streamStartTime,
-						success: true,
+					await finalizeStreamingAttemptSuccess({
+						providerId: provider.id,
+						resolvedModel: breakerModel,
+						streamStartTime,
 						project,
-					});
-					await finalizeRequestLog({
 						inputTokens,
 						outputTokens,
-						responseData: {
-							stream: true,
-							provider: provider.id,
-							model: logCtx?.model,
-						},
+						streamRecorder,
+						recordResult,
+						finalizeRequestLog,
+						responseModel: logCtx?.model,
 					});
 					return;
 				} catch (error) {
-					getCircuitBreakerV2().recordFailure(provider.id, "default", breakerModel);
-					const resolvedError =
-						error instanceof Error ? error : new Error(String(error));
-					const message = resolvedError.message;
-					streamRecorder?.finish(message);
-					recordResult?.({
-						model: breakerModel,
-						tokensIn: attemptInputTokens,
-						tokensOut: attemptOutputTokens,
-						latencyMs: Date.now() - streamStartTime,
-						success: false,
+					const resolvedError = await finalizeStreamingAttemptFailure({
+						providerId: provider.id,
+						resolvedModel: breakerModel,
+						streamStartTime,
 						project,
-						errorMessage: message,
+						inputTokens: attemptInputTokens,
+						outputTokens: attemptOutputTokens,
+						streamRecorder,
+						recordResult,
+						error,
+						emittedMeaningfulContent,
+						finalizeRequestLog,
 					});
+					const message = resolvedError.message;
 
 					if (!emittedMeaningfulContent) {
 						lastStreamingError = resolvedError;
@@ -334,11 +309,6 @@ function handleStreamingRequest(
 
 					inputTokens = attemptInputTokens;
 					outputTokens = attemptOutputTokens;
-					await finalizeRequestLog({
-						inputTokens,
-						outputTokens,
-						error: resolvedError,
-					});
 
 					try {
 						await stream.writeSSE({
