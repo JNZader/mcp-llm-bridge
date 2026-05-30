@@ -554,6 +554,15 @@ export class Router {
     provider: LLMProvider;
     request: InternalLLMRequest;
     streamTransformer: StreamingOutboundTransformer;
+    recordResult: (input: {
+      model?: string;
+      tokensIn?: number;
+      tokensOut?: number;
+      latencyMs: number;
+      success: boolean;
+      project?: string;
+      errorMessage?: string;
+    }) => void;
   } | null> {
     if (!this._transformerRegistry) {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
@@ -575,14 +584,45 @@ export class Router {
     for (const provider of plan.availableCandidates) {
       const streamTransformer = registry.getStreamOutbound(provider.id);
       if (streamTransformer) {
+        const routedEndpoint = plan.modelRouterDecision?.endpoint;
         return {
           provider,
           request: this.buildInternalRequest(
             plan.optimizedRequest,
             provider,
-            plan.modelRouterDecision?.endpoint,
+            routedEndpoint,
           ),
           streamTransformer,
+          recordResult: ({
+            model,
+            tokensIn = 0,
+            tokensOut = 0,
+            latencyMs,
+            success,
+            project,
+            errorMessage,
+          }) => {
+            const resolvedModel =
+              model ?? resolveProviderModel(request.model, provider, routedEndpoint) ?? 'unknown';
+            this.recordUsage(
+              provider.id,
+              resolvedModel,
+              tokensIn,
+              tokensOut,
+              latencyMs,
+              success,
+              project,
+              errorMessage,
+            );
+            if (plan.classification) {
+              this._recordModelFeedback(
+                this.resolveFeedbackEndpointId(provider, resolvedModel, routedEndpoint),
+                plan.classification,
+                success,
+                latencyMs,
+              );
+            }
+          },
         };
       }
     }

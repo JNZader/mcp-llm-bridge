@@ -13,7 +13,9 @@ import http from 'node:http';
 
 import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
+import { TransformerRegistry } from '../src/core/transformer.js';
 import type { GatewayConfig } from '../src/core/types.js';
+import type { GenerateRequest, GenerateResponse, LLMProvider } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { AnalyticsAggregator } from '../src/analytics/index.js';
@@ -80,6 +82,68 @@ async function request(
     if (bodyStr) req.write(bodyStr);
     req.end();
   });
+}
+
+async function requestText(
+  method: string,
+  path: string,
+  opts?: { body?: object; auth?: string | null; portOverride?: number },
+): Promise<{ status: number; data: string; headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const bodyStr = opts?.body ? JSON.stringify(opts.body) : undefined;
+    const authToken = opts && 'auth' in opts ? opts.auth : config.authToken;
+
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: opts?.portOverride ?? port,
+        path,
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
+        },
+      },
+      (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            data,
+            headers: res.headers,
+          });
+        });
+      },
+    );
+    req.on('error', reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+function createMockProvider(id: string, model: string): LLMProvider {
+  return {
+    id,
+    name: id,
+    type: 'api',
+    models: [{ id: model, name: model, provider: id, maxTokens: 4096 }],
+    async generate(_request: GenerateRequest): Promise<GenerateResponse> {
+      return {
+        text: 'unused',
+        provider: id,
+        model,
+        resolvedProvider: id,
+        resolvedModel: model,
+        fallbackUsed: false,
+      };
+    },
+    async isAvailable(): Promise<boolean> {
+      return true;
+    },
+  };
 }
 
 // Helper to seed analytics with test data
@@ -388,6 +452,141 @@ describe('GET /v1/analytics', () => {
       // Total requests across all channels should match summary
       const totalFromData = data.data.reduce((sum, d) => sum + d.requests, 0);
       assert.equal(totalFromData, data.summary.totalRequests);
+    });
+  });
+
+  describe('Streaming telemetry parity', () => {
+    it('records successful streaming requests in analytics', async () => {
+      const freshAggregator = new AnalyticsAggregator();
+      const freshRouter = new Router();
+      const registry = new TransformerRegistry();
+      const model = 'gpt-4o';
+      const providerId = 'mock-stream-provider';
+
+      freshRouter.register(createMockProvider(providerId, model));
+      freshRouter.setTransformerRegistry(registry);
+      freshRouter.setAnalyticsAggregator(freshAggregator);
+      registry.registerStreamOutbound(providerId, {
+        name: providerId,
+        async *transformStream() {
+          yield { content: 'Hello', done: false, model };
+          yield { content: '', done: true, model, finishReason: 'stop', tokensIn: 4, tokensOut: 6 };
+        },
+      });
+
+      const testServer = startHttpServer(
+        freshRouter,
+        vault,
+        { ...config, httpPort: 0 },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        freshAggregator,
+      ) as unknown as http.Server;
+
+      let testPort = 0;
+      await new Promise<void>((resolve) => {
+        testServer.on('listening', () => {
+          const address = testServer.address();
+          if (address && typeof address === 'object') {
+            testPort = address.port;
+          }
+          resolve();
+        });
+      });
+
+      try {
+        const res = await requestText('POST', '/v1/chat/completions', {
+          portOverride: testPort,
+          body: {
+            model,
+            messages: [{ role: 'user', content: 'Hello stream analytics' }],
+            stream: true,
+          },
+        });
+
+        assert.equal(res.status, 200);
+        assert.match(res.data, /data: \[DONE\]/);
+
+        const total = freshAggregator.query({ dimension: 'total' })[0];
+        const byModel = freshAggregator.query({ dimension: 'model', model });
+
+        assert.equal(total?.requests, 1);
+        assert.equal(total?.inputTokens, 4);
+        assert.equal(total?.outputTokens, 6);
+        assert.equal(byModel[0]?.requests, 1);
+      } finally {
+        await new Promise<void>((resolve) => testServer.close(() => resolve()));
+      }
+    });
+
+    it('records failed streaming requests in analytics', async () => {
+      const freshAggregator = new AnalyticsAggregator();
+      const freshRouter = new Router();
+      const registry = new TransformerRegistry();
+      const model = 'gpt-4o';
+      const providerId = 'mock-stream-provider';
+
+      freshRouter.register(createMockProvider(providerId, model));
+      freshRouter.setTransformerRegistry(registry);
+      freshRouter.setAnalyticsAggregator(freshAggregator);
+      registry.registerStreamOutbound(providerId, {
+        name: providerId,
+        async *transformStream() {
+          yield { content: 'partial', done: false, model, tokensIn: 2, tokensOut: 3 };
+          throw new Error('stream failed');
+        },
+      });
+
+      const testServer = startHttpServer(
+        freshRouter,
+        vault,
+        { ...config, httpPort: 0 },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        freshAggregator,
+      ) as unknown as http.Server;
+
+      let testPort = 0;
+      await new Promise<void>((resolve) => {
+        testServer.on('listening', () => {
+          const address = testServer.address();
+          if (address && typeof address === 'object') {
+            testPort = address.port;
+          }
+          resolve();
+        });
+      });
+
+      try {
+        const res = await requestText('POST', '/v1/chat/completions', {
+          portOverride: testPort,
+          body: {
+            model,
+            messages: [{ role: 'user', content: 'Hello stream analytics failure' }],
+            stream: true,
+          },
+        });
+
+        assert.equal(res.status, 200);
+        assert.match(res.data, /stream failed/);
+        assert.match(res.data, /data: \[DONE\]/);
+
+        const total = freshAggregator.query({ dimension: 'total' })[0];
+        const byModel = freshAggregator.query({ dimension: 'model', model });
+
+        assert.equal(total?.requests, 1);
+        assert.equal(total?.inputTokens, 2);
+        assert.equal(total?.outputTokens, 3);
+        assert.equal(byModel[0]?.requests, 1);
+      } finally {
+        await new Promise<void>((resolve) => testServer.close(() => resolve()));
+      }
     });
   });
 

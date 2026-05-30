@@ -91,6 +91,7 @@ function handleStreamingRequest(
 	};
 
 	return streamSSE(c, async (stream) => {
+		const streamStartTime = Date.now();
 		const logCtx = requestLogger?.captureStart({
 			provider: "unknown",
 			model: canonical.model || "unknown",
@@ -190,7 +191,8 @@ function handleStreamingRequest(
 				return;
 			}
 
-			const { provider, request: resolvedRequest, streamTransformer } = resolved;
+			const { provider, request: resolvedRequest, streamTransformer, recordResult } =
+				resolved;
 			let breakerModel = resolvedRequest.model || model || "unknown";
 			if (logCtx) {
 				logCtx.provider = provider.id;
@@ -261,6 +263,14 @@ function handleStreamingRequest(
 				await stream.writeSSE({ data: "[DONE]" });
 				getCircuitBreakerV2().recordSuccess(provider.id, "default", breakerModel);
 				streamRecorder?.finish();
+				recordResult?.({
+					model: breakerModel,
+					tokensIn: inputTokens,
+					tokensOut: outputTokens,
+					latencyMs: Date.now() - streamStartTime,
+					success: true,
+					project,
+				});
 				await finalizeRequestLog({
 					inputTokens,
 					outputTokens,
@@ -274,6 +284,15 @@ function handleStreamingRequest(
 				getCircuitBreakerV2().recordFailure(provider.id, "default", breakerModel);
 				const message = error instanceof Error ? error.message : String(error);
 				streamRecorder?.finish(message);
+				recordResult?.({
+					model: breakerModel,
+					tokensIn: inputTokens,
+					tokensOut: outputTokens,
+					latencyMs: Date.now() - streamStartTime,
+					success: false,
+					project,
+					errorMessage: message,
+				});
 				await finalizeRequestLog({
 					inputTokens,
 					outputTokens,

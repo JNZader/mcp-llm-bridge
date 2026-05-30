@@ -803,6 +803,113 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(result.metadata?.['provider'], 'first');
   });
 
+  it('resolveStreamingProvider returns a success telemetry hook for ModelRouter feedback', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const endpointId = 'stream-endpoint';
+    const providerId = 'stream-provider';
+    const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
+
+    router.register(createMockProvider({
+      id: providerId,
+      name: 'Stream Provider',
+      type: 'api',
+      models: [{ id: 'stream-model', name: 'Stream Model', provider: providerId, maxTokens: 4096 }],
+    }));
+    router.setTransformerRegistry(registry);
+    registry.registerStreamOutbound(providerId, {
+      name: providerId,
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+
+    router.setModelRouter(createMockModelRouter({
+      enabled: true,
+      decision: {
+        endpoint: createMockEndpoint({ id: endpointId, provider: providerId, modelId: 'stream-model' }),
+        matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
+        reason: 'Primary model for summarization',
+        isFallback: false,
+        costTier: 'standard',
+      },
+      onRecordFeedback: (feedback) => feedbacks.push(feedback),
+    }));
+
+    const resolved = await router.resolveStreamingProvider({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'stream-model',
+    });
+
+    assert.ok(resolved);
+    resolved?.recordResult({
+      model: 'stream-model',
+      tokensIn: 3,
+      tokensOut: 5,
+      latencyMs: 42,
+      success: true,
+    });
+
+    assert.equal(feedbacks.length, 1);
+    assert.equal(feedbacks[0]!.endpointId, endpointId);
+    assert.equal(feedbacks[0]!.taskPattern, 'summarization');
+    assert.equal(feedbacks[0]!.acceptable, true);
+    assert.equal(feedbacks[0]!.latencyMs, 42);
+  });
+
+  it('resolveStreamingProvider returns a failure telemetry hook for ModelRouter feedback', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const endpointId = 'stream-endpoint';
+    const providerId = 'stream-provider';
+    const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
+
+    router.register(createMockProvider({
+      id: providerId,
+      name: 'Stream Provider',
+      type: 'api',
+      models: [{ id: 'stream-model', name: 'Stream Model', provider: providerId, maxTokens: 4096 }],
+    }));
+    router.setTransformerRegistry(registry);
+    registry.registerStreamOutbound(providerId, {
+      name: providerId,
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+
+    router.setModelRouter(createMockModelRouter({
+      enabled: true,
+      decision: {
+        endpoint: createMockEndpoint({ id: endpointId, provider: providerId, modelId: 'stream-model' }),
+        matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
+        reason: 'Primary model for summarization',
+        isFallback: false,
+        costTier: 'standard',
+      },
+      onRecordFeedback: (feedback) => feedbacks.push(feedback),
+    }));
+
+    const resolved = await router.resolveStreamingProvider({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'stream-model',
+    });
+
+    assert.ok(resolved);
+    resolved?.recordResult({
+      model: 'stream-model',
+      latencyMs: 17,
+      success: false,
+      errorMessage: 'stream failed',
+    });
+
+    assert.equal(feedbacks.length, 1);
+    assert.equal(feedbacks[0]!.endpointId, endpointId);
+    assert.equal(feedbacks[0]!.taskPattern, 'summarization');
+    assert.equal(feedbacks[0]!.acceptable, false);
+    assert.equal(feedbacks[0]!.latencyMs, 17);
+  });
+
   it('resolveStreamingProvider applies local-llm precedence when ModelRouter returns null', async () => {
     const router = new Router();
     const registry = new TransformerRegistry();
