@@ -12,10 +12,7 @@ import type { CostTracker } from '../core/cost-tracker.js';
 import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
 import type { CodeSearchService } from '../code-search/index.js';
 import type { StateManager } from '../crdt/index.js';
-import type { CRDTType, StateSnapshot } from '../crdt/types.js';
 import type { TrustLevel } from '../core/types.js';
-import { CreateGroupSchema } from '../core/groups.js';
-import { getCircuitBreakerRegistry } from '../core/circuit-breaker.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
 import { TOOL_CATEGORIES } from '../security/profiles.js';
 import type { ApprovalStore } from '../approval/index.js';
@@ -28,6 +25,16 @@ import { discoverModels } from '../model-discovery/discovery.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 import { TOOLS } from './mcp-tool-registry.js';
+import {
+  handleApprovalTool,
+  handleCircuitBreakerTool,
+  handleCodeSearchTool,
+  handleGroupStoreTool,
+  handlePageIndexTool,
+  handleSharedStateTool,
+  handleUsageTool,
+  handleVaultTool,
+} from './mcp-tool-handlers.js';
 import {
   dynamicToolAdapter,
   getRuntimeMcpTools,
@@ -160,41 +167,15 @@ async function _handleToolCall(
       }
 
       case 'vault_store': {
-        const id = vault.store(
-          args['provider'] as string,
-          (args['keyName'] as string | undefined) ?? 'default',
-          args['apiKey'] as string,
-          args['project'] as string | undefined,
-        );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                id,
-                provider: args['provider'],
-                keyName: (args['keyName'] as string | undefined) ?? 'default',
-                project: (args['project'] as string | undefined) ?? '_global',
-              }),
-            },
-          ],
-        };
+        return handleVaultTool(toolName, args, vault)!;
       }
 
       case 'vault_list': {
-        const credentials = vault.listMasked(
-          args['project'] as string | undefined,
-        );
-        return {
-          content: [{ type: 'text', text: JSON.stringify(credentials) }],
-        };
+        return handleVaultTool(toolName, args, vault)!;
       }
 
       case 'vault_delete': {
-        vault.delete(args['id'] as number);
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
-        };
+        return handleVaultTool(toolName, args, vault)!;
       }
 
       case 'llm_models': {
@@ -205,368 +186,67 @@ async function _handleToolCall(
       }
 
       case 'vault_store_file': {
-        const id = vault.storeFile(
-          args['provider'] as string,
-          args['fileName'] as string,
-          args['content'] as string,
-          args['project'] as string | undefined,
-        );
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                id,
-                provider: args['provider'],
-                fileName: args['fileName'],
-                project: (args['project'] as string | undefined) ?? '_global',
-              }),
-            },
-          ],
-        };
+        return handleVaultTool(toolName, args, vault)!;
       }
 
       case 'vault_list_files': {
-        const files = vault.listFiles(
-          args['project'] as string | undefined,
-        );
-        return {
-          content: [{ type: 'text', text: JSON.stringify(files) }],
-        };
+        return handleVaultTool(toolName, args, vault)!;
       }
 
       case 'vault_delete_file': {
-        vault.deleteFile(args['id'] as number);
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
-        };
+        return handleVaultTool(toolName, args, vault)!;
       }
 
       case 'list_groups': {
-        if (!groupStore) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Group store not configured' }) }],
-            isError: true,
-          };
-        }
-        const groups = groupStore.list();
-        return {
-          content: [{ type: 'text', text: JSON.stringify(groups) }],
-        };
+        return handleGroupStoreTool(toolName, args, groupStore)!;
       }
 
       case 'create_group': {
-        if (!groupStore) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Group store not configured' }) }],
-            isError: true,
-          };
-        }
-        const validated = CreateGroupSchema.parse(args);
-        const group = groupStore.create(validated);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(group) }],
-        };
+        return handleGroupStoreTool(toolName, args, groupStore)!;
       }
 
       case 'delete_group': {
-        if (!groupStore) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Group store not configured' }) }],
-            isError: true,
-          };
-        }
-        const deleted = groupStore.delete(args['id'] as string);
-        if (!deleted) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: `Group not found: ${args['id']}` }) }],
-            isError: true,
-          };
-        }
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
-        };
+        return handleGroupStoreTool(toolName, args, groupStore)!;
       }
 
       case 'configure_circuit_breaker': {
-        const cbRegistry = getCircuitBreakerRegistry();
-        const update: Record<string, unknown> = {};
-        if (typeof args['failureThreshold'] === 'number') update['failureThreshold'] = args['failureThreshold'];
-        if (typeof args['backoffBaseMs'] === 'number') update['backoffBaseMs'] = args['backoffBaseMs'];
-        if (typeof args['backoffMultiplier'] === 'number') update['backoffMultiplier'] = args['backoffMultiplier'];
-        if (typeof args['backoffMaxMs'] === 'number') update['backoffMaxMs'] = args['backoffMaxMs'];
-        if (typeof args['resetTimeoutMs'] === 'number') update['resetTimeoutMs'] = args['resetTimeoutMs'];
-
-        cbRegistry.updateDefaultConfig(update as Record<string, number>);
-        const newConfig = cbRegistry.getDefaultConfig();
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ updated: true, config: newConfig }) }],
-        };
+        return handleCircuitBreakerTool(toolName, args)!;
       }
 
       case 'circuit_breaker_stats': {
-        const cbRegistry = getCircuitBreakerRegistry();
-        const stats = cbRegistry.getAllStats();
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ enabled: cbRegistry.isEnabled(), breakers: stats }) }],
-        };
+        return handleCircuitBreakerTool(toolName, args)!;
       }
 
       case 'usage_summary': {
-        if (!costTracker) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Cost tracker not configured' }) }],
-            isError: true,
-          };
-        }
-        const summary = costTracker.summary({
-          provider: args['provider'] as string | undefined,
-          model: args['model'] as string | undefined,
-          project: args['project'] as string | undefined,
-          from: args['from'] as string | undefined,
-          to: args['to'] as string | undefined,
-          groupBy: args['groupBy'] as 'provider' | 'model' | 'project' | 'hour' | 'day' | undefined,
-        });
-        return {
-          content: [{ type: 'text', text: JSON.stringify(summary) }],
-        };
+        return handleUsageTool(toolName, args, costTracker)!;
       }
 
       case 'usage_query': {
-        if (!costTracker) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Cost tracker not configured' }) }],
-            isError: true,
-          };
-        }
-        const records = costTracker.query({
-          provider: args['provider'] as string | undefined,
-          model: args['model'] as string | undefined,
-          project: args['project'] as string | undefined,
-          from: args['from'] as string | undefined,
-          to: args['to'] as string | undefined,
-          limit: (args['limit'] as number | undefined) ?? 100,
-        });
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ records, count: records.length }) }],
-        };
+        return handleUsageTool(toolName, args, costTracker)!;
       }
 
       case 'code_search': {
-        if (!codeSearch) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Code search not configured' }) }],
-            isError: true,
-          };
-        }
-        const searchQuery = args['query'] as string;
-        if (!searchQuery?.trim()) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Query is required and must not be empty' }) }],
-            isError: true,
-          };
-        }
-        const mode = (args['mode'] as 'keyword' | 'vector' | 'hybrid' | undefined) ?? 'keyword';
-        try {
-          const results = await codeSearch.search({
-            query: searchQuery,
-            scope: (args['scope'] as string | undefined) ?? process.cwd(),
-            limit: args['limit'] as number | undefined,
-            followImports: args['followImports'] as boolean | undefined,
-            mode,
-          });
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ results, count: results.length }) }],
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (mode === 'vector' || mode === 'hybrid') {
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ error: `Embedder failed in ${mode} mode: ${message}`, results: [] }) }],
-              isError: true,
-            };
-          }
-          throw error;
-        }
+        return (await handleCodeSearchTool(toolName, args, codeSearch))!;
       }
 
       case 'index_codebase': {
-        if (!codeSearch) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Code search not configured' }) }],
-            isError: true,
-          };
-        }
-        const rootDir = (args['rootDir'] as string | undefined) ?? process.cwd();
-        const chunks = await codeSearch.reindex(rootDir);
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ indexed: true, rootDir, chunks }) }],
-        };
+        return (await handleCodeSearchTool(toolName, args, codeSearch))!;
       }
 
       case 'shared_state': {
-        if (!stateManager) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'State manager not configured' }) }],
-            isError: true,
-          };
-        }
-        const op = args['op'] as string;
-
-        switch (op) {
-          case 'read': {
-            const readKey = args['key'] as string;
-            if (!readKey) {
-              return {
-                content: [{ type: 'text', text: JSON.stringify({ error: 'key is required for read' }) }],
-                isError: true,
-              };
-            }
-            const result = stateManager.read(readKey);
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result ?? { error: `Key not found: ${readKey}` }) }],
-              isError: !result,
-            };
-          }
-
-          case 'write': {
-            const writeKey = args['key'] as string;
-            const crdtType = args['type'] as CRDTType;
-            const writeNodeId = args['nodeId'] as string;
-            if (!writeKey || !crdtType || !writeNodeId) {
-              return {
-                content: [{ type: 'text', text: JSON.stringify({ error: 'key, type, and nodeId are required for write' }) }],
-                isError: true,
-              };
-            }
-
-            if (crdtType === 'g-counter') {
-              stateManager.write(writeKey, 'g-counter', {
-                nodeId: writeNodeId,
-                amount: (args['amount'] as number | undefined) ?? 1,
-              });
-            } else if (crdtType === 'lww-register') {
-              stateManager.write(writeKey, 'lww-register', {
-                value: args['value'],
-                nodeId: writeNodeId,
-                timestamp: args['timestamp'] as number | undefined,
-              });
-            } else if (crdtType === 'or-set') {
-              const setAction = (args['action'] as 'add' | 'remove') ?? 'add';
-              const element = args['element'] as string;
-              if (!element) {
-                return {
-                  content: [{ type: 'text', text: JSON.stringify({ error: 'element is required for or-set write' }) }],
-                  isError: true,
-                };
-              }
-              stateManager.write(writeKey, 'or-set', {
-                action: setAction,
-                element,
-                nodeId: writeNodeId,
-              });
-            } else {
-              return {
-                content: [{ type: 'text', text: JSON.stringify({ error: `Unknown CRDT type: ${crdtType as string}` }) }],
-                isError: true,
-              };
-            }
-
-            const written = stateManager.read(writeKey);
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ ok: true, key: writeKey, ...written }) }],
-            };
-          }
-
-          case 'merge': {
-            const incoming = args['snapshot'] as StateSnapshot | undefined;
-            if (!incoming) {
-              return {
-                content: [{ type: 'text', text: JSON.stringify({ error: 'snapshot is required for merge' }) }],
-                isError: true,
-              };
-            }
-            stateManager.mergeSnapshot(incoming);
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ ok: true, merged: Object.keys(incoming.entries).length }) }],
-            };
-          }
-
-          case 'snapshot': {
-            const snap = stateManager.snapshot();
-            return {
-              content: [{ type: 'text', text: JSON.stringify(snap) }],
-            };
-          }
-
-          case 'list': {
-            const containers = stateManager.list();
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ containers }) }],
-            };
-          }
-
-          default:
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ error: `Unknown operation: ${op}` }) }],
-              isError: true,
-            };
-        }
+        return handleSharedStateTool(toolName, args, stateManager)!;
       }
 
       case 'approval_list': {
-        if (!approvalStore) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval store not configured' }) }],
-            isError: true,
-          };
-        }
-        const pending = approvalStore.getPending();
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ requests: pending, count: pending.length }) }],
-        };
+        return handleApprovalTool(toolName, args, approvalStore)!;
       }
 
       case 'approval_approve': {
-        if (!approvalStore) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval store not configured' }) }],
-            isError: true,
-          };
-        }
-        const id = args['id'] as string;
-        const resolvedBy = args['resolvedBy'] as string | undefined ?? 'mcp-client';
-        const updated = approvalStore.approve(id, resolvedBy);
-        if (!updated) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval request not found or already resolved' }) }],
-            isError: true,
-          };
-        }
-        return {
-          content: [{ type: 'text', text: JSON.stringify(updated) }],
-        };
+        return handleApprovalTool(toolName, args, approvalStore)!;
       }
 
       case 'approval_deny': {
-        if (!approvalStore) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval store not configured' }) }],
-            isError: true,
-          };
-        }
-        const id = args['id'] as string;
-        const resolvedBy = args['resolvedBy'] as string | undefined ?? 'mcp-client';
-        const updated = approvalStore.deny(id, resolvedBy);
-        if (!updated) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'Approval request not found or already resolved' }) }],
-            isError: true,
-          };
-        }
-        return {
-          content: [{ type: 'text', text: JSON.stringify(updated) }],
-        };
+        return handleApprovalTool(toolName, args, approvalStore)!;
       }
 
       case 'local_llm_generate': {
@@ -698,17 +378,7 @@ async function _handleToolCall(
       case 'conversation_info':
       case 'conversation_find_relevant':
       case 'conversation_check_compaction': {
-        if (!pageIndexTools) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: 'PageIndex not available' }) }],
-            isError: true,
-          };
-        }
-        const result = await pageIndexTools.handleToolCall(toolName, args);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(result) }],
-          isError: !result.success,
-        };
+        return (await handlePageIndexTool(toolName, args, pageIndexTools))!;
       }
 
       default: {
