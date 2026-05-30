@@ -42,7 +42,6 @@ for (const adapter of createAllAdapters(vault)) {
 }
 
 const approvalStore = new ApprovalStore();
-router.setApprovalStore(approvalStore);
 
 let server: http.Server;
 let port = 0;

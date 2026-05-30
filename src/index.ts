@@ -155,7 +155,6 @@ if (bridge) {
 
 // ── Approval Store ──────────────────────────────────────
 const approvalStore = new ApprovalStore();
-router.setApprovalStore(approvalStore);
 
 // ── PageIndex ───────────────────────────────────────────
 const pageIndex = createPageIndex(config.dbPath);
@@ -174,8 +173,6 @@ if (localLLMEnabled) {
 
 	// Register as normal provider so it participates in routing + circuit breakers
 	router.register(localLLMProvider);
-	// Also set as local LLM client for other consumers
-	router.setLocalLLMClient(localLLMProvider);
 
 	// Detect models at bootstrap
 	await localLLMProvider.refreshModels();

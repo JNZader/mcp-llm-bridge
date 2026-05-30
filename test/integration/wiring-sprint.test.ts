@@ -46,7 +46,6 @@ for (const adapter of createAllAdapters(vault)) {
 
 // Wire sprint modules
 const approvalStore = new ApprovalStore();
-router.setApprovalStore(approvalStore);
 
 let server: http.Server;
 let port = 0;

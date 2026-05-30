@@ -30,7 +30,6 @@ import type { CostTracker } from './cost-tracker.js';
 import type { FreeModelRouter } from '../free-models/router.js';
 import type { LatencyMeasurer } from '../latency/measurer.js';
 import type { ModelRouter } from '../model-routing/router.js';
-import type { ApprovalStore } from '../approval/index.js';
 import type { AnalyticsAggregator } from '../analytics/index.js';
 import { calculateCost } from './pricing.js';
 import { LocalLLMError } from '../local-llm/client.js';
@@ -48,13 +47,6 @@ import {
 import { tryProvider } from './router-executor.js';
 import { buildInternalRoutingPlan } from './router-internal-plan.js';
 
-/**
- * Minimal interface for a local LLM client.
- * Sprint 3 will introduce a full LocalLLMProvider adapter implementing LLMProvider.
- */
-export interface LocalLLMClient {
-  generate(request: GenerateRequest): Promise<GenerateResponse>;
-}
 import { logger } from './logger.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 
@@ -106,8 +98,6 @@ export class Router {
   private _freeModelRouter: FreeModelRouter | null = null;
   private _latencyMeasurer: LatencyMeasurer | null = null;
   private _modelRouter: ModelRouter | null = null;
-  private _localLLMClient: LocalLLMClient | null = null;
-  private _approvalStore: ApprovalStore | null = null;
   private _analyticsAggregator: AnalyticsAggregator | null = null;
   private _explorationRate: number = 0.1; // 10% epsilon-greedy
 
@@ -199,26 +189,6 @@ export class Router {
   /** Get the model router (null if not set). */
   get modelRouter(): ModelRouter | null {
     return this._modelRouter;
-  }
-
-  /** Set the local LLM client for offloading. */
-  setLocalLLMClient(client: LocalLLMClient): void {
-    this._localLLMClient = client;
-  }
-
-  /** Get the local LLM client (null if not set). */
-  get localLLMClient(): LocalLLMClient | null {
-    return this._localLLMClient;
-  }
-
-  /** Set the approval store for flow management. */
-  setApprovalStore(store: ApprovalStore): void {
-    this._approvalStore = store;
-  }
-
-  /** Get the approval store (null if not set). */
-  get approvalStore(): ApprovalStore | null {
-    return this._approvalStore;
   }
 
   /** Return all registered providers. */
