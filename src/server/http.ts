@@ -53,13 +53,10 @@ import type { SessionManager } from "../session/session-manager.js";
 import type { RequestLogger } from "../logging/request-logger.js";
 import type { LogContext } from "../logging/types.js";
 import { registerAdminRoutes } from "./admin.js";
-import { createCatalogFromMcpTools } from "../tool-catalog/index.js";
-import { getRuntimeMcpTools } from "./mcp.js";
 import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
 import { securityProfileMiddleware } from "../security/enforcer.js";
 import { optimizeMessages } from "../transformers/three-part-prompt.js";
-import { detectLocalLLMs } from "../local-llm/detector.js";
 import {
   normalizeOpenAIRequest,
   createCanonicalResponse,
@@ -72,6 +69,7 @@ import {
 	isUserAllowed,
 } from "../auth/github-oauth.js";
 import { registerObservabilityRoutes } from "./routes/observability.js";
+import { registerToolingRoutes } from "./routes/tooling.js";
 
 /**
  * Timing-safe comparison for bearer tokens.
@@ -871,6 +869,7 @@ export function startHttpServer(
 		analyticsAggregator,
 		requestLogger,
 	});
+	registerToolingRoutes(app);
 
 	// ── Generate ───────────────────────────────────────────
 
@@ -1176,95 +1175,12 @@ export function startHttpServer(
 		}
 	});
 
-	// ── Tool Catalog ─────────────────────────────────────
-
-	function getToolCatalog() {
-		return createCatalogFromMcpTools(getRuntimeMcpTools());
-	}
-
-	app.get("/v1/tools/catalog", (c) => {
-		try {
-			const source = c.req.query("source") as import("../tool-catalog/index.js").ToolSource | undefined;
-			const toolCatalog = getToolCatalog();
-			const tools = toolCatalog.listAll(source);
-			return c.json({
-				count: tools.length,
-				tools: tools.map((t) => ({
-					name: t.name,
-					namespace: t.namespace,
-					source: t.source,
-					description: t.description,
-					parameters: t.parameters,
-					tags: t.tags,
-					addedAt: t.addedAt,
-				})),
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	app.get("/v1/tools/search", (c) => {
-		try {
-			const query = c.req.query("q") ?? "";
-			const limitStr = c.req.query("limit");
-			const limit = limitStr ? parseInt(limitStr, 10) : 10;
-			const toolCatalog = getToolCatalog();
-			const results = toolCatalog.search(query, isNaN(limit) ? 10 : limit);
-			return c.json({
-				query,
-				count: results.length,
-				tools: results.map((t) => ({
-					name: t.name,
-					namespace: t.namespace,
-					source: t.source,
-					description: t.description,
-					parameters: t.parameters,
-					tags: t.tags,
-				})),
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	// ── Local Models ───────────────────────────────────────
-
-	app.get("/v1/local/models", async (c) => {
-		try {
-			const results = await detectLocalLLMs();
-			const backends = results.map((r) => ({
-				backend: r.backend,
-				status: r.status,
-				models: r.models,
-			}));
-			return c.json({ backends });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
 	// ── Providers ──────────────────────────────────────────
 
 	app.get("/v1/providers", async (c) => {
 		try {
 			const providers = await router.getProviderStatuses();
 			return c.json({ providers });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	// ── Balancer Strategies ────────────────────────────────
-
-	app.get("/v1/balancer/strategies", async (c) => {
-		try {
-			const { getAllLoadBalanceModes } = await import("../balancer/index.js");
-			return c.json({ strategies: getAllLoadBalanceModes() });
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json({ error: message }, 500);
