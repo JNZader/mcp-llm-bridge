@@ -18,13 +18,13 @@ import { TOOL_CATEGORIES } from '../security/profiles.js';
 import type { ApprovalStore } from '../approval/index.js';
 import { requiresApproval, DEFAULT_CONFIG as APPROVAL_DEFAULT_CONFIG } from '../approval/index.js';
 import { compressOutput, compressionStats } from '../context-compression/output-compression.js';
-import { detectLocalLLMs, pickBestLocalModel } from '../local-llm/detector.js';
-import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
-import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
-import { discoverModels } from '../model-discovery/discovery.js';
-import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 import { TOOLS } from './mcp-tool-registry.js';
+import {
+  handleDiscoverModelsTool,
+  handleLlmGenerateTool,
+  handleLocalLlmGenerateTool,
+} from './mcp-llm-handlers.js';
 import {
   handleApprovalTool,
   handleCircuitBreakerTool,
@@ -130,40 +130,7 @@ async function _handleToolCall(
 
     switch (toolName) {
       case 'llm_generate': {
-        let prompt = args['prompt'] as string | undefined;
-        const system = args['system'] as string | undefined;
-        const context = args['context'] as string | undefined;
-        const instruction = args['instruction'] as string | undefined;
-
-        // Build prompt from three-part fields if provided
-        if (context || instruction) {
-          const parts: string[] = [];
-          if (context) parts.push(`[Context]\n${context}`);
-          if (instruction) parts.push(`[Instruction]\n${instruction}`);
-          prompt = parts.join('\n\n') ?? prompt ?? '';
-        }
-
-        const request = {
-          prompt: prompt ?? '',
-          system,
-          provider: args['provider'] as string | undefined,
-          model: args['model'] as string | undefined,
-          maxTokens: args['maxTokens'] as number | undefined,
-          project: args['project'] as string | undefined,
-        };
-
-        // Use bridge orchestrator when available and no explicit provider/model requested
-        if (bridge && !request.provider && !request.model) {
-          const result = await bridge.generate(request);
-          return {
-            content: [{ type: 'text', text: JSON.stringify(result) }],
-          };
-        }
-
-        const result = await router.generate(request);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(result) }],
-        };
+        return handleLlmGenerateTool(args, router, bridge);
       }
 
       case 'vault_store': {
@@ -250,125 +217,11 @@ async function _handleToolCall(
       }
 
       case 'local_llm_generate': {
-        const prompt = args['prompt'] as string;
-        const system = args['system'] as string | undefined;
-        const preferredModel = args['preferredModel'] as string | undefined;
-        const maxTokens = args['maxTokens'] as number | undefined;
-
-        // If LOCAL_LLM_ENABLED=false or no local LLM configured, route directly to cloud
-        const localEnabled = process.env['LOCAL_LLM_ENABLED'] === 'true';
-        if (!localEnabled) {
-          const result = await router.generate({ prompt, system, maxTokens });
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({ ...result, backend: 'cloud', reason: 'LOCAL_LLM_ENABLED=false' }),
-            }],
-          };
-        }
-
-        // Detect local models
-        const detections = await detectLocalLLMs();
-        const localModel = pickBestLocalModel(detections, preferredModel);
-
-        if (!localModel) {
-          // No local model available — fall back to cloud
-          const result = await router.generate({ prompt, system, maxTokens });
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({ ...result, backend: 'cloud', reason: 'No local models available' }),
-            }],
-          };
-        }
-
-        // Classify for offloading
-        const classification = classifyForOffload(prompt);
-        const minConfidence = DEFAULT_LOCAL_LLM_CONFIG.minOffloadConfidence;
-        if (!meetsOffloadThreshold(classification, minConfidence)) {
-          // Task not offloadable — route to cloud
-          const result = await router.generate({ prompt, system, maxTokens });
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                ...result,
-                backend: 'cloud',
-                reason: `Task not offloadable: ${classification.reason}`,
-              }),
-            }],
-          };
-        }
-
-        // Try local LLM
-        try {
-          const localResult = await callLocalLLM(localModel, prompt, system);
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                text: localResult.text,
-                model: localResult.model,
-                backend: 'local',
-                provider: 'local-llm',
-                resolvedProvider: 'local-llm',
-                resolvedModel: localResult.model,
-                fallbackUsed: false,
-                latencyMs: localResult.latencyMs,
-                tokensUsed: localResult.tokensUsed,
-              }),
-            }],
-          };
-        } catch (error) {
-          if (error instanceof LocalLLMError) {
-            // Fall back to cloud provider
-            const cloudResult = await router.generate({ prompt, system, maxTokens });
-            return {
-              content: [{
-                type: 'text',
-                text: JSON.stringify({
-                  ...cloudResult,
-                  backend: 'cloud',
-                  fallbackUsed: true,
-                  fallbackReason: `Local LLM failed: ${error.message}`,
-                }),
-              }],
-            };
-          }
-          throw error;
-        }
+        return handleLocalLlmGenerateTool(args, router);
       }
 
       case 'discover_models': {
-        const hfToken = args['hfToken'] as string | undefined;
-        try {
-          const result = await discoverModels(
-            { hfToken: hfToken ?? process.env['HF_TOKEN'], enabled: true },
-            {
-              ollamaUrl: process.env['OLLAMA_URL'] ?? 'http://localhost:11434',
-              lmStudioUrl: process.env['LM_STUDIO_URL'] ?? 'http://localhost:1234',
-            },
-          );
-          return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                models: result.models,
-                backendsScanned: result.backendsScanned,
-                enrichedCount: result.enrichedCount,
-                unenrichedCount: result.unenrichedCount,
-                errors: result.errors,
-                timestamp: result.timestamp,
-              }),
-            }],
-          };
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: msg }) }],
-            isError: true,
-          };
-        }
+        return handleDiscoverModelsTool(args);
       }
 
       case 'conversation_paginate':
