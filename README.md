@@ -1204,7 +1204,7 @@ LLM_GATEWAY_SECURITY_PROFILE=restricted
 
 Default is `local-dev` (backward compatible — no restrictions).
 
-Each profile also carries a `sandbox` flag (default `false`). When `sandbox: true`, the profile indicates that the project should run in an isolated/sandboxed mode. This flag is exposed on the profile schema and through the admin API for per-project configuration.
+Each profile also carries a `sandbox` flag (default `false`). Today this flag is best understood as prepared infrastructure, not a guarantee of sandboxed runtime execution: it is exposed on the profile schema and through the admin API, and the repo includes a Docker/process sandbox runner under `src/sandbox/`, but the active runtime does not yet expose sandboxed execution tools or route normal tool execution through that runner. Also note that the helper falls back to plain process execution with a timeout when Docker is unavailable, so this should not be treated as complete containment.
 
 ### HTTP Enforcement
 
