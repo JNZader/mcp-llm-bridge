@@ -7,7 +7,7 @@
  * Supports per-project scoping via `project` body field or `X-Project` header.
  */
 
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { type ServerType, serve } from "@hono/node-server";
 import type { Context, Next } from "hono";
 import { Hono } from "hono";
@@ -26,7 +26,7 @@ import { apiKeyAuth } from "../auth/middleware.js";
 import type { ComparisonService } from "../comparison/service.js";
 import { getCircuitBreakerRegistry } from "../core/circuit-breaker.js";
 import { getCircuitBreakerV2 } from "../core/router.js";
-import { MAX_BODY_SIZE, VALID_PROVIDERS, VERSION } from "../core/constants.js";
+import { MAX_BODY_SIZE, VALID_PROVIDERS } from "../core/constants.js";
 import type { CostTracker } from "../core/cost-tracker.js";
 import type { GroupStore } from "../core/groups.js";
 import { CreateGroupSchema, UpdateGroupSchema } from "../core/groups.js";
@@ -51,7 +51,6 @@ import type { SessionManager } from "../session/session-manager.js";
 import type { RequestLogger } from "../logging/request-logger.js";
 import type { LogContext } from "../logging/types.js";
 import { registerAdminRoutes } from "./admin.js";
-import { dashboardHtml } from "./dashboard.js";
 import { RateLimiter } from "./rate-limit.js";
 import { securityProfileMiddleware } from "../security/enforcer.js";
 import { optimizeMessages } from "../transformers/three-part-prompt.js";
@@ -59,16 +58,10 @@ import {
   normalizeOpenAIRequest,
   createCanonicalResponse,
 } from "../protocol-converter/index.js";
-import {
-	isGithubOauthConfigured,
-	getGithubAuthUrl,
-	exchangeCodeForUser,
-	createDashboardJwt,
-	isUserAllowed,
-} from "../auth/github-oauth.js";
 import { registerObservabilityRoutes } from "./routes/observability.js";
 import { registerComparisonRoutes } from "./routes/comparison.js";
 import { registerToolingRoutes } from "./routes/tooling.js";
+import { registerPublicRoutes } from "./routes/public.js";
 
 export interface StartHttpServerDeps {
 	router: Router;
@@ -347,33 +340,6 @@ function rateLimitMiddleware(limiter: RateLimiter) {
 
 /** Server start time for uptime calculation. */
 let serverStartTime: number = Date.now();
-
-/**
- * Detect Anthropic subscription tier from stored credentials.
- *
- * @param vault - The credential vault
- * @returns Subscription tier: "pro", "max", "api", or "none"
- */
-function detectAnthropicSubscription(
-	vault: Vault,
-): "pro" | "max" | "api" | "none" {
-	try {
-		// Try to get the decrypted API key to check its format
-		const apiKey = vault.getDecrypted("anthropic", "default");
-
-		// Check key prefix patterns for tier detection
-		if (apiKey.startsWith("sk-ant-")) {
-			// Standard Anthropic API key
-			return "api";
-		}
-
-		// Default to API for any other key format
-		return "api";
-	} catch {
-		// No credential found
-		return "none";
-	}
-}
 
 /** Provider-specific base URLs for OpenAI-compatible streaming. */
 const PROVIDER_BASE_URLS: Record<string, string> = {
@@ -796,101 +762,11 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 	//
 	app.use("/v1/*", securityProfileMiddleware(securityProfile ?? 'local-dev'));
 
-	// ── GitHub OAuth (public) ────────────────────────────────
-
-	// Redirect user to GitHub for authentication
-	app.get("/auth/github", (c) => {
-		if (!isGithubOauthConfigured()) {
-			return c.json({ error: "GitHub OAuth not configured" }, 503);
-		}
-		const state = randomBytes(16).toString("hex");
-		const origin = new URL(c.req.url).origin;
-		const redirectUri = `${origin}/auth/github/callback`;
-		c.header("Set-Cookie", `gh_oauth_state=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax`);
-		return c.redirect(getGithubAuthUrl(state, redirectUri), 302);
-	});
-
-	// GitHub OAuth callback — exchange code, issue JWT, redirect to frontend
-	app.get("/auth/github/callback", async (c) => {
-		const code = c.req.query("code");
-		const state = c.req.query("state");
-		const cookieHeader = c.req.header("Cookie") ?? "";
-		const storedState = cookieHeader
-			.split(";")
-			.map((p) => p.trim())
-			.find((p) => p.startsWith("gh_oauth_state="))
-			?.split("=")[1];
-
-		// Clear state cookie
-		c.header("Set-Cookie", "gh_oauth_state=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax");
-
-		if (!code || !state || state !== storedState) {
-			return c.redirect(
-				"/#/oauth/callback?error=" + encodeURIComponent("Invalid OAuth state. Please try again."),
-			);
-		}
-
-		try {
-			const user = await exchangeCodeForUser(code);
-			if (!isUserAllowed(user.login)) {
-				return c.redirect(
-					"/#/oauth/callback?error=" +
-						encodeURIComponent(`User "${user.login}" is not allowed. Contact the admin.`),
-				);
-			}
-			const token = createDashboardJwt(user);
-			return c.redirect(`/#/oauth/callback?token=${token}`);
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : "GitHub OAuth failed";
-			return c.redirect("/#/oauth/callback?error=" + encodeURIComponent(msg));
-		}
-	});
-
-	// Auth config — public endpoint so the frontend knows which login methods are available
-	app.get("/v1/admin/auth-config", (c) => {
-		return c.json({ githubOauth: isGithubOauthConfigured() });
-	});
-
-	// ── Dashboard ───────────────────────────────────────────
-
-	// Cache dashboard HTML at startup to avoid regenerating on every request
-	const dashboardHtmlCache = dashboardHtml();
-	app.get("/", (c) => c.html(dashboardHtmlCache));
-
-	// ── Health ──────────────────────────────────────────────
-
-	app.get("/health", async (c) => {
-		// Calculate uptime in seconds
-		const uptimeSeconds = Math.floor((Date.now() - serverStartTime) / 1000);
-
-		// Get provider statuses for counts
-		const providers = await router.getProviderStatuses();
-		const availableCount = providers.filter((p) => p.available).length;
-
-		// Detect auth mode
-		const authMode = config.authToken ? "bearer" : "disabled";
-
-		// Detect Anthropic subscription tier
-		const subscription = detectAnthropicSubscription(vault);
-
-		return c.json({
-			status: "ok",
-			version: VERSION,
-			timestamp: new Date().toISOString(),
-			uptime: uptimeSeconds,
-			auth: {
-				enabled: !!config.authToken,
-				mode: authMode,
-			},
-			providers: {
-				total: providers.length,
-				available: availableCount,
-			},
-			subscription: {
-				anthropic: subscription,
-			},
-			mode: "proxy",
-		});
+	registerPublicRoutes(app, {
+		router,
+		vault,
+		config,
+		serverStartTime,
 	});
 
 	registerObservabilityRoutes(app, {

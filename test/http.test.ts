@@ -101,6 +101,56 @@ async function request(
   });
 }
 
+async function requestText(
+  method: string,
+  path: string,
+): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path,
+        method,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: data,
+            headers: res.headers,
+          });
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// ── Dashboard/auth shell endpoints ────────────────────────
+
+describe('GET /', () => {
+  it('returns the dashboard shell HTML', async () => {
+    const res = await requestText('GET', '/');
+    assert.equal(res.status, 200);
+    assert.match(String(res.headers['content-type']), /text\/html/);
+    assert.match(res.body, /<!DOCTYPE html>/);
+    assert.match(res.body, /LLM Gateway/);
+  });
+});
+
+describe('GET /v1/admin/auth-config', () => {
+  it('returns the public auth bootstrap config shape', async () => {
+    const res = await request('GET', '/v1/admin/auth-config');
+    assert.equal(res.status, 200);
+    const data = res.data as { githubOauth: boolean };
+    assert.equal(typeof data.githubOauth, 'boolean');
+  });
+});
+
 // ── Health endpoint ──────────────────────────────────────────
 
 describe('GET /health', () => {
