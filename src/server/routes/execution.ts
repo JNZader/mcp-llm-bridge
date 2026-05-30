@@ -17,12 +17,15 @@ import type { Vault } from "../../vault/vault.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import type { LogContext } from "../../logging/types.js";
 import {
-	getHeaderProject,
 	getValidationIssue,
 	jsonChatInvalidRequestError,
 	jsonChatValidationError,
 	jsonGenerateValidationError,
 } from "../http-helpers/request-validation.js";
+import {
+	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
+	prepareChatGenerateRequest,
+} from "../http-helpers/chat-request.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 
 export interface ExecutionRouteDeps {
@@ -462,48 +465,16 @@ export function registerExecutionRoutes(
 				);
 			}
 
-			const systemMessages = optimizedMessages
-				.filter((m) => m.role === "system")
-				.map((m) => (typeof m.content === "string" ? m.content : ""))
-				.filter(Boolean);
-			const system =
-				systemMessages.length > 0 ? systemMessages.join("\n") : undefined;
-
-			const conversationMessages = optimizedMessages.filter(
-				(m) => m.role !== "system",
-			);
-			const lastUserMessage = [...conversationMessages]
-				.reverse()
-				.find((m) => m.role === "user");
-
-			if (!lastUserMessage) {
-				return c.json(
-					{
-						error: {
-							message: "At least one user message is required",
-							type: "invalid_request_error",
-							param: "messages",
-							code: null,
-						},
-					},
-					400,
-				);
+			let generateRequest;
+			try {
+				generateRequest = prepareChatGenerateRequest(canonicalRequest, c);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (message === CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED) {
+					return jsonChatInvalidRequestError(c, message, "messages");
+				}
+				throw error;
 			}
-
-			const earlierMessages = conversationMessages.slice(0, -1);
-			let prompt =
-				typeof lastUserMessage.content === "string" ? lastUserMessage.content : "";
-			if (earlierMessages.length > 0) {
-				const context = earlierMessages
-					.map(
-						(m) =>
-							`${m.role}: ${typeof m.content === "string" ? m.content : ""}`,
-					)
-					.join("\n");
-				prompt = `${context}\nuser: ${prompt}`;
-			}
-
-			const headerProject = getHeaderProject(c);
 
 			logCtx = requestLogger?.captureStart({
 				provider: "unknown",
@@ -511,13 +482,7 @@ export function registerExecutionRoutes(
 				startTime: Date.now(),
 			});
 
-			const result = await router.generate({
-				prompt,
-				system,
-				model: canonicalRequest.model,
-				maxTokens: canonicalRequest.max_tokens,
-				project: headerProject,
-			});
+			const result = await router.generate(generateRequest);
 
 			if (logCtx && requestLogger) {
 				await requestLogger.captureEnd(logCtx, {
