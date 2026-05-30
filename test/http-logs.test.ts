@@ -13,7 +13,7 @@ import http from 'node:http';
 import Database from 'better-sqlite3';
 
 import { Vault } from '../src/vault/vault.js';
-import { Router } from '../src/core/router.js';
+import { getCircuitBreakerV2, resetCircuitBreakerV2, Router } from '../src/core/router.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
@@ -462,6 +462,46 @@ describe('GET /v1/logs', () => {
   });
 
   describe('Streaming request logging', () => {
+    it('records streaming circuit-breaker success against the resolved model', async () => {
+      resetCircuitBreakerV2();
+      const requestedModel = 'stream-requested-model';
+      const resolvedModel = 'stream-resolved-model';
+      const originalResolveStreamingProvider = router.resolveStreamingProvider.bind(router);
+
+      (router as any).resolveStreamingProvider = async () => ({
+        provider: { id: 'mock-stream-provider' },
+        request: { model: resolvedModel, messages: [] },
+        streamTransformer: {
+          name: 'mock-stream-provider',
+          async *transformStream() {
+            yield { content: 'Hello', done: false };
+            yield { content: '', done: true, finishReason: 'stop' };
+          },
+        },
+      });
+
+      try {
+        const res = await requestText('POST', '/v1/chat/completions', {
+          body: {
+            model: requestedModel,
+            messages: [{ role: 'user', content: 'Hello breaker' }],
+            stream: true,
+          },
+        });
+
+        assert.equal(res.status, 200);
+
+        const breaker = getCircuitBreakerV2();
+        assert.equal(
+          breaker.getState('mock-stream-provider', 'default', requestedModel),
+          null,
+        );
+        assert.ok(breaker.getState('mock-stream-provider', 'default', resolvedModel));
+      } finally {
+        (router as any).resolveStreamingProvider = originalResolveStreamingProvider;
+      }
+    });
+
     it('logs successful streaming completions', async () => {
       const streamModel = 'stream-success-model';
       const originalResolveStreamingProvider = router.resolveStreamingProvider.bind(router);

@@ -802,4 +802,48 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(result.content, 'first-response');
     assert.equal(result.metadata?.['provider'], 'first');
   });
+
+  it('resolveStreamingProvider applies local-llm precedence when ModelRouter returns null', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'cli',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+    router.setTransformerRegistry(registry);
+    router.setModelRouter(createMockModelRouter({ enabled: true, decision: null }));
+
+    registry.registerStreamOutbound('cloud', {
+      name: 'cloud',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+    registry.registerStreamOutbound('local-llm', {
+      name: 'local-llm',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+
+    const resolved = await router.resolveStreamingProvider({
+      messages: [{ role: 'user', content: 'summarize this' }],
+    });
+
+    assert.ok(resolved);
+    assert.equal(resolved?.provider.id, 'local-llm');
+    assert.equal(resolved?.request.metadata?.provider, 'local-llm');
+  });
 });

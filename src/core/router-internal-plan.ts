@@ -7,6 +7,7 @@ import type { RoutingDecision } from '../model-routing/types.js';
 import type { TaskClassification } from '../classification/index.js';
 import type { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 import { classify } from '../classification/index.js';
+import { classifyForOffload } from '../local-llm/router.js';
 import { optimizeMessages } from '../transformers/three-part-prompt.js';
 import {
   prioritizeEndpointCandidate,
@@ -88,6 +89,21 @@ export async function buildInternalRoutingPlan(
         orderedCandidates = routedCandidates;
       } else {
         logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
+      }
+    }
+  }
+
+  const requestedProvider = optimizedRequest.metadata?.['provider'] as string | undefined;
+  if (!requestedProvider && !modelRouterDecision) {
+    const offloadClassification = classifyForOffload(extractPromptFromInternal(optimizedRequest));
+    if (offloadClassification.shouldOffload) {
+      const localIndex = orderedCandidates.findIndex((provider) => provider.id === 'local-llm');
+      if (localIndex > 0) {
+        const localProvider = orderedCandidates[localIndex]!;
+        orderedCandidates = [
+          localProvider,
+          ...orderedCandidates.filter((_, index) => index !== localIndex),
+        ];
       }
     }
   }

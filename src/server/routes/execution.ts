@@ -191,13 +191,14 @@ function handleStreamingRequest(
 			}
 
 			const { provider, request: resolvedRequest, streamTransformer } = resolved;
+			let breakerModel = resolvedRequest.model || model || "unknown";
 			if (logCtx) {
 				logCtx.provider = provider.id;
-				logCtx.model = resolvedRequest.model || model || "unknown";
+				logCtx.model = breakerModel;
 			}
 			const streamRecorder = costTracker?.recordStream(
 				provider.id,
-				resolvedRequest.model || model || "unknown",
+				breakerModel,
 				project,
 			);
 
@@ -222,6 +223,9 @@ function handleStreamingRequest(
 					}
 					if (chunk.model && logCtx) {
 						logCtx.model = chunk.model;
+						breakerModel = chunk.model;
+					} else if (chunk.model) {
+						breakerModel = chunk.model;
 					}
 
 					await stream.writeSSE({
@@ -255,7 +259,7 @@ function handleStreamingRequest(
 				}
 
 				await stream.writeSSE({ data: "[DONE]" });
-				getCircuitBreakerV2().recordSuccess(provider.id, "default", model);
+				getCircuitBreakerV2().recordSuccess(provider.id, "default", breakerModel);
 				streamRecorder?.finish();
 				await finalizeRequestLog({
 					inputTokens,
@@ -267,7 +271,7 @@ function handleStreamingRequest(
 					},
 				});
 			} catch (error) {
-				getCircuitBreakerV2().recordFailure(provider.id, "default", model);
+				getCircuitBreakerV2().recordFailure(provider.id, "default", breakerModel);
 				const message = error instanceof Error ? error.message : String(error);
 				streamRecorder?.finish(message);
 				await finalizeRequestLog({
