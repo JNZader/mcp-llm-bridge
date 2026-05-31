@@ -41,6 +41,7 @@ import {
 } from "./server/mcp.js";
 import { Vault } from "./vault/index.js";
 import { migrate } from "./db/migrate.js";
+import { getMaxComparisonCostUsdFromEnv } from "./core/comparison-config.js";
 
 // Populate the transformer registry with all inbound/outbound transformers
 import "./transformers/index.js";
@@ -144,9 +145,7 @@ async function setupGracefulShutdown(vault: Vault): Promise<void> {
 await setupGracefulShutdown(vault);
 
 // Initialize comparison service
-const maxComparisonCostUsd = parseFloat(
-	process.env["MAX_COMPARISON_COST_USD"] ?? "1.0",
-);
+const maxComparisonCostUsd = getMaxComparisonCostUsdFromEnv();
 const { comparisonStore } = createComparisonServices({
 	db,
 	dbPath: config.dbPath,

@@ -9,6 +9,10 @@
 import { randomUUID } from "node:crypto";
 import type { InternalLLMRequest } from "../core/internal-model.js";
 import { logger } from "../core/logger.js";
+import {
+	getMaxComparisonCostUsdFromEnv,
+	parseMaxComparisonCostUsd,
+} from "../core/comparison-config.js";
 import { calculateCost, estimateCost } from "../core/pricing.js";
 import type { Router } from "../core/router.js";
 import type { FreeModelRegistry } from "../free-models/registry.js";
@@ -53,13 +57,11 @@ export class CostExceededError extends Error {
  * Resolve the server-wide cost ceiling from options or env.
  */
 function resolveMaxCostCeiling(options?: ComparisonServiceOptions): number {
-	if (options?.maxCostCeiling !== undefined) return options.maxCostCeiling;
-	const envVal = process.env["MAX_COMPARISON_COST_USD"];
-	if (envVal) {
-		const parsed = parseFloat(envVal);
-		if (!isNaN(parsed) && parsed > 0) return parsed;
+	if (options?.maxCostCeiling !== undefined) {
+		return parseMaxComparisonCostUsd(options.maxCostCeiling);
 	}
-	return 1.0; // Default $1.00
+
+	return getMaxComparisonCostUsdFromEnv();
 }
 
 export class ComparisonService {
