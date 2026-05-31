@@ -110,6 +110,9 @@ export async function handleToolCall(
  * Router and Vault instances.
  */
 export async function startMcpServer(deps: StartMcpServerDeps): ReturnType<typeof startMcpServerBootstrap>;
+/**
+ * @deprecated Pass a single options object instead: `startMcpServer({ router, vault, ... })`.
+ */
 export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore, pageIndexTools?: PageIndexTools): ReturnType<typeof startMcpServerBootstrap>;
 export async function startMcpServer(
   routerOrDeps: Router | StartMcpServerDeps,
@@ -123,20 +126,28 @@ export async function startMcpServer(
   approvalStore?: ApprovalStore,
   pageIndexTools?: PageIndexTools,
 ) {
-  const options = isStartMcpServerDeps(routerOrDeps)
-    ? routerOrDeps
-    : {
-        router: routerOrDeps,
-        vault: vault!,
-        groupStore,
-        costTracker,
-        bridge,
-        codeSearch,
-        stateManager,
-        securityProfile,
-        approvalStore,
-        pageIndexTools,
-      };
+  let options: StartMcpServerDeps;
+
+  if (isStartMcpServerDeps(routerOrDeps)) {
+    options = routerOrDeps;
+  } else {
+    if (!vault) {
+      throw new TypeError('startMcpServer(router, vault, ...) requires a vault instance; use startMcpServer({ router, vault, ... }) instead.');
+    }
+
+    options = {
+      router: routerOrDeps,
+      vault,
+      groupStore,
+      costTracker,
+      bridge,
+      codeSearch,
+      stateManager,
+      securityProfile,
+      approvalStore,
+      pageIndexTools,
+    };
+  }
 
   return startMcpServerBootstrap({
     ...options,

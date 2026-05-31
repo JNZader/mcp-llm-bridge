@@ -106,7 +106,7 @@ describe('MCP dynamic server startup', () => {
     try {
       process.chdir(appRoot);
 
-      server = await startMcpServer(router, vault);
+      server = await startMcpServer({ router, vault });
       assert.ok(server, 'server should start');
 
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -152,7 +152,7 @@ describe('MCP dynamic server startup', () => {
     `;
     await writeFile(join(tempDir, 'test.mcp-server.js'), pluginContent, 'utf-8');
 
-    server = await startMcpServer(router, vault);
+    server = await startMcpServer({ router, vault });
     assert.ok(server, 'server should start');
 
     // Wait for async plugin loading
@@ -184,7 +184,7 @@ describe('MCP dynamic server startup', () => {
       await rm(join(tempDir, file), { recursive: true, force: true });
     }
 
-    server = await startMcpServer(router, vault);
+    server = await startMcpServer({ router, vault });
     assert.ok(server, 'server should start without crashing');
 
     // Wait for async plugin loading
@@ -232,7 +232,7 @@ describe('Dynamic tool execution', () => {
     `;
     await writeFile(join(tempDir, 'exec.mcp-server.js'), pluginContent, 'utf-8');
 
-    server = await startMcpServer(router, vault);
+    server = await startMcpServer({ router, vault });
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     const result = await handleToolCall('dynamic_echo', { msg: 'hi' }, router, vault);
@@ -276,7 +276,7 @@ describe('Dynamic tool security profiles', () => {
     const enforcer = new ProfileEnforcer('restricted');
     enforcer.registerDynamicTool('dynamic_admin', 'admin');
 
-    server = await startMcpServer(router, vault, undefined, undefined, undefined, undefined, undefined, 'restricted');
+    server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     // With the enforcer passed to handleToolCall, the tool should be blocked
