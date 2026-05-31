@@ -326,6 +326,10 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(result.provider, 'first');
     // fallbackUsed is false because the first provider is tried at index 0
     assert.equal(result.fallbackUsed, false);
+    assert.equal(result.routing?.strategy, 'standard');
+    assert.equal(result.routing?.matchedRuleId, undefined);
+    assert.equal(result.routing?.selectedEndpointId, undefined);
+    assert.equal(result.routing?.decisionReason, 'Resolved by standard provider ordering');
   });
 
   it('falls back to default order when ModelRouter provider cannot be resolved', async () => {
@@ -358,6 +362,10 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(result.text, 'from-first');
     assert.equal(result.provider, 'first');
     assert.equal(result.fallbackUsed, false);
+    assert.equal(result.routing?.strategy, 'standard');
+    assert.equal(result.routing?.matchedRuleId, undefined);
+    assert.equal(result.routing?.selectedEndpointId, undefined);
+    assert.equal(result.routing?.decisionReason, 'Resolved by standard provider ordering');
   });
 
   // ── 4. Feedback recorded on success ──

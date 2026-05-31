@@ -259,6 +259,7 @@ export class Router {
 
     // ── Model Routing: classify and route to optimal endpoint ──
     let modelRouterDecision: RoutingDecision | null = null;
+    let appliedModelRouterDecision: RoutingDecision | null = null;
     let classification: TaskClassification | null = null;
     let offloadClassification: TaskClassification | null = null;
     if (this._modelRouter && this._modelRouter.enabled && !request.provider && !request.strict) {
@@ -271,6 +272,7 @@ export class Router {
         );
         if (routedCandidates) {
           candidates = routedCandidates;
+          appliedModelRouterDecision = modelRouterDecision;
         } else {
           logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
         }
@@ -339,11 +341,15 @@ export class Router {
         false,
         latencyMs,
         buildRoutingMetadata(result, false, {
-          strategy: determineRoutingStrategy(request, modelRouterDecision, offloadClassification),
+          strategy: determineRoutingStrategy(request, appliedModelRouterDecision, offloadClassification),
           attemptedProviders,
           classification: classification ?? offloadClassification,
-          modelRouterDecision,
-          decisionReason: determineDecisionReason(request, modelRouterDecision, offloadClassification),
+          modelRouterDecision: appliedModelRouterDecision,
+          decisionReason: determineDecisionReason(
+            request,
+            appliedModelRouterDecision,
+            offloadClassification,
+          ),
         }),
       );
     }
@@ -401,11 +407,15 @@ export class Router {
         attemptedResult.index > 0,
         latencyMs,
         buildRoutingMetadata(attemptedResult.result, attemptedResult.index > 0, {
-          strategy: determineRoutingStrategy(request, modelRouterDecision, offloadClassification),
+          strategy: determineRoutingStrategy(request, appliedModelRouterDecision, offloadClassification),
           attemptedProviders,
           classification: classification ?? offloadClassification,
-          modelRouterDecision,
-          decisionReason: determineDecisionReason(request, modelRouterDecision, offloadClassification),
+          modelRouterDecision: appliedModelRouterDecision,
+          decisionReason: determineDecisionReason(
+            request,
+            appliedModelRouterDecision,
+            offloadClassification,
+          ),
         }),
       );
     }
@@ -423,10 +433,10 @@ export class Router {
           true,
           latencyMs,
           buildRoutingMetadata(freeResult, true, {
-            strategy: determineRoutingStrategy(request, modelRouterDecision, offloadClassification),
+            strategy: determineRoutingStrategy(request, appliedModelRouterDecision, offloadClassification),
             attemptedProviders,
             classification: classification ?? offloadClassification,
-            modelRouterDecision,
+            modelRouterDecision: appliedModelRouterDecision,
             decisionReason: 'All paid providers failed; free model fallback succeeded',
           }),
         );
