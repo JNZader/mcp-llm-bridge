@@ -9,7 +9,7 @@ import { VERSION } from '../../../core/constants.js';
 import type { CostTracker } from '../../../core/cost-tracker.js';
 import type { GroupStore } from '../../../core/groups.js';
 import type { Router } from '../../../core/router.js';
-import type { SessionManager } from '../../../session/session-manager.js';
+import type { SessionManager } from '../../../session/index.js';
 import { SESSION_ENTRY_KIND } from '../../../session/types.js';
 
 export interface AdminDashboardRouteDeps {

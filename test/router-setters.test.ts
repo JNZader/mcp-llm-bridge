@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { Router } from '../src/core/router.js';
 import { ModelRouter } from '../src/model-routing/router.js';
-import { SessionManager } from '../src/session/session-manager.js';
+import { SessionManager } from '../src/session/index.js';
 
 describe('Router setters', () => {
   it('setModelRouter stores and retrieves ModelRouter', () => {

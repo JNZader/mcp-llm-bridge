@@ -5,7 +5,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { SessionManager } from '../src/session/session-manager.js';
+import { SessionManager } from '../src/session/index.js';
 import { SESSION_ENTRY_KIND, type SessionDashboardMetrics } from '../src/session/types.js';
 
 describe('SessionManager', () => {

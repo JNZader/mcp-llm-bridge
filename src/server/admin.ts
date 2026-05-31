@@ -15,7 +15,7 @@ import type { Vault } from '../vault/vault.js';
 import type { GroupStore } from '../core/groups.js';
 import type { CostTracker } from '../core/cost-tracker.js';
 import type { GatewayConfig } from '../core/types.js';
-import type { SessionManager } from '../session/session-manager.js';
+import type { SessionManager } from '../session/index.js';
 import { parseBearerToken, tokenEquals } from './auth-helpers/bearer.js';
 import { registerAdminApiKeyRoutes } from './routes/admin/api-keys.js';
 import { registerAdminDiscoveryRoutes } from './routes/admin/discovery.js';

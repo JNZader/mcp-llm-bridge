@@ -12,7 +12,7 @@ import type {
   ModelInfo,
   ProviderType,
 } from '../src/core/types.js';
-import { SessionManager } from '../src/session/session-manager.js';
+import { SessionManager } from '../src/session/index.js';
 
 function createMockProvider(opts: {
   id: string;

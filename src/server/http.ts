@@ -34,7 +34,7 @@ import type { FreeModelRouter } from "../free-models/router.js";
 import type { LatencyMeasurer } from "../latency/index.js";
 import type { Vault } from "../vault/vault.js";
 import type { AnalyticsAggregator } from "../analytics/index.js";
-import type { SessionManager } from "../session/session-manager.js";
+import type { SessionManager } from "../session/index.js";
 import type { RequestLogger } from "../logging/request-logger.js";
 import { registerAdminRoutes } from "./admin.js";
 import { RateLimiter } from "./rate-limit.js";

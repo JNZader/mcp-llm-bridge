@@ -25,7 +25,7 @@ import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.j
 import type { TransformerRegistry } from './transformer.js';
 import type { StreamingOutboundTransformer } from '../transformers/streaming.js';
 import type { GroupStore } from './groups.js';
-import type { SessionManager } from '../session/session-manager.js';
+import type { SessionManager } from '../session/index.js';
 import type { CostTracker } from './cost-tracker.js';
 import type { FreeModelRouter } from '../free-models/router.js';
 import type { LatencyMeasurer } from '../latency/measurer.js';

@@ -24,7 +24,7 @@ import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { GroupStore } from '../src/core/groups.js';
 import { CostTracker } from '../src/core/cost-tracker.js';
-import { SessionManager } from '../src/session/session-manager.js';
+import { SessionManager } from '../src/session/index.js';
 import {
   getCircuitBreakerV2,
   resetCircuitBreakerV2,

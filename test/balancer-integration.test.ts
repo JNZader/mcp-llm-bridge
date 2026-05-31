@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Router } from '../src/core/router.js';
 import { GroupStore } from '../src/core/groups.js';
-import { SessionManager } from '../src/session/session-manager.js';
+import { SessionManager } from '../src/session/index.js';
 import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../src/core/types.js';
 
 // ── Mock Provider ──────────────────────────────────────────
