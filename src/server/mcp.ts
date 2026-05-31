@@ -22,6 +22,7 @@ import { TOOLS } from './mcp-tool-registry.js';
 import {
   dynamicToolAdapter,
   getRuntimeMcpTools,
+  type StartMcpServerOptions,
   startMcpServer as startMcpServerBootstrap,
 } from './mcp-server.js';
 import { dispatchToolCall } from './mcp-dispatcher.js';
@@ -30,6 +31,14 @@ import { dispatchToolCall } from './mcp-dispatcher.js';
 const COMPRESSION_THRESHOLD = 1000;
 
 export { TOOLS, dynamicToolAdapter, getRuntimeMcpTools };
+
+export type StartMcpServerDeps = Omit<StartMcpServerOptions, 'handleToolCall'>;
+
+function isStartMcpServerDeps(
+  value: Router | StartMcpServerDeps,
+): value is StartMcpServerDeps {
+  return typeof value === 'object' && value !== null && 'router' in value && 'vault' in value;
+}
 
 /**
  * Handle a tool call by dispatching to the appropriate router/vault method.
@@ -100,18 +109,37 @@ export async function handleToolCall(
  * Registers all LLM and vault tools, connecting them to the shared
  * Router and Vault instances.
  */
-export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore, pageIndexTools?: PageIndexTools) {
+export async function startMcpServer(deps: StartMcpServerDeps): ReturnType<typeof startMcpServerBootstrap>;
+export async function startMcpServer(router: Router, vault: Vault, groupStore?: GroupStore, costTracker?: CostTracker, bridge?: BridgeOrchestrator | null, codeSearch?: CodeSearchService | null, stateManager?: StateManager | null, securityProfile?: TrustLevel, approvalStore?: ApprovalStore, pageIndexTools?: PageIndexTools): ReturnType<typeof startMcpServerBootstrap>;
+export async function startMcpServer(
+  routerOrDeps: Router | StartMcpServerDeps,
+  vault?: Vault,
+  groupStore?: GroupStore,
+  costTracker?: CostTracker,
+  bridge?: BridgeOrchestrator | null,
+  codeSearch?: CodeSearchService | null,
+  stateManager?: StateManager | null,
+  securityProfile?: TrustLevel,
+  approvalStore?: ApprovalStore,
+  pageIndexTools?: PageIndexTools,
+) {
+  const options = isStartMcpServerDeps(routerOrDeps)
+    ? routerOrDeps
+    : {
+        router: routerOrDeps,
+        vault: vault!,
+        groupStore,
+        costTracker,
+        bridge,
+        codeSearch,
+        stateManager,
+        securityProfile,
+        approvalStore,
+        pageIndexTools,
+      };
+
   return startMcpServerBootstrap({
-    router,
-    vault,
-    groupStore,
-    costTracker,
-    bridge,
-    codeSearch,
-    stateManager,
-    securityProfile,
-    approvalStore,
-    pageIndexTools,
+    ...options,
     handleToolCall,
   });
 }

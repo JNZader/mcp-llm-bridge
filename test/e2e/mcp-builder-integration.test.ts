@@ -60,7 +60,7 @@ describe('MCP dynamic server startup', () => {
     process.env.MCP_DYNAMIC_SERVERS = 'false';
     delete process.env.MCP_SERVERS_DIR;
 
-    server = await startMcpServer(router, vault);
+    server = await startMcpServer({ router, vault });
     assert.ok(server, 'server should start');
 
     // Verify no dynamic tools by calling a non-existent dynamic tool

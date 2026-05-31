@@ -48,7 +48,10 @@ import {
 	startHttpServerWithDeps,
 	type StartHttpServerDeps,
 } from "./server/http.js";
-import { startMcpServer } from "./server/mcp.js";
+import {
+	startMcpServer,
+	type StartMcpServerDeps,
+} from "./server/mcp.js";
 import { Vault } from "./vault/index.js";
 import { migrate } from "./db/migrate.js";
 import { createPageIndex } from "./pageindex/index.js";
@@ -283,6 +286,20 @@ function buildHttpServerDeps(): StartHttpServerDeps {
 	};
 }
 
+function buildMcpServerDeps(): StartMcpServerDeps {
+	return {
+		router,
+		vault,
+		costTracker,
+		bridge,
+		codeSearch,
+		stateManager,
+		securityProfile: config.securityProfile,
+		approvalStore,
+		pageIndexTools,
+	};
+}
+
 function startServeMode(): void {
 	startHttpServerWithDeps(buildHttpServerDeps());
 }
@@ -292,18 +309,7 @@ function startHttpOnlyMode(): void {
 }
 
 async function startDefaultMcpMode(): Promise<void> {
-	await startMcpServer(
-		router,
-		vault,
-		undefined,
-		costTracker,
-		bridge,
-		codeSearch,
-		stateManager,
-		config.securityProfile,
-		approvalStore,
-		pageIndexTools,
-	);
+	await startMcpServer(buildMcpServerDeps());
 }
 
 if (mode === "serve") {
