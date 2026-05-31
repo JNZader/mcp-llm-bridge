@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { Vault } from '../../src/vault/vault.js';
 import { Router } from '../../src/core/router.js';
 import { createAllAdapters } from '../../src/adapters/index.js';
+import { bootstrapModelRouting } from '../../src/bootstrap/model-routing.js';
 import type { GatewayConfig } from '../../src/core/types.js';
 
 // ── Paths ──────────────────────────────────────────────────
@@ -52,15 +53,9 @@ async function bootstrapServer(modelRoutingEnabled: boolean) {
     router.register(adapter);
   }
 
-  // Mirror the exact conditional from src/index.ts
+  // Mirror the exact wiring from src/index.ts after providers are registered.
   if (modelRoutingEnabled) {
-    const { bootstrapModelRouter } = await import(
-      '../../src/model-routing/index.js'
-    );
-    const modelRouter = bootstrapModelRouter(router.providers);
-    if (modelRouter) {
-      router.setModelRouter(modelRouter);
-    }
+    await bootstrapModelRouting(router);
   }
 
   return { router, vault, dbPath: config.dbPath };

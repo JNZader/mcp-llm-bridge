@@ -23,6 +23,7 @@ import {
 	createCoreServices,
 	createToolingServices,
 } from "./bootstrap/core-services.js";
+import { bootstrapModelRouting } from "./bootstrap/model-routing.js";
 import { loadConfig } from "./core/config.js";
 import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
@@ -31,7 +32,6 @@ import {
 	freeModelCatalogEnabled,
 	latencyRoutingEnabled,
 	localLLMEnabled,
-	modelRoutingEnabled,
 } from "./core/runtime-flags.js";
 import { Router } from "./core/router.js";
 import { SessionManager } from "./session/index.js";
@@ -134,17 +134,7 @@ if (latencyRouting) {
 }
 
 // ── Model Routing ───────────────────────────────────────
-const modelRouting = modelRoutingEnabled();
-if (modelRouting) {
-	const { bootstrapModelRouter } = await import("./model-routing/index.js");
-	const modelRouter = bootstrapModelRouter(router.providers);
-	if (modelRouter) {
-		router.setModelRouter(modelRouter);
-		logger.info("Model routing enabled");
-	} else {
-		logger.warn("Model routing config missing or disabled");
-	}
-}
+await bootstrapModelRouting(router);
 
 // Initialize bridge orchestrator (opt-in via bridge.yaml config)
 const bridgeConfig = loadBridgeConfig();
