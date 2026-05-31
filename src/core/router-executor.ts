@@ -23,6 +23,7 @@ type RecordModelFeedbackFn = (
   classification: TaskClassification,
   success: boolean,
   latencyMs: number,
+  selectedEndpointId?: string,
 ) => void;
 
 type LogGenerateFailureFn = (context: {
@@ -162,7 +163,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
           true,
         );
         if (classification) {
-          recordModelFeedback(feedbackEndpointId, classification, true, latencyMs);
+          recordModelFeedback(feedbackEndpointId, classification, true, latencyMs, routedEndpoint?.id);
         }
         return response;
       } catch (error) {
@@ -171,7 +172,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         const latencyMs = Date.now() - startTime;
         recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
         if (classification) {
-          recordModelFeedback(feedbackEndpointId, classification, false, latencyMs);
+          recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
         }
         logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed (CLI transformer)');
         throw error;
@@ -218,7 +219,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
 
     recordUsage(provider.id, result.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
     if (classification) {
-      recordModelFeedback(feedbackEndpointId, classification, true, latencyMs);
+      recordModelFeedback(feedbackEndpointId, classification, true, latencyMs, routedEndpoint?.id);
     }
     return response;
   } catch (error) {
@@ -227,7 +228,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     const latencyMs = Date.now() - startTime;
     recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
     if (classification) {
-      recordModelFeedback(feedbackEndpointId, classification, false, latencyMs);
+      recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
     }
     logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Provider failed');
     throw error;
@@ -273,6 +274,7 @@ export async function executeGenerateAttempt(
         classification,
         true,
         latencyMs,
+        routedEndpoint?.id,
       );
     }
     return result;
@@ -287,6 +289,7 @@ export async function executeGenerateAttempt(
         classification,
         false,
         latencyMs,
+        routedEndpoint?.id,
       );
     }
 

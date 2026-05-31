@@ -180,8 +180,9 @@ describe('ModelRouter', () => {
     it('skips model with low quality stats', () => {
       // Feed bad quality data for local-llama on commit messages
       for (let i = 0; i < 10; i++) {
-        router.recordFeedback({
+      router.recordFeedback({
           endpointId: 'local-llama',
+          selectedEndpointId: 'local-llama',
           taskPattern: 'commit-message',
           acceptable: false,
           latencyMs: 100,
@@ -204,6 +205,7 @@ describe('ModelRouter', () => {
     it('returns quality stats for tracked endpoint', () => {
       router.recordFeedback({
         endpointId: 'local-llama',
+        selectedEndpointId: 'local-llama',
         taskPattern: 'commit-message',
         acceptable: true,
         latencyMs: 200,
@@ -211,6 +213,7 @@ describe('ModelRouter', () => {
       });
       router.recordFeedback({
         endpointId: 'local-llama',
+        selectedEndpointId: 'local-llama',
         taskPattern: 'commit-message',
         acceptable: false,
         latencyMs: 300,
@@ -264,31 +267,145 @@ describe('ModelRouter', () => {
         reason: 'test',
       });
 
+      router.recordFeedback({
+        endpointId: 'local-llama',
+        selectedEndpointId: 'local-llama',
+        taskPattern: 'commit-message',
+        acceptable: true,
+        latencyMs: 120,
+        timestamp: new Date().toISOString(),
+      });
+      router.recordFeedback({
+        endpointId: 'groq-llama',
+        selectedEndpointId: 'groq-llama',
+        taskPattern: 'commit-message',
+        acceptable: false,
+        latencyMs: 200,
+        timestamp: new Date().toISOString(),
+      });
+
       const snapshot = router.getStatsSnapshot();
       assert.equal(snapshot.enabled, true);
       assert.equal(snapshot.totalDecisions, 2);
+      assert.equal(snapshot.successCount, 1);
+      assert.equal(snapshot.failureCount, 1);
+      assert.equal(snapshot.acceptanceRate, 0.5);
+      assert.equal(snapshot.avgLatencyMs, 160);
+      assert.equal(snapshot.fallbackAfterSelectionCount, 0);
       assert.deepEqual(snapshot.byEndpointTask, [
         {
           endpointId: 'groq-llama',
           taskPattern: 'commit-message',
           totalDecisions: 1,
           fallbackDecisions: 1,
+          successCount: 0,
+          failureCount: 1,
+          acceptanceRate: 0,
+          avgLatencyMs: 200,
+          fallbackAfterSelectionCount: 0,
+          executedEndpointCounts: [
+            {
+              endpointId: 'groq-llama',
+              count: 1,
+              successCount: 0,
+              failureCount: 1,
+            },
+          ],
           lastMatchedRuleId: 'commit-rule',
           lastReason: 'Fallback #1 for commit-message',
           lastSelectedAt: snapshot.byEndpointTask[0]!.lastSelectedAt,
+          lastExecutedEndpointId: 'groq-llama',
         },
         {
           endpointId: 'local-llama',
           taskPattern: 'commit-message',
           totalDecisions: 1,
           fallbackDecisions: 0,
+          successCount: 1,
+          failureCount: 0,
+          acceptanceRate: 1,
+          avgLatencyMs: 120,
+          fallbackAfterSelectionCount: 0,
+          executedEndpointCounts: [
+            {
+              endpointId: 'local-llama',
+              count: 1,
+              successCount: 1,
+              failureCount: 0,
+            },
+          ],
           lastMatchedRuleId: 'commit-rule',
           lastReason: 'Primary model for commit-message',
           lastSelectedAt: snapshot.byEndpointTask[1]!.lastSelectedAt,
+          lastExecutedEndpointId: 'local-llama',
         },
       ]);
       assert.equal(typeof snapshot.byEndpointTask[0]?.lastSelectedAt, 'string');
       assert.equal(typeof snapshot.byEndpointTask[1]?.lastSelectedAt, 'string');
+    });
+
+    it('tracks selected endpoint outcomes when execution falls back elsewhere', () => {
+      router.route({
+        task: 'commit-message',
+        confidence: 0.95,
+        shouldOffload: true,
+        reason: 'test',
+      });
+
+      const timestamp = new Date().toISOString();
+      router.recordFeedback({
+        endpointId: 'local-llama',
+        selectedEndpointId: 'local-llama',
+        taskPattern: 'commit-message',
+        acceptable: false,
+        latencyMs: 100,
+        timestamp,
+      });
+      router.recordFeedback({
+        endpointId: 'groq-llama',
+        selectedEndpointId: 'local-llama',
+        taskPattern: 'commit-message',
+        acceptable: true,
+        latencyMs: 250,
+        timestamp,
+      });
+
+      const snapshot = router.getStatsSnapshot();
+      assert.equal(snapshot.totalDecisions, 1);
+      assert.equal(snapshot.successCount, 1);
+      assert.equal(snapshot.failureCount, 1);
+      assert.equal(snapshot.fallbackAfterSelectionCount, 1);
+      assert.deepEqual(snapshot.byEndpointTask, [
+        {
+          endpointId: 'local-llama',
+          taskPattern: 'commit-message',
+          totalDecisions: 1,
+          fallbackDecisions: 0,
+          successCount: 1,
+          failureCount: 1,
+          acceptanceRate: 0.5,
+          avgLatencyMs: 175,
+          fallbackAfterSelectionCount: 1,
+          executedEndpointCounts: [
+            {
+              endpointId: 'groq-llama',
+              count: 1,
+              successCount: 1,
+              failureCount: 0,
+            },
+            {
+              endpointId: 'local-llama',
+              count: 1,
+              successCount: 0,
+              failureCount: 1,
+            },
+          ],
+          lastMatchedRuleId: 'commit-rule',
+          lastReason: 'Primary model for commit-message',
+          lastSelectedAt: snapshot.byEndpointTask[0]!.lastSelectedAt,
+          lastExecutedEndpointId: 'groq-llama',
+        },
+      ]);
     });
   });
 });

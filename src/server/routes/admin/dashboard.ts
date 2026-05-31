@@ -214,6 +214,11 @@ export function registerAdminDashboardRoutes(
         router.getModelRouterStats() ?? {
           enabled: false,
           totalDecisions: 0,
+          successCount: 0,
+          failureCount: 0,
+          acceptanceRate: 0,
+          avgLatencyMs: 0,
+          fallbackAfterSelectionCount: 0,
           byEndpointTask: [],
         },
       );

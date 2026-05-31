@@ -350,6 +350,14 @@ describe('GET /v1/admin/model-router/stats', () => {
       shouldOffload: true,
       reason: 'test',
     });
+    router.modelRouter?.recordFeedback({
+      endpointId: 'local-llama',
+      selectedEndpointId: 'local-llama',
+      taskPattern: 'summarization',
+      acceptable: true,
+      latencyMs: 150,
+      timestamp: new Date().toISOString(),
+    });
 
     const res = await request('GET', '/v1/admin/model-router/stats');
     assert.equal(res.status, 200);
@@ -357,22 +365,49 @@ describe('GET /v1/admin/model-router/stats', () => {
     const data = res.data as {
       enabled: boolean;
       totalDecisions: number;
+      successCount: number;
+      failureCount: number;
+      acceptanceRate: number;
+      avgLatencyMs: number;
+      fallbackAfterSelectionCount: number;
       byEndpointTask: Array<{
         endpointId: string;
         taskPattern: string;
         totalDecisions: number;
         fallbackDecisions: number;
+        successCount: number;
+        failureCount: number;
+        acceptanceRate: number;
+        avgLatencyMs: number;
+        fallbackAfterSelectionCount: number;
+        executedEndpointCounts: Array<{
+          endpointId: string;
+          count: number;
+          successCount: number;
+          failureCount: number;
+        }>;
         lastMatchedRuleId: string;
       }>;
     };
 
     assert.equal(data.enabled, true);
     assert.equal(data.totalDecisions, 1);
+    assert.equal(data.successCount, 1);
+    assert.equal(data.failureCount, 0);
+    assert.equal(data.acceptanceRate, 1);
+    assert.equal(data.avgLatencyMs, 150);
+    assert.equal(data.fallbackAfterSelectionCount, 0);
     assert.deepEqual(data.byEndpointTask.map((entry) => ({
       endpointId: entry.endpointId,
       taskPattern: entry.taskPattern,
       totalDecisions: entry.totalDecisions,
       fallbackDecisions: entry.fallbackDecisions,
+      successCount: entry.successCount,
+      failureCount: entry.failureCount,
+      acceptanceRate: entry.acceptanceRate,
+      avgLatencyMs: entry.avgLatencyMs,
+      fallbackAfterSelectionCount: entry.fallbackAfterSelectionCount,
+      executedEndpointCounts: entry.executedEndpointCounts,
       lastMatchedRuleId: entry.lastMatchedRuleId,
     })), [
       {
@@ -380,6 +415,19 @@ describe('GET /v1/admin/model-router/stats', () => {
         taskPattern: 'summarization',
         totalDecisions: 1,
         fallbackDecisions: 0,
+        successCount: 1,
+        failureCount: 0,
+        acceptanceRate: 1,
+        avgLatencyMs: 150,
+        fallbackAfterSelectionCount: 0,
+        executedEndpointCounts: [
+          {
+            endpointId: 'local-llama',
+            count: 1,
+            successCount: 1,
+            failureCount: 0,
+          },
+        ],
         lastMatchedRuleId: 'summary-rule',
       },
     ]);

@@ -94,6 +94,8 @@ export interface RoutingDecision {
 export interface QualityFeedback {
   /** Model endpoint ID that produced the response. */
   endpointId: string;
+  /** Originally selected model endpoint ID, if routing made a selection. */
+  selectedEndpointId?: string;
   /** Task pattern that was routed. */
   taskPattern: TaskType | '*';
   /** Whether the response met quality expectations. */
@@ -127,14 +129,33 @@ export interface ModelRouterEndpointTaskStats {
   taskPattern: TaskType | '*';
   totalDecisions: number;
   fallbackDecisions: number;
+  successCount: number;
+  failureCount: number;
+  acceptanceRate: number;
+  avgLatencyMs: number;
+  fallbackAfterSelectionCount: number;
+  executedEndpointCounts: ModelRouterExecutedEndpointStats[];
   lastMatchedRuleId: string;
   lastReason: string;
   lastSelectedAt: string;
+  lastExecutedEndpointId?: string;
+}
+
+export interface ModelRouterExecutedEndpointStats {
+  endpointId: string;
+  count: number;
+  successCount: number;
+  failureCount: number;
 }
 
 export interface ModelRouterStatsSnapshot {
   enabled: boolean;
   totalDecisions: number;
+  successCount: number;
+  failureCount: number;
+  acceptanceRate: number;
+  avgLatencyMs: number;
+  fallbackAfterSelectionCount: number;
   byEndpointTask: ModelRouterEndpointTaskStats[];
 }
 

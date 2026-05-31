@@ -73,7 +73,13 @@ function createMockProvider(opts: {
 function createMockModelRouter(opts: {
   enabled?: boolean;
   decision?: RoutingDecision | null;
-  onRecordFeedback?: (feedback: { endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }) => void;
+  onRecordFeedback?: (feedback: {
+    endpointId: string;
+    selectedEndpointId?: string;
+    taskPattern: string;
+    acceptable: boolean;
+    latencyMs: number;
+  }) => void;
   onRoute?: (classification: TaskClassification) => void;
 }): ModelRouter {
   return {
@@ -84,7 +90,14 @@ function createMockModelRouter(opts: {
       return opts.decision ?? null;
     },
 
-    recordFeedback(feedback: { endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number; timestamp: string }): void {
+    recordFeedback(feedback: {
+      endpointId: string;
+      selectedEndpointId?: string;
+      taskPattern: string;
+      acceptable: boolean;
+      latencyMs: number;
+      timestamp: string;
+    }): void {
       opts.onRecordFeedback?.(feedback);
     },
 
@@ -382,7 +395,13 @@ describe('Router + ModelRouter integration', () => {
       response: { text: 'smart-response', provider: providerId, model: 'smart-model', resolvedProvider: providerId, resolvedModel: 'smart-model', fallbackUsed: false },
     }));
 
-    const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
+    const feedbacks: Array<{
+      endpointId: string;
+      selectedEndpointId?: string;
+      taskPattern: string;
+      acceptable: boolean;
+      latencyMs: number;
+    }> = [];
 
     const decision: RoutingDecision = {
       endpoint: createMockEndpoint({ id: endpointId, provider: providerId, modelId: 'smart-model' }),
@@ -403,6 +422,7 @@ describe('Router + ModelRouter integration', () => {
 
     assert.equal(feedbacks.length, 1);
     assert.equal(feedbacks[0]!.endpointId, endpointId);
+    assert.equal(feedbacks[0]!.selectedEndpointId, endpointId);
     assert.equal(feedbacks[0]!.taskPattern, 'summarization');
     assert.equal(feedbacks[0]!.acceptable, true);
     assert.ok(typeof feedbacks[0]!.latencyMs === 'number');
@@ -430,7 +450,13 @@ describe('Router + ModelRouter integration', () => {
       response: { text: 'backup-response', provider: 'backup', model: 'backup-model', resolvedProvider: 'backup', resolvedModel: 'backup-model', fallbackUsed: false },
     }));
 
-    const feedbacks: Array<{ endpointId: string; taskPattern: string; acceptable: boolean; latencyMs: number }> = [];
+    const feedbacks: Array<{
+      endpointId: string;
+      selectedEndpointId?: string;
+      taskPattern: string;
+      acceptable: boolean;
+      latencyMs: number;
+    }> = [];
 
     const decision: RoutingDecision = {
       endpoint: createMockEndpoint({ id: endpointId }),
@@ -458,11 +484,13 @@ describe('Router + ModelRouter integration', () => {
 
     // First feedback is for the failing provider
     assert.equal(feedbacks[0]!.endpointId, endpointId);
+    assert.equal(feedbacks[0]!.selectedEndpointId, endpointId);
     assert.equal(feedbacks[0]!.taskPattern, 'summarization');
     assert.equal(feedbacks[0]!.acceptable, false);
 
     // Second feedback is for the backup provider
     assert.equal(feedbacks[1]!.endpointId, 'backup');
+    assert.equal(feedbacks[1]!.selectedEndpointId, endpointId);
     assert.equal(feedbacks[1]!.taskPattern, 'summarization');
     assert.equal(feedbacks[1]!.acceptable, true);
   });

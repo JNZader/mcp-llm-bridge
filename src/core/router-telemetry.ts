@@ -30,6 +30,7 @@ export interface RouterUsageRecordInput {
 
 export interface RouterModelFeedbackInput {
   endpointId: string;
+  selectedEndpointId?: string;
   classification: TaskClassification;
   success: boolean;
   latencyMs: number;
@@ -73,6 +74,7 @@ export interface RouterAttemptTelemetryCallbacks {
     classification: TaskClassification,
     success: boolean,
     latencyMs: number,
+    selectedEndpointId?: string,
   ) => void;
 }
 
@@ -143,6 +145,7 @@ export function recordModelFeedback(
   try {
     telemetry.modelRouter.recordFeedback({
       endpointId: input.endpointId,
+      selectedEndpointId: input.selectedEndpointId,
       taskPattern: input.classification.task,
       acceptable: input.success,
       latencyMs: input.latencyMs,
@@ -202,9 +205,10 @@ export function createAttemptTelemetryCallbacks(
         errorMessage,
       });
     },
-    recordModelFeedback: (endpointId, classification, success, latencyMs) => {
+    recordModelFeedback: (endpointId, classification, success, latencyMs, selectedEndpointId) => {
       recordModelFeedback(telemetry, {
         endpointId,
+        selectedEndpointId,
         classification,
         success,
         latencyMs,
@@ -249,6 +253,7 @@ export function createStreamingRecordResult(
           resolvedModel,
           options.routedEndpoint,
         ),
+        selectedEndpointId: options.routedEndpoint?.id,
         classification: options.classification,
         success,
         latencyMs,

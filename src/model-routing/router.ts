@@ -109,6 +109,7 @@ export class ModelRouter {
    */
   recordFeedback(feedback: QualityFeedback): void {
     this.feedbackLog.push(feedback);
+    this.recordOutcomeStats(feedback);
 
     // Keep only the last N entries per endpoint+task to bound memory
     const maxSize = this.config.qualityWindowSize * this.config.endpoints.length * 2;
@@ -179,20 +180,43 @@ export class ModelRouter {
   }
 
   getStatsSnapshot(): ModelRouterStatsSnapshot {
+    const byEndpointTask = Array.from(this.decisionStats.values())
+      .sort((a, b) => {
+        if (a.endpointId === b.endpointId) {
+          return a.taskPattern.localeCompare(b.taskPattern);
+        }
+        return a.endpointId.localeCompare(b.endpointId);
+      })
+      .map((stats) => ({
+        ...stats,
+        executedEndpointCounts: stats.executedEndpointCounts
+          .map((executed) => ({ ...executed }))
+          .sort((a, b) => a.endpointId.localeCompare(b.endpointId)),
+      }));
+    const successCount = byEndpointTask.reduce((sum, stats) => sum + stats.successCount, 0);
+    const failureCount = byEndpointTask.reduce((sum, stats) => sum + stats.failureCount, 0);
+    const totalOutcomes = successCount + failureCount;
+
     return {
       enabled: this.enabled,
-      totalDecisions: Array.from(this.decisionStats.values()).reduce(
+      totalDecisions: byEndpointTask.reduce(
         (sum, stats) => sum + stats.totalDecisions,
         0,
       ),
-      byEndpointTask: Array.from(this.decisionStats.values())
-        .sort((a, b) => {
-          if (a.endpointId === b.endpointId) {
-            return a.taskPattern.localeCompare(b.taskPattern);
-          }
-          return a.endpointId.localeCompare(b.endpointId);
-        })
-        .map((stats) => ({ ...stats })),
+      successCount,
+      failureCount,
+      acceptanceRate: totalOutcomes > 0 ? successCount / totalOutcomes : 0,
+      avgLatencyMs: totalOutcomes > 0
+        ? byEndpointTask.reduce(
+            (sum, stats) => sum + (stats.avgLatencyMs * (stats.successCount + stats.failureCount)),
+            0,
+          ) / totalOutcomes
+        : 0,
+      fallbackAfterSelectionCount: byEndpointTask.reduce(
+        (sum, stats) => sum + stats.fallbackAfterSelectionCount,
+        0,
+      ),
+      byEndpointTask,
     };
   }
 
@@ -250,9 +274,62 @@ export class ModelRouter {
       taskPattern: classification.task,
       totalDecisions: (existing?.totalDecisions ?? 0) + 1,
       fallbackDecisions: (existing?.fallbackDecisions ?? 0) + (decision.isFallback ? 1 : 0),
+      successCount: existing?.successCount ?? 0,
+      failureCount: existing?.failureCount ?? 0,
+      acceptanceRate: existing?.acceptanceRate ?? 0,
+      avgLatencyMs: existing?.avgLatencyMs ?? 0,
+      fallbackAfterSelectionCount: existing?.fallbackAfterSelectionCount ?? 0,
+      executedEndpointCounts: existing?.executedEndpointCounts.map((stats) => ({ ...stats })) ?? [],
       lastMatchedRuleId: decision.matchedRule.id,
       lastReason: decision.reason,
       lastSelectedAt: new Date().toISOString(),
+      lastExecutedEndpointId: existing?.lastExecutedEndpointId,
+    });
+  }
+
+  private recordOutcomeStats(feedback: QualityFeedback): void {
+    const selectedEndpointId = feedback.selectedEndpointId ?? feedback.endpointId;
+    const key = `${selectedEndpointId}::${feedback.taskPattern}`;
+    const existing = this.decisionStats.get(key);
+    const successCount = (existing?.successCount ?? 0) + (feedback.acceptable ? 1 : 0);
+    const failureCount = (existing?.failureCount ?? 0) + (feedback.acceptable ? 0 : 1);
+    const totalOutcomes = successCount + failureCount;
+    const previousOutcomeCount = (existing?.successCount ?? 0) + (existing?.failureCount ?? 0);
+    const avgLatencyMs = totalOutcomes > 0
+      ? (((existing?.avgLatencyMs ?? 0) * previousOutcomeCount) + feedback.latencyMs) / totalOutcomes
+      : 0;
+    const executedEndpointCounts = existing?.executedEndpointCounts.map((stats) => ({ ...stats })) ?? [];
+    const executedStats = executedEndpointCounts.find((stats) => stats.endpointId === feedback.endpointId);
+
+    if (executedStats) {
+      executedStats.count += 1;
+      executedStats.successCount += feedback.acceptable ? 1 : 0;
+      executedStats.failureCount += feedback.acceptable ? 0 : 1;
+    } else {
+      executedEndpointCounts.push({
+        endpointId: feedback.endpointId,
+        count: 1,
+        successCount: feedback.acceptable ? 1 : 0,
+        failureCount: feedback.acceptable ? 0 : 1,
+      });
+    }
+
+    this.decisionStats.set(key, {
+      endpointId: selectedEndpointId,
+      taskPattern: feedback.taskPattern,
+      totalDecisions: existing?.totalDecisions ?? 0,
+      fallbackDecisions: existing?.fallbackDecisions ?? 0,
+      successCount,
+      failureCount,
+      acceptanceRate: totalOutcomes > 0 ? successCount / totalOutcomes : 0,
+      avgLatencyMs,
+      fallbackAfterSelectionCount: (existing?.fallbackAfterSelectionCount ?? 0)
+        + (feedback.selectedEndpointId && feedback.selectedEndpointId !== feedback.endpointId ? 1 : 0),
+      executedEndpointCounts,
+      lastMatchedRuleId: existing?.lastMatchedRuleId ?? 'unknown',
+      lastReason: existing?.lastReason ?? 'Outcome recorded via router telemetry',
+      lastSelectedAt: existing?.lastSelectedAt ?? feedback.timestamp,
+      lastExecutedEndpointId: feedback.endpointId,
     });
   }
 }
