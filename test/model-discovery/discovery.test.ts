@@ -254,6 +254,147 @@ describe('discoverModels hardening', () => {
     }
   });
 
+  it('does not reuse snapshots across different effective local configs', async () => {
+    const { vault, dbPath } = createVault();
+    const onlineFetch = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'http://127.0.0.1:11434/api/tags') {
+        return jsonResponse({
+          models: [{ name: 'ollama-a', details: { parameter_size: '7B' } }],
+        });
+      }
+      if (url === 'http://127.0.0.1:1234/v1/models') {
+        return jsonResponse({ data: [] });
+      }
+      if (url.includes('huggingface.co/api/models/')) {
+        return jsonResponse({
+          id: 'stub/model-a',
+          tags: ['text-generation'],
+          pipeline_tag: 'text-generation',
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', onlineFetch as typeof fetch);
+
+    try {
+      const db = vault.getDb();
+      const seeded = await discoverModels(
+        undefined,
+        {
+          ollamaUrl: 'http://127.0.0.1:11434',
+          lmStudioUrl: 'http://127.0.0.1:1234/',
+        },
+        db,
+      );
+      assert.equal(seeded.models[0]?.local.id, 'ollama-a');
+
+      mock.restoreAll();
+
+      const offlineFetch = mock.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === 'http://127.0.0.1:21434/api/tags' || url === 'http://127.0.0.1:1234/v1/models') {
+          throw new Error('local runtime offline');
+        }
+
+        throw new Error(`Unexpected URL: ${url}`);
+      });
+      mock.method(globalThis, 'fetch', offlineFetch as typeof fetch);
+
+      const fallback = await discoverModels(
+        undefined,
+        {
+          ollamaUrl: 'http://127.0.0.1:21434',
+          lmStudioUrl: 'http://127.0.0.1:1234',
+        },
+        db,
+      );
+
+      assert.equal(fallback.snapshotUsed, false);
+      assert.equal(fallback.models.length, 0);
+      assert.equal(fallback.partial, true);
+      assert.ok(
+        fallback.errors.some((error) => error.includes('local runtime offline')),
+      );
+      assert.equal(
+        fallback.errors.some((error) => error.includes('Using stale discovery snapshot')),
+        false,
+      );
+    } finally {
+      vault.destroy();
+      cleanupDb(dbPath);
+    }
+  });
+
+  it('reuses persisted snapshots for the same effective local config', async () => {
+    const { vault, dbPath } = createVault();
+    const onlineFetch = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'http://127.0.0.1:11434/api/tags') {
+        return jsonResponse({
+          models: [{ name: 'ollama-a', details: { parameter_size: '7B' } }],
+        });
+      }
+      if (url === 'http://127.0.0.1:1234/v1/models') {
+        return jsonResponse({ data: [] });
+      }
+      if (url.includes('huggingface.co/api/models/')) {
+        return jsonResponse({
+          id: 'stub/model-a',
+          tags: ['text-generation'],
+          pipeline_tag: 'text-generation',
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', onlineFetch as typeof fetch);
+
+    try {
+      const db = vault.getDb();
+      await discoverModels(
+        undefined,
+        {
+          ollamaUrl: 'http://127.0.0.1:11434',
+          lmStudioUrl: 'http://127.0.0.1:1234',
+        },
+        db,
+      );
+
+      mock.restoreAll();
+
+      const offlineFetch = mock.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url === 'http://127.0.0.1:11434/api/tags' || url === 'http://127.0.0.1:1234/v1/models') {
+          throw new Error('local runtime offline');
+        }
+
+        throw new Error(`Unexpected URL: ${url}`);
+      });
+      mock.method(globalThis, 'fetch', offlineFetch as typeof fetch);
+
+      const fallback = await discoverModels(
+        undefined,
+        {
+          ollamaUrl: 'http://127.0.0.1:11434',
+          lmStudioUrl: 'http://127.0.0.1:1234/',
+        },
+        db,
+      );
+
+      assert.equal(fallback.snapshotUsed, true);
+      assert.equal(fallback.partial, true);
+      assert.equal(fallback.models[0]?.local.id, 'ollama-a');
+      assert.ok(
+        fallback.errors.some((error) => error.includes('Using stale discovery snapshot')),
+      );
+    } finally {
+      vault.destroy();
+      cleanupDb(dbPath);
+    }
+  });
+
   it('treats config.enabled as a real kill switch and serves snapshot state without probing', async () => {
     const { vault, dbPath } = createVault();
     const seedFetch = mock.fn(async (input: string | URL | Request) => {

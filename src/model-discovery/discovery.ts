@@ -18,7 +18,7 @@ import type { EnrichedModel, DiscoveryResult, ModelDiscoveryConfig } from './typ
 import { DEFAULT_DISCOVERY_CONFIG } from './types.js';
 import type Database from 'better-sqlite3';
 
-const DISCOVERY_SNAPSHOT_KEY = 'local-llm';
+const DISCOVERY_SNAPSHOT_KEY_PREFIX = 'local-llm';
 
 export interface DiscoverModelsOptions {
   forceRefreshLocalDetection?: boolean;
@@ -41,18 +41,20 @@ export async function discoverModels(
   options?: DiscoverModelsOptions,
 ): Promise<DiscoveryResult> {
   const config = { ...DEFAULT_DISCOVERY_CONFIG, ...discoveryConfig };
+  const effectiveLocalConfig = getEffectiveLocalLLMConfig(llmConfig);
+  const snapshotKey = getDiscoverySnapshotKey(effectiveLocalConfig);
 
   if (!config.enabled) {
-    return loadSnapshotOrEmpty(db, 'Model discovery disabled by config');
+    return loadSnapshotOrEmpty(db, snapshotKey, 'Model discovery disabled by config');
   }
 
-  const discoveryKey = getDiscoveryKey(config, llmConfig, db, options);
+  const discoveryKey = getDiscoveryKey(config, effectiveLocalConfig, db, options);
   const inFlightDiscovery = inFlightDiscoveries.get(discoveryKey);
   if (inFlightDiscovery) {
     return inFlightDiscovery;
   }
 
-  const discoveryPromise = runDiscovery(config, llmConfig, db, {
+  const discoveryPromise = runDiscovery(config, effectiveLocalConfig, snapshotKey, db, {
     forceRefresh: options?.forceRefreshLocalDetection ?? true,
   }).finally(() => {
     inFlightDiscoveries.delete(discoveryKey);
@@ -64,7 +66,8 @@ export async function discoverModels(
 
 async function runDiscovery(
   config: ModelDiscoveryConfig,
-  llmConfig?: Partial<LocalLLMConfig>,
+  llmConfig: LocalLLMConfig,
+  snapshotKey: string,
   db?: Database.Database,
   detectionOptions?: DetectLocalLLMsOptions,
 ): Promise<DiscoveryResult> {
@@ -162,17 +165,17 @@ async function runDiscovery(
   };
 
   if (liveBackendsAvailable) {
-    saveSnapshot(db, liveResult);
+    saveSnapshot(db, snapshotKey, liveResult);
     return liveResult;
   }
 
   if (localModels.length > 0) {
-    saveSnapshot(db, liveResult);
+    saveSnapshot(db, snapshotKey, liveResult);
     return liveResult;
   }
 
   if (errors.length > 0) {
-    const snapshot = loadSnapshot(db);
+    const snapshot = loadSnapshot(db, snapshotKey);
     if (snapshot) {
       return {
         ...snapshot,
@@ -193,16 +196,31 @@ async function runDiscovery(
 
 function getDiscoveryKey(
   config: ModelDiscoveryConfig,
-  llmConfig?: Partial<LocalLLMConfig>,
+  llmConfig: LocalLLMConfig,
   db?: Database.Database,
   options?: DiscoverModelsOptions,
 ): string {
   return JSON.stringify({
     config,
-    llmConfig: { ...DEFAULT_LOCAL_LLM_CONFIG, ...llmConfig },
+    llmConfig,
     dbId: getDiscoveryDbId(db),
     forceRefreshLocalDetection: options?.forceRefreshLocalDetection ?? true,
   });
+}
+
+function getEffectiveLocalLLMConfig(llmConfig?: Partial<LocalLLMConfig>): LocalLLMConfig {
+  return { ...DEFAULT_LOCAL_LLM_CONFIG, ...llmConfig };
+}
+
+function getDiscoverySnapshotKey(llmConfig: LocalLLMConfig): string {
+  return `${DISCOVERY_SNAPSHOT_KEY_PREFIX}:${JSON.stringify({
+    ollamaUrl: normalizeBaseUrl(llmConfig.ollamaUrl),
+    lmStudioUrl: normalizeBaseUrl(llmConfig.lmStudioUrl),
+  })}`;
+}
+
+function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, '');
 }
 
 function getDiscoveryDbId(db?: Database.Database): number | null {
@@ -222,9 +240,10 @@ function getDiscoveryDbId(db?: Database.Database): number | null {
 
 function loadSnapshotOrEmpty(
   db: Database.Database | undefined,
+  snapshotKey: string,
   ...errors: string[]
 ): DiscoveryResult {
-  const snapshot = loadSnapshot(db);
+  const snapshot = loadSnapshot(db, snapshotKey);
   if (!snapshot) {
     return createEmptyResult(errors);
   }
@@ -237,7 +256,7 @@ function loadSnapshotOrEmpty(
   };
 }
 
-function loadSnapshot(db?: Database.Database): DiscoveryResult | null {
+function loadSnapshot(db: Database.Database | undefined, snapshotKey: string): DiscoveryResult | null {
   if (!db) {
     return null;
   }
@@ -247,7 +266,7 @@ function loadSnapshot(db?: Database.Database): DiscoveryResult | null {
       .prepare(
         'SELECT snapshot_json FROM model_discovery_snapshots WHERE snapshot_key = ?',
       )
-      .get(DISCOVERY_SNAPSHOT_KEY) as { snapshot_json: string } | undefined;
+      .get(snapshotKey) as { snapshot_json: string } | undefined;
     if (!row) {
       return null;
     }
@@ -268,7 +287,11 @@ function loadSnapshot(db?: Database.Database): DiscoveryResult | null {
   }
 }
 
-function saveSnapshot(db: Database.Database | undefined, result: DiscoveryResult): void {
+function saveSnapshot(
+  db: Database.Database | undefined,
+  snapshotKey: string,
+  result: DiscoveryResult,
+): void {
   if (!db) {
     return;
   }
@@ -281,7 +304,7 @@ function saveSnapshot(db: Database.Database | undefined, result: DiscoveryResult
         snapshot_json = excluded.snapshot_json,
         updated_at = excluded.updated_at
     `).run(
-      DISCOVERY_SNAPSHOT_KEY,
+      snapshotKey,
       JSON.stringify({ ...result, snapshotUsed: false }),
     );
   } catch {
