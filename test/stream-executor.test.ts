@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { Router } from "../src/core/router.js";
+import { GroupStore } from "../src/core/groups.js";
+import { SessionManager } from "../src/session/index.js";
+import { TransformerRegistry } from "../src/core/transformer.js";
 import type { GenerateResponse } from "../src/core/types.js";
+import type { LLMProvider, ModelInfo } from "../src/core/types.js";
 import { buildChatGenerateRequest } from "../src/server/http-helpers/chat-request.js";
 import { createStreamExecutor } from "../src/server/streaming/stream-executor.js";
 import type { InternalLLMChunk } from "../src/transformers/streaming.js";
@@ -11,6 +16,28 @@ function createCanonicalRequest() {
 		model: "test-model",
 		messages: [{ role: "user" as const, content: "hello" }],
 		stream: true,
+	};
+}
+
+function createProvider(id: string, modelId = "test-model"): LLMProvider {
+	const model: ModelInfo = {
+		id: modelId,
+		name: modelId,
+		provider: id,
+		maxTokens: 4096,
+	};
+
+	return {
+		id,
+		name: id,
+		type: "api",
+		models: [model],
+		async generate() {
+			throw new Error("streaming test should not call generate");
+		},
+		async isAvailable() {
+			return true;
+		},
 	};
 }
 
@@ -294,5 +321,144 @@ describe("createStreamExecutor", () => {
 				},
 			});
 		}
+	});
+
+	it("repins the sticky streaming session after a successful fallback", async () => {
+		const router = new Router();
+		const registry = new TransformerRegistry();
+		const groupStore = new GroupStore(":memory:");
+		const sessionManager = new SessionManager();
+		const observedChunks: string[] = [];
+
+		router.setTransformerRegistry(registry);
+		router.setGroupStore(groupStore);
+		router.setSessionManager(sessionManager);
+		router.register(createProvider("openai", "sticky-model"));
+		router.register(createProvider("anthropic", "sticky-model"));
+
+		groupStore.create({
+			name: "Sticky GPT",
+			modelPattern: "sticky-*",
+			members: [{ provider: "openai" }, { provider: "anthropic" }],
+			strategy: "failover",
+			stickyTTL: 30,
+		});
+
+		registry.registerStreamOutbound("openai", {
+			name: "openai",
+			async *transformStream() {
+				throw new Error("openai startup failure");
+			},
+		});
+		registry.registerStreamOutbound("anthropic", {
+			name: "anthropic",
+			async *transformStream() {
+				yield { content: "fallback", done: false, model: "sticky-model" };
+				yield { content: "", done: true, model: "sticky-model", finishReason: "stop" };
+			},
+		});
+
+		sessionManager.pinRouterStickySession("client-1", "sticky-model", "openai", "default", 30_000);
+
+		const executor = createStreamExecutor({
+			canonical: {
+				model: "sticky-model",
+				messages: [{ role: "user", content: "hello" }],
+				stream: true,
+				clientId: "client-1",
+			},
+			router,
+		});
+
+		await executor.execute({
+			writeChunk: async (chunk) => {
+				observedChunks.push(chunk.content);
+			},
+			writeFallbackResult: async () => {
+				assert.fail("should not use non-streaming fallback");
+			},
+			writeTerminalError: async (error) => {
+				assert.fail(`unexpected streaming error: ${error.message}`);
+			},
+			writeDone: async () => {},
+		});
+
+		assert.deepEqual(observedChunks, ["fallback", ""]);
+		assert.equal(
+			sessionManager.getRouterStickySession("client-1", "sticky-model")?.provider,
+			"anthropic",
+		);
+
+		sessionManager.stopCleanup();
+		groupStore.close();
+	});
+
+	it("uses the repinned provider first on the next streaming request", async () => {
+		const router = new Router();
+		const registry = new TransformerRegistry();
+		const groupStore = new GroupStore(":memory:");
+		const sessionManager = new SessionManager();
+
+		router.setTransformerRegistry(registry);
+		router.setGroupStore(groupStore);
+		router.setSessionManager(sessionManager);
+		router.register(createProvider("openai", "sticky-model"));
+		router.register(createProvider("anthropic", "sticky-model"));
+
+		groupStore.create({
+			name: "Sticky GPT",
+			modelPattern: "sticky-*",
+			members: [{ provider: "openai" }, { provider: "anthropic" }],
+			strategy: "failover",
+			stickyTTL: 30,
+		});
+
+		registry.registerStreamOutbound("openai", {
+			name: "openai",
+			async *transformStream() {
+				throw new Error("openai startup failure");
+			},
+		});
+		registry.registerStreamOutbound("anthropic", {
+			name: "anthropic",
+			async *transformStream() {
+				yield { content: "fallback", done: false, model: "sticky-model" };
+				yield { content: "", done: true, model: "sticky-model", finishReason: "stop" };
+			},
+		});
+
+		sessionManager.pinRouterStickySession("client-1", "sticky-model", "openai", "default", 30_000);
+
+		const executor = createStreamExecutor({
+			canonical: {
+				model: "sticky-model",
+				messages: [{ role: "user", content: "hello" }],
+				stream: true,
+				clientId: "client-1",
+			},
+			router,
+		});
+
+		await executor.execute({
+			writeChunk: async () => {},
+			writeFallbackResult: async () => {
+				assert.fail("should not use non-streaming fallback");
+			},
+			writeTerminalError: async (error) => {
+				assert.fail(`unexpected streaming error: ${error.message}`);
+			},
+			writeDone: async () => {},
+		});
+
+		const nextCandidates = await router.resolveStreamingProviders({
+			model: "sticky-model",
+			messages: [{ role: "user", content: "hello again" }],
+			metadata: { clientId: "client-1" },
+		});
+
+		assert.equal(nextCandidates[0]?.provider.id, "anthropic");
+
+		sessionManager.stopCleanup();
+		groupStore.close();
 	});
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Router } from '../src/core/router.js';
+import { getCircuitBreakerV2, resetCircuitBreakerV2, Router } from '../src/core/router.js';
 import { GroupStore } from '../src/core/groups.js';
 import type { InternalLLMRequest } from '../src/core/internal-model.js';
 import { TransformerRegistry } from '../src/core/transformer.js';
@@ -60,11 +60,21 @@ function registerOutbound(registry: TransformerRegistry, providerId: string): vo
   });
 }
 
+function registerStreamOutbound(registry: TransformerRegistry, providerId: string): void {
+  registry.registerStreamOutbound(providerId, {
+    name: providerId,
+    async *transformStream() {
+      yield { content: '', done: true };
+    },
+  });
+}
+
 describe('Router sticky sessions via SessionManager', () => {
   let savedOptimizeMessagesEnabled: string | undefined;
 
   beforeEach(() => {
     savedOptimizeMessagesEnabled = process.env['OPTIMIZE_MESSAGES_ENABLED'];
+    resetCircuitBreakerV2();
   });
 
   afterEach(() => {
@@ -74,6 +84,7 @@ describe('Router sticky sessions via SessionManager', () => {
     }
 
     process.env['OPTIMIZE_MESSAGES_ENABLED'] = savedOptimizeMessagesEnabled;
+    resetCircuitBreakerV2();
   });
 
   it('reuses the same clientId and model pin', async () => {
@@ -249,5 +260,113 @@ describe('Router sticky sessions via SessionManager', () => {
     assert.ok(lastRequest.system.includes('TypeScript'));
 
     sessionManager.stopCleanup();
+  });
+
+  it('prefers the sticky provider first for streaming resolution', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const groupStore = new GroupStore(':memory:');
+    const sessionManager = new SessionManager();
+
+    router.setTransformerRegistry(registry);
+    router.setGroupStore(groupStore);
+    router.setSessionManager(sessionManager);
+
+    router.register(createMockProvider({
+      id: 'openai',
+      models: [{ id: 'gpt-4o', name: 'gpt-4o', provider: 'openai', maxTokens: 4096 }],
+    }));
+    router.register(createMockProvider({
+      id: 'anthropic',
+      models: [{ id: 'gpt-4o', name: 'gpt-4o', provider: 'anthropic', maxTokens: 4096 }],
+    }));
+    registerStreamOutbound(registry, 'openai');
+    registerStreamOutbound(registry, 'anthropic');
+
+    groupStore.create({
+      name: 'Sticky GPT',
+      modelPattern: 'gpt-*',
+      members: [{ provider: 'openai' }, { provider: 'anthropic' }],
+      strategy: 'round-robin',
+      stickyTTL: 30,
+    });
+
+    sessionManager.pinRouterStickySession('client-1', 'gpt-4o', 'anthropic', 'default', 30_000);
+
+    const candidates = await router.resolveStreamingProviders({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'hello' }],
+      metadata: { clientId: 'client-1' },
+    });
+
+    assert.deepEqual(
+      candidates.map((candidate) => candidate.provider.id),
+      ['anthropic', 'openai'],
+    );
+
+    sessionManager.stopCleanup();
+    groupStore.close();
+  });
+
+  it('skips a breaker-blocked sticky provider during streaming resolution', async () => {
+    const previousFlag = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'true';
+
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const groupStore = new GroupStore(':memory:');
+    const sessionManager = new SessionManager();
+
+    router.setTransformerRegistry(registry);
+    router.setGroupStore(groupStore);
+    router.setSessionManager(sessionManager);
+
+    router.register(createMockProvider({
+      id: 'openai',
+      models: [{ id: 'gpt-4o', name: 'gpt-4o', provider: 'openai', maxTokens: 4096 }],
+    }));
+    router.register(createMockProvider({
+      id: 'anthropic',
+      models: [{ id: 'gpt-4o', name: 'gpt-4o', provider: 'anthropic', maxTokens: 4096 }],
+    }));
+    registerStreamOutbound(registry, 'openai');
+    registerStreamOutbound(registry, 'anthropic');
+
+    groupStore.create({
+      name: 'Sticky GPT',
+      modelPattern: 'gpt-*',
+      members: [{ provider: 'openai' }, { provider: 'anthropic' }],
+      strategy: 'failover',
+      stickyTTL: 30,
+    });
+
+    sessionManager.pinRouterStickySession('client-1', 'gpt-4o', 'openai', 'default', 30_000);
+
+    const circuitBreaker = getCircuitBreakerV2();
+    for (let index = 0; index < 5; index++) {
+      circuitBreaker.recordFailure('openai', 'default', 'gpt-4o');
+    }
+
+    try {
+      const candidates = await router.resolveStreamingProviders({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: 'hello' }],
+        metadata: { clientId: 'client-1' },
+      });
+
+      assert.deepEqual(
+        candidates.map((candidate) => candidate.provider.id),
+        ['anthropic'],
+      );
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      } else {
+        process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = previousFlag;
+      }
+
+      sessionManager.stopCleanup();
+      groupStore.close();
+    }
   });
 });

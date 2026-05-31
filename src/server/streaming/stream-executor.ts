@@ -71,6 +71,9 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		model: canonical.model,
 		maxTokens: canonical.max_tokens,
 		metadata: {
+			...(typeof canonical["clientId"] === "string"
+				? { clientId: canonical["clientId"] }
+				: {}),
 			...(typeof canonical["provider"] === "string"
 				? { provider: canonical["provider"] }
 				: {}),
@@ -152,7 +155,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						return;
 					}
 
-					const { provider, request: resolvedRequest, streamTransformer, recordResult } =
+					const { provider, request: resolvedRequest, streamTransformer, onSuccess, recordResult } =
 						resolved;
 					let breakerModel = resolvedRequest.model || canonical.model || "unknown";
 					let attemptInputTokens: number | undefined;
@@ -241,6 +244,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							finalizeRequestLog,
 							responseModel: logCtx?.model,
 						});
+						onSuccess?.();
 						return;
 					} catch (error) {
 						if (aborted || isAbortError(error)) {

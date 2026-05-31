@@ -70,6 +70,7 @@ export interface ResolvedStreamingProvider {
   provider: LLMProvider;
   request: InternalLLMRequest;
   streamTransformer: StreamingOutboundTransformer;
+  onSuccess?: () => void;
   recordResult: (input: {
     model?: string;
     tokensIn?: number;
@@ -636,9 +637,23 @@ export class Router {
       );
     }
 
+    const clientId = plan.optimizedRequest.metadata?.['clientId'] as string | undefined;
+    const pinnedProviderId =
+      !plan.requestedProvider && this._sessionManager && clientId && plan.model
+        ? this._sessionManager.getRouterStickySession(clientId, plan.model)?.provider
+        : undefined;
+    const orderedStreamingCandidates =
+      pinnedProviderId
+        ? [
+            ...plan.availableCandidates.filter((provider) => provider.id === pinnedProviderId),
+            ...plan.availableCandidates.filter((provider) => provider.id !== pinnedProviderId),
+          ]
+        : plan.availableCandidates;
+
+    const stickyTtlMs = plan.matchedGroup?.stickyTTL ? plan.matchedGroup.stickyTTL * 1000 : null;
     const resolvedProviders: ResolvedStreamingProvider[] = [];
 
-    for (const provider of plan.availableCandidates) {
+    for (const provider of orderedStreamingCandidates) {
       const streamTransformer = registry.getStreamOutbound(provider.id);
       if (streamTransformer) {
         const routedEndpoint = plan.modelRouterDecision?.endpoint;
@@ -648,8 +663,20 @@ export class Router {
             plan.optimizedRequest,
             provider,
             routedEndpoint,
-            ),
+          ),
           streamTransformer,
+          onSuccess:
+            this._sessionManager && clientId && plan.model && stickyTtlMs
+              ? () => {
+                  this._sessionManager?.pinRouterStickySession(
+                    clientId,
+                    plan.model,
+                    provider.id,
+                    'default',
+                    stickyTtlMs,
+                  );
+                }
+              : undefined,
           recordResult: createStreamingRecordResult({
             telemetry: this.getTelemetryContext(),
             provider,
