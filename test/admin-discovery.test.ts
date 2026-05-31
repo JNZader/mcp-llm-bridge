@@ -112,6 +112,8 @@ describe('POST /v1/admin/discover', () => {
       models: unknown[];
       enrichedCount: number;
       unenrichedCount: number;
+      partial: boolean;
+      snapshotUsed: boolean;
     };
 
     assert.equal(body.ok, true);
@@ -120,6 +122,8 @@ describe('POST /v1/admin/discover', () => {
     assert.ok(body.backendsScanned.includes('lm-studio'));
     assert.equal(typeof body.enrichedCount, 'number');
     assert.equal(typeof body.unenrichedCount, 'number');
+    assert.equal(typeof body.partial, 'boolean');
+    assert.equal(typeof body.snapshotUsed, 'boolean');
   });
 
   it('accepts optional hfToken override', async () => {

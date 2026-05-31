@@ -40,26 +40,29 @@ export async function bootstrapLocalLLM(
 	}
 
 	if (autoDiscoverModelsEnabled() && localLLMRuntimeEnabled) {
-		try {
-			const discoveryResult = await discoverModels(
-				{
-					hfToken: resolveHfToken(),
-					enabled: true,
-				},
-				getLocalLLMUrls(),
-				db,
-			);
-			logger.info(
-				{
-					models: discoveryResult.models.length,
-					enriched: discoveryResult.enrichedCount,
-					backends: discoveryResult.backendsScanned,
-				},
-				"Model discovery completed at bootstrap",
-			);
-		} catch (error) {
-			const msg = error instanceof Error ? error.message : String(error);
-			logger.warn({ error: msg }, "Model discovery failed at bootstrap");
-		}
+		void discoverModels(
+			{
+				hfToken: resolveHfToken(),
+				enabled: true,
+			},
+			getLocalLLMUrls(),
+			db,
+		)
+			.then((discoveryResult) => {
+				logger.info(
+					{
+						models: discoveryResult.models.length,
+						enriched: discoveryResult.enrichedCount,
+						backends: discoveryResult.backendsScanned,
+						partial: discoveryResult.partial,
+						snapshotUsed: discoveryResult.snapshotUsed,
+					},
+					"Model discovery completed at bootstrap",
+				);
+			})
+			.catch((error) => {
+				const msg = error instanceof Error ? error.message : String(error);
+				logger.warn({ error: msg }, "Model discovery failed at bootstrap");
+			});
 	}
 }

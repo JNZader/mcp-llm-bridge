@@ -48,11 +48,12 @@ export function registerAdminDiscoveryRoutes(
     try {
       const body = await c.req.json().catch(() => ({}));
       const hfToken = resolveHfToken(body['hfToken'] as string | undefined);
+      const enabled = body['enabled'] === undefined ? true : body['enabled'] !== false;
 
       const result = await discoverModels(
         {
           hfToken,
-          enabled: true,
+          enabled,
         },
         getLocalLLMUrls(),
         deps.db,
@@ -66,6 +67,8 @@ export function registerAdminDiscoveryRoutes(
         unenrichedCount: result.unenrichedCount,
         errors: result.errors,
         timestamp: result.timestamp,
+        partial: result.partial,
+        snapshotUsed: result.snapshotUsed,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -228,4 +228,12 @@ export function initializeDb(db: Database.Database): void {
       fetched_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS model_discovery_snapshots (
+      snapshot_key    TEXT PRIMARY KEY,
+      snapshot_json   TEXT NOT NULL,
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }

@@ -1,5 +1,6 @@
 import type { Router } from '../core/router.js';
 import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
+import type { Vault } from '../vault/vault.js';
 import { detectLocalLLMs, pickBestLocalModel } from '../local-llm/detector.js';
 import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
@@ -111,12 +112,15 @@ export async function handleLocalLlmGenerateTool(
 
 export async function handleDiscoverModelsTool(
   args: Record<string, unknown>,
+  vault?: Vault,
 ): Promise<McpToolResult> {
   const hfToken = args['hfToken'] as string | undefined;
+  const enabled = args['enabled'] === undefined ? true : args['enabled'] !== false;
   try {
     const result = await discoverModels(
-      { hfToken: resolveHfToken(hfToken), enabled: true },
+      { hfToken: resolveHfToken(hfToken), enabled },
       getLocalLLMUrls(),
+      vault?.getDb(),
     );
     return jsonResult({
       models: result.models,
@@ -125,6 +129,8 @@ export async function handleDiscoverModelsTool(
       unenrichedCount: result.unenrichedCount,
       errors: result.errors,
       timestamp: result.timestamp,
+      partial: result.partial,
+      snapshotUsed: result.snapshotUsed,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

@@ -10,6 +10,17 @@ import type { HFModelMetadata, ModelDiscoveryConfig } from './types.js';
 import { DEFAULT_DISCOVERY_CONFIG } from './types.js';
 import type Database from 'better-sqlite3';
 
+export interface FetchMetadataOptions {
+  timeoutMs?: number;
+  allowStale?: boolean;
+}
+
+export interface FetchMetadataResult {
+  metadata: HFModelMetadata | null;
+  error: string | null;
+  stale: boolean;
+}
+
 /**
  * Raw HuggingFace API response for a model (minimal subset).
  */
@@ -36,6 +47,11 @@ interface CacheEntry {
   fetchedAt: number;
 }
 
+interface SqliteCacheRow {
+  metadata: string;
+  fetched_at: string;
+}
+
 /**
  * HuggingFace metadata client with caching.
  *
@@ -59,33 +75,38 @@ export class HFClient {
    * if the model is not found or the API is unreachable.
    */
   async fetchMetadata(hfModelId: string): Promise<HFModelMetadata | null> {
+    const result = await this.fetchMetadataWithStatus(hfModelId);
+    return result.metadata;
+  }
+
+  async fetchMetadataWithStatus(
+    hfModelId: string,
+    options?: FetchMetadataOptions,
+  ): Promise<FetchMetadataResult> {
+    const allowStale = options?.allowStale !== false;
+    const ttlMs = this.config.cacheTtlSec * 1000;
+
     // Check SQLite cache first if available
+    const sqliteRow = this.readSqliteCache(hfModelId);
+    const staleSqlite = sqliteRow ? this.parseSqliteCacheRow(sqliteRow) : null;
     if (this.db) {
-      try {
-        const row = this.db
-          .prepare('SELECT metadata, fetched_at FROM hf_model_cache WHERE hf_model_id = ?')
-          .get(hfModelId) as { metadata: string; fetched_at: string } | undefined;
-        if (row) {
-          const fetchedAt = new Date(row.fetched_at).getTime();
-          if (Date.now() - fetchedAt < this.config.cacheTtlSec * 1000) {
-            return JSON.parse(row.metadata) as HFModelMetadata;
-          }
-        }
-      } catch {
-        // SQLite read failed — fall through to in-memory / network
+      if (staleSqlite && Date.now() - staleSqlite.fetchedAt < ttlMs) {
+        return { metadata: staleSqlite.metadata, error: null, stale: false };
       }
     }
 
     // Check in-memory cache
     const cached = this.cache.get(hfModelId);
-    if (cached && Date.now() - cached.fetchedAt < this.config.cacheTtlSec * 1000) {
-      return cached.metadata;
+    const staleMemory = cached ?? null;
+    if (cached && Date.now() - cached.fetchedAt < ttlMs) {
+      return { metadata: cached.metadata, error: null, stale: false };
     }
 
     try {
       const url = `${this.config.hfApiUrl}/models/${hfModelId}`;
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.config.hfTimeoutMs);
+      const timeoutMs = Math.max(1, options?.timeoutMs ?? this.config.hfTimeoutMs);
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       const headers: Record<string, string> = {
         'Accept': 'application/json',
@@ -102,19 +123,29 @@ export class HFClient {
       clearTimeout(timer);
 
       if (!response.ok) {
-        this.storeInCache(hfModelId, null);
-        return null;
+        return this.fallbackToStale(
+          hfModelId,
+          `HTTP ${response.status}: ${response.statusText}`,
+          staleMemory,
+          staleSqlite,
+          allowStale,
+        );
       }
 
       const body = await response.json() as HFApiModelResponse;
       const metadata = parseHFResponse(body);
 
       this.storeInCache(hfModelId, metadata);
-      return metadata;
-    } catch {
-      // Network error — cache the miss to avoid hammering
-      this.storeInCache(hfModelId, null);
-      return null;
+      return { metadata, error: null, stale: false };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.fallbackToStale(
+        hfModelId,
+        message,
+        staleMemory,
+        staleSqlite,
+        allowStale,
+      );
     }
   }
 
@@ -159,6 +190,58 @@ export class HFClient {
    */
   get cacheSize(): number {
     return this.cache.size;
+  }
+
+  private fallbackToStale(
+    hfModelId: string,
+    reason: string,
+    staleMemory: CacheEntry | null,
+    staleSqlite: CacheEntry | null,
+    allowStale: boolean,
+  ): FetchMetadataResult {
+    if (allowStale) {
+      const stale = staleMemory ?? staleSqlite;
+      if (stale) {
+        return {
+          metadata: stale.metadata,
+          error: `HF metadata lookup failed for ${hfModelId}: ${reason}; using stale cache`,
+          stale: true,
+        };
+      }
+    }
+
+    return {
+      metadata: null,
+      error: `HF metadata lookup failed for ${hfModelId}: ${reason}`,
+      stale: false,
+    };
+  }
+
+  private readSqliteCache(hfModelId: string): SqliteCacheRow | null {
+    if (!this.db) {
+      return null;
+    }
+
+    try {
+      return (
+        (this.db
+          .prepare('SELECT metadata, fetched_at FROM hf_model_cache WHERE hf_model_id = ?')
+          .get(hfModelId) as SqliteCacheRow | undefined) ?? null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  private parseSqliteCacheRow(row: SqliteCacheRow): CacheEntry | null {
+    try {
+      return {
+        metadata: JSON.parse(row.metadata) as HFModelMetadata | null,
+        fetchedAt: new Date(row.fetched_at).getTime(),
+      };
+    } catch {
+      return null;
+    }
   }
 }
 

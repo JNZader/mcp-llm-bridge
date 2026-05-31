@@ -110,6 +110,8 @@ describe('discover_models MCP tool', () => {
     assert.ok(Array.isArray(text.backendsScanned));
     assert.equal(typeof text.enrichedCount, 'number');
     assert.equal(typeof text.unenrichedCount, 'number');
+    assert.equal(typeof text.partial, 'boolean');
+    assert.equal(typeof text.snapshotUsed, 'boolean');
     assert.ok(text.backendsScanned.includes('ollama'));
     assert.ok(text.backendsScanned.includes('lm-studio'));
   });

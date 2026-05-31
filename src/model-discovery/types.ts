@@ -69,6 +69,10 @@ export interface DiscoveryResult {
   timestamp: string;
   /** Errors encountered during scan. */
   errors: string[];
+  /** True when enrichment was cut short and some results are heuristic-only. */
+  partial: boolean;
+  /** True when the response came from a persisted snapshot instead of a live run. */
+  snapshotUsed: boolean;
 }
 
 /**
@@ -77,6 +81,8 @@ export interface DiscoveryResult {
 export interface ModelDiscoveryConfig {
   /** Whether auto-discovery is enabled. */
   enabled: boolean;
+  /** Total budget for one discovery run in ms. */
+  discoveryBudgetMs: number;
   /** HuggingFace API base URL. */
   hfApiUrl: string;
   /** Optional HuggingFace API token for gated models. */
@@ -90,6 +96,7 @@ export interface ModelDiscoveryConfig {
 /** Default model discovery configuration. */
 export const DEFAULT_DISCOVERY_CONFIG: ModelDiscoveryConfig = {
   enabled: true,
+  discoveryBudgetMs: 8000,
   hfApiUrl: 'https://huggingface.co/api',
   hfTimeoutMs: 5000,
   cacheTtlSec: 3600,

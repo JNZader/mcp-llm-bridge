@@ -189,7 +189,7 @@ export async function dispatchToolCall(
         return handleLocalLlmGenerateTool(args, router);
 
       case 'discover_models':
-        return handleDiscoverModelsTool(args);
+        return handleDiscoverModelsTool(args, vault);
 
       case 'conversation_paginate':
       case 'conversation_get_page':

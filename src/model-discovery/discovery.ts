@@ -18,6 +18,10 @@ import type { EnrichedModel, DiscoveryResult, ModelDiscoveryConfig } from './typ
 import { DEFAULT_DISCOVERY_CONFIG } from './types.js';
 import type Database from 'better-sqlite3';
 
+const DISCOVERY_SNAPSHOT_KEY = 'local-llm';
+
+let inFlightDiscovery: Promise<DiscoveryResult> | null = null;
+
 /**
  * Run a full model discovery scan.
  *
@@ -30,12 +34,43 @@ export async function discoverModels(
   db?: Database.Database,
 ): Promise<DiscoveryResult> {
   const config = { ...DEFAULT_DISCOVERY_CONFIG, ...discoveryConfig };
+
+  if (!config.enabled) {
+    return loadSnapshotOrEmpty(db, 'Model discovery disabled by config');
+  }
+
+  if (inFlightDiscovery) {
+    return inFlightDiscovery;
+  }
+
+  inFlightDiscovery = runDiscovery(config, llmConfig, db).finally(() => {
+    inFlightDiscovery = null;
+  });
+
+  return inFlightDiscovery;
+}
+
+async function runDiscovery(
+  config: ModelDiscoveryConfig,
+  llmConfig?: Partial<LocalLLMConfig>,
+  db?: Database.Database,
+): Promise<DiscoveryResult> {
   const hfClient = new HFClient(config, db);
   const errors: string[] = [];
+  const deadlineAt = Date.now() + config.discoveryBudgetMs;
+
+  let detections = [] as Awaited<ReturnType<typeof detectLocalLLMs>>;
+
+  try {
+    detections = await detectLocalLLMs(llmConfig);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    errors.push(`Local model detection failed: ${msg}`);
+  }
 
   // 1. Detect local models
-  const detections = await detectLocalLLMs(llmConfig);
   const backendsScanned = detections.map((d) => d.backend);
+  const liveBackendsAvailable = detections.some((d) => d.status === 'connected');
 
   // Collect all local models
   const localModels = detections.flatMap((d) => {
@@ -47,18 +82,38 @@ export async function discoverModels(
   const enrichedModels: EnrichedModel[] = [];
   let enrichedCount = 0;
   let unenrichedCount = 0;
+  let partial = false;
+  let budgetExceeded = false;
 
   for (const local of localModels) {
     const resolvedHfId = resolveHFModelId(local.id);
     let hfMetadata = null;
 
-    if (resolvedHfId) {
-      try {
-        hfMetadata = await hfClient.fetchMetadata(resolvedHfId);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        errors.push(`HF metadata fetch failed for ${resolvedHfId}: ${msg}`);
+    if (resolvedHfId && !budgetExceeded) {
+      const remainingBudgetMs = deadlineAt - Date.now();
+      if (remainingBudgetMs <= 0) {
+        budgetExceeded = true;
+        partial = true;
+        errors.push(
+          `Discovery budget exceeded after ${config.discoveryBudgetMs}ms; returning partial results`,
+        );
+      } else {
+        const metadataResult = await hfClient.fetchMetadataWithStatus(resolvedHfId, {
+          timeoutMs: Math.min(config.hfTimeoutMs, remainingBudgetMs),
+          allowStale: true,
+        });
+        hfMetadata = metadataResult.metadata;
+        if (metadataResult.error) {
+          errors.push(metadataResult.error);
+        }
+        if (metadataResult.stale) {
+          partial = true;
+        }
       }
+    }
+
+    if (resolvedHfId && budgetExceeded) {
+      partial = true;
     }
 
     // Infer capabilities from HF metadata or model name
@@ -82,13 +137,126 @@ export async function discoverModels(
     else unenrichedCount++;
   }
 
-  return {
+  const liveResult: DiscoveryResult = {
     models: enrichedModels,
     backendsScanned,
     enrichedCount,
     unenrichedCount,
     timestamp: new Date().toISOString(),
     errors,
+    partial,
+    snapshotUsed: false,
+  };
+
+  if (liveBackendsAvailable) {
+    saveSnapshot(db, liveResult);
+    return liveResult;
+  }
+
+  if (localModels.length > 0) {
+    saveSnapshot(db, liveResult);
+    return liveResult;
+  }
+
+  if (errors.length > 0) {
+    const snapshot = loadSnapshot(db);
+    if (snapshot) {
+      return {
+        ...snapshot,
+        errors: [...errors, `Using stale discovery snapshot from ${snapshot.timestamp}`],
+        partial: true,
+        snapshotUsed: true,
+      };
+    }
+
+    return {
+      ...liveResult,
+      partial: true,
+    };
+  }
+
+  return liveResult;
+}
+
+function loadSnapshotOrEmpty(
+  db: Database.Database | undefined,
+  ...errors: string[]
+): DiscoveryResult {
+  const snapshot = loadSnapshot(db);
+  if (!snapshot) {
+    return createEmptyResult(errors);
+  }
+
+  return {
+    ...snapshot,
+    errors: [...errors, `Using stale discovery snapshot from ${snapshot.timestamp}`],
+    partial: true,
+    snapshotUsed: true,
+  };
+}
+
+function loadSnapshot(db?: Database.Database): DiscoveryResult | null {
+  if (!db) {
+    return null;
+  }
+
+  try {
+    const row = db
+      .prepare(
+        'SELECT snapshot_json FROM model_discovery_snapshots WHERE snapshot_key = ?',
+      )
+      .get(DISCOVERY_SNAPSHOT_KEY) as { snapshot_json: string } | undefined;
+    if (!row) {
+      return null;
+    }
+
+    const parsed = JSON.parse(row.snapshot_json) as Partial<DiscoveryResult>;
+    return {
+      models: parsed.models ?? [],
+      backendsScanned: parsed.backendsScanned ?? [],
+      enrichedCount: parsed.enrichedCount ?? 0,
+      unenrichedCount: parsed.unenrichedCount ?? 0,
+      timestamp: parsed.timestamp ?? new Date(0).toISOString(),
+      errors: parsed.errors ?? [],
+      partial: parsed.partial ?? false,
+      snapshotUsed: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveSnapshot(db: Database.Database | undefined, result: DiscoveryResult): void {
+  if (!db) {
+    return;
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO model_discovery_snapshots (snapshot_key, snapshot_json, updated_at)
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(snapshot_key) DO UPDATE SET
+        snapshot_json = excluded.snapshot_json,
+        updated_at = excluded.updated_at
+    `).run(
+      DISCOVERY_SNAPSHOT_KEY,
+      JSON.stringify({ ...result, snapshotUsed: false }),
+    );
+  } catch {
+    // Snapshot persistence is best-effort only.
+  }
+}
+
+function createEmptyResult(errors: string[]): DiscoveryResult {
+  return {
+    models: [],
+    backendsScanned: [],
+    enrichedCount: 0,
+    unenrichedCount: 0,
+    timestamp: new Date().toISOString(),
+    errors,
+    partial: errors.length > 0,
+    snapshotUsed: false,
   };
 }
 
