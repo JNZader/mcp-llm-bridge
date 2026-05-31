@@ -23,19 +23,15 @@ import {
 	createCoreServices,
 	createToolingServices,
 } from "./bootstrap/core-services.js";
+import { bootstrapFreeModels } from "./bootstrap/free-models.js";
 import { bootstrapLocalLLM } from "./bootstrap/local-llm.js";
 import { bootstrapModelRouting } from "./bootstrap/model-routing.js";
 import { loadConfig } from "./core/config.js";
 import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
-import { freeModelCatalogEnabled, latencyRoutingEnabled } from "./core/runtime-flags.js";
+import { latencyRoutingEnabled } from "./core/runtime-flags.js";
 import { Router } from "./core/router.js";
 import { registry } from "./core/transformer.js";
-import {
-	FreeModelRouter,
-	importCatalog,
-	loadCatalog,
-} from "./free-models/index.js";
 import { LatencyMeasurer } from "./latency/index.js";
 import {
 	startHttpServerWithDeps,
@@ -99,24 +95,7 @@ router.setGroupStore(groupStore);
 sessionManager.startCleanup();
 router.setSessionManager(sessionManager);
 
-// Initialize free model router (opt-in via FALLBACK_STRATEGY=free-models)
-const freeModelEnabled = process.env["FALLBACK_STRATEGY"] === "free-models";
-const freeModelRouter = new FreeModelRouter({ enabled: freeModelEnabled });
-if (freeModelEnabled) {
-	router.setFreeModelRouter(freeModelRouter);
-	logger.info("Free model fallback routing enabled");
-}
-
-// Load free model catalog at startup (opt-in via FREE_MODEL_CATALOG=true)
-const catalogEnabled = freeModelCatalogEnabled();
-if (catalogEnabled) {
-	const catalog = loadCatalog();
-	if (catalog) {
-		const entries = importCatalog(catalog, freeModelRouter.getHealthChecker());
-		const imported = freeModelRouter.getRegistry().importModels(entries);
-		logger.info({ imported }, "Free model catalog loaded at startup");
-	}
-}
+const { freeModelEnabled, freeModelRouter } = bootstrapFreeModels(router);
 
 // Initialize latency-based routing (opt-in via LATENCY_ROUTING=true)
 const latencyRouting = latencyRoutingEnabled();
