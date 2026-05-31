@@ -31,7 +31,6 @@ import type { FreeModelRouter } from '../free-models/router.js';
 import type { LatencyMeasurer } from '../latency/measurer.js';
 import type { ModelRouter } from '../model-routing/router.js';
 import type { AnalyticsAggregator } from '../analytics/index.js';
-import { calculateCost } from './pricing.js';
 import { LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload } from '../local-llm/router.js';
 import { classify } from '../classification/index.js';
@@ -39,14 +38,19 @@ import type { TaskClassification } from '../classification/index.js';
 import type { ModelEndpoint, RoutingDecision } from '../model-routing/types.js';
 import {
   prioritizeEndpointCandidate,
-  providerMatchesEndpoint,
   reorderByLatency,
   resolveCandidates,
   resolveProviderModel,
 } from './router-candidate-planner.js';
+import {
+  createAttemptTelemetryCallbacks,
+  createStreamingRecordResult,
+  recordLocalFallbackMetric,
+  type RouterTelemetryContext,
+} from './router-telemetry.js';
 import { executeGenerateAttempt, tryProvider } from './router-executor.js';
 import { buildInternalRoutingPlan } from './router-internal-plan.js';
-import { optimizeMessagesEnabled, useTransformers } from './runtime-flags.js';
+import { optimizeMessagesEnabled } from './runtime-flags.js';
 
 import { logger } from './logger.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
@@ -198,6 +202,14 @@ export class Router {
     return this._providers;
   }
 
+  private getTelemetryContext(): RouterTelemetryContext {
+    return {
+      analyticsAggregator: this._analyticsAggregator,
+      costTracker: this._costTracker,
+      modelRouter: this._modelRouter,
+    };
+  }
+
   private withResolutionMetadata(
     request: GenerateRequest,
     result: GenerateResponse,
@@ -238,6 +250,7 @@ export class Router {
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const startTime = Date.now();
+    const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
     let candidates = await resolveCandidates(
       this._providers,
       request,
@@ -319,10 +332,7 @@ export class Router {
         startTime,
         defaultModel: model,
         classification,
-        resolveFeedbackEndpointId: (candidateProvider, resolvedModel, routedEndpoint) =>
-          this.resolveFeedbackEndpointId(candidateProvider, resolvedModel, routedEndpoint),
-        recordUsage: (...args) => this.recordUsage(...args),
-        recordModelFeedback: (...args) => this._recordModelFeedback(...args),
+        ...telemetry,
         logFailure: ({ provider: failedProvider, attemptedModel, message }) => {
           logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
         },
@@ -347,10 +357,7 @@ export class Router {
           startTime,
           defaultModel: model,
           classification,
-          resolveFeedbackEndpointId: (candidateProvider, resolvedModel, routedEndpoint) =>
-            this.resolveFeedbackEndpointId(candidateProvider, resolvedModel, routedEndpoint),
-          recordUsage: (...args) => this.recordUsage(...args),
-          recordModelFeedback: (...args) => this._recordModelFeedback(...args),
+          ...telemetry,
           logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
             if (error instanceof LocalLLMError) {
               logger.warn(
@@ -362,23 +369,12 @@ export class Router {
                 },
                 'Local LLM failed — falling back to cloud provider',
               );
-              // Emit metric for local-llm fallback
-              if (this._costTracker) {
-                try {
-                  this._costTracker.record({
-                    provider: 'local-llm-fallback',
-                    model: attemptedModel,
-                    tokensIn: 0,
-                    tokensOut: 0,
-                    latencyMs: Date.now() - startTime,
-                    success: false,
-                    project: request.project,
-                    errorMessage: `local-llm-fallback: ${message}`,
-                  });
-                } catch {
-                  // Non-blocking metric emission
-                }
-              }
+              recordLocalFallbackMetric(this.getTelemetryContext(), {
+                attemptedModel,
+                startTime,
+                project: request.project,
+                message,
+              });
               return;
             }
 
@@ -436,6 +432,7 @@ export class Router {
     const registry = this._transformerRegistry;
     const startTime = Date.now();
     const circuitBreaker = getCircuitBreakerV2();
+    const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
 
     const plan = await buildInternalRoutingPlan({
       providers: this._providers,
@@ -462,17 +459,14 @@ export class Router {
             try {
               const result = await tryProvider({
                 provider: stickyProvider,
-                request,
-                registry,
-                circuitBreaker,
-                startTime,
-                model,
-                resolveFeedbackEndpointId: (provider, resolvedModel, routedEndpoint) =>
-                  this.resolveFeedbackEndpointId(provider, resolvedModel, routedEndpoint),
-                recordUsage: (...args) => this.recordUsage(...args),
-                recordModelFeedback: (...args) => this._recordModelFeedback(...args),
-              });
-              return result;
+                 request,
+                 registry,
+                 circuitBreaker,
+                 startTime,
+                 model,
+                 ...telemetry,
+               });
+               return result;
             } catch {
               // Sticky provider failed — fall through to normal routing
               logger.warn({ provider: stickyProvider.id, clientId, model }, 'Sticky provider failed, falling through');
@@ -507,15 +501,12 @@ export class Router {
             plan.modelRouterDecision?.endpoint,
           ),
           registry,
-          circuitBreaker,
-          startTime,
-          classification: plan.classification ?? undefined,
-          routedEndpoint: plan.modelRouterDecision?.endpoint,
-          resolveFeedbackEndpointId: (candidateProvider, resolvedModel, routedEndpoint) =>
-            this.resolveFeedbackEndpointId(candidateProvider, resolvedModel, routedEndpoint),
-          recordUsage: (...args) => this.recordUsage(...args),
-          recordModelFeedback: (...args) => this._recordModelFeedback(...args),
-        });
+           circuitBreaker,
+           startTime,
+           classification: plan.classification ?? undefined,
+           routedEndpoint: plan.modelRouterDecision?.endpoint,
+           ...telemetry,
+         });
 
         // Pin session on success if stickiness is enabled
         if (this._sessionManager && clientId && model && plan.matchedGroup?.stickyTTL) {
@@ -591,38 +582,15 @@ export class Router {
             plan.optimizedRequest,
             provider,
             routedEndpoint,
-          ),
+            ),
           streamTransformer,
-          recordResult: ({
-            model,
-            tokensIn = 0,
-            tokensOut = 0,
-            latencyMs,
-            success,
-            project,
-            errorMessage,
-          }) => {
-            const resolvedModel =
-              model ?? resolveProviderModel(request.model, provider, routedEndpoint) ?? 'unknown';
-            this.recordUsage(
-              provider.id,
-              resolvedModel,
-              tokensIn,
-              tokensOut,
-              latencyMs,
-              success,
-              project,
-              errorMessage,
-            );
-            if (plan.classification) {
-              this._recordModelFeedback(
-                this.resolveFeedbackEndpointId(provider, resolvedModel, routedEndpoint),
-                plan.classification,
-                success,
-                latencyMs,
-              );
-            }
-          },
+          recordResult: createStreamingRecordResult({
+            telemetry: this.getTelemetryContext(),
+            provider,
+            requestModel: request.model,
+            routedEndpoint,
+            classification: plan.classification,
+          }),
         });
       }
     }
@@ -655,89 +623,6 @@ export class Router {
       },
       model: resolveProviderModel(request.model, provider, routedEndpoint),
     };
-  }
-
-  private resolveFeedbackEndpointId(
-    provider: LLMProvider,
-    model: string | undefined,
-    routedEndpoint?: ModelEndpoint,
-  ): string {
-    if (routedEndpoint && providerMatchesEndpoint(provider, routedEndpoint)) {
-      return routedEndpoint.id;
-    }
-
-    return this._modelRouter?.findEndpointForProvider(provider.id, model)?.id ?? provider.id;
-  }
-
-  /**
-   * Record usage via the cost tracker (if configured).
-   * Non-blocking — failures are logged, not thrown.
-   */
-  private recordUsage(
-    provider: string,
-    model: string,
-    tokensIn: number,
-    tokensOut: number,
-    latencyMs: number,
-    success: boolean,
-    project?: string,
-    errorMessage?: string,
-  ): void {
-    if (this._analyticsAggregator) {
-      try {
-        const cost = calculateCost(model, tokensIn, tokensOut);
-        this._analyticsAggregator.record(provider, model, {
-          inputTokens: tokensIn,
-          outputTokens: tokensOut,
-          cost,
-          latencyMs,
-          channel: project ?? 'default',
-        });
-      } catch (error) {
-        logger.warn({ error }, 'Failed to record analytics');
-      }
-    }
-
-    if (!this._costTracker) return;
-
-    try {
-      this._costTracker.record({
-        provider,
-        model,
-        tokensIn,
-        tokensOut,
-        latencyMs,
-        success,
-        project,
-        errorMessage,
-      });
-    } catch (error) {
-      logger.warn({ error }, 'Failed to record usage');
-    }
-  }
-
-  /**
-   * Record model routing feedback for adaptive routing.
-   * Non-blocking — failures are logged, not thrown.
-   */
-  private _recordModelFeedback(
-    endpointId: string,
-    classification: TaskClassification,
-    success: boolean,
-    latencyMs: number,
-  ): void {
-    if (!this._modelRouter) return;
-    try {
-      this._modelRouter.recordFeedback({
-        endpointId,
-        taskPattern: classification.task,
-        acceptable: success,
-        latencyMs,
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      logger.warn({ error, endpointId }, 'Failed to record model routing feedback');
-    }
   }
 
   /** Return models from all registered providers. */
