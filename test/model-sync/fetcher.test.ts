@@ -2,11 +2,14 @@
  * TDD Tests for Model Sync Fetchers
  *
  * Feature 8: Auto Model Sync
- * Following Red → Green → Refactor cycle
+ * Following Red -> Green -> Refactor cycle
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import assert from 'node:assert/strict';
+import { afterEach, beforeEach, describe, it } from 'node:test';
+
 import {
+  ModelSyncAlreadyRunningError,
   ModelSyncManager,
   createModelSyncManager,
   PROVIDER_TYPE,
@@ -55,8 +58,7 @@ function createMockDatabase(): Database {
           }
 
           if (sql.includes('UPDATE provider_models')) {
-            // Soft delete logic - mark all for provider as inactive
-            for (const [_key, row] of tables.provider_models) {
+            for (const [, row] of tables.provider_models) {
               if (row.provider === params[1]) {
                 row.is_active = 0;
                 row.last_synced_at = params[0];
@@ -103,7 +105,7 @@ function createMockDatabase(): Database {
           }
 
           if (sql.includes('FROM model_sync_log')) {
-            const result = Array.from(tables.model_sync_log.values())
+            return Array.from(tables.model_sync_log.values())
               .filter((row) => {
                 if (params.length > 0 && params[0] !== undefined) {
                   return row.provider === params[0];
@@ -121,7 +123,6 @@ function createMockDatabase(): Database {
                 models_removed: row.models_removed,
                 error: row.error,
               }));
-            return result;
           }
 
           return [];
@@ -142,17 +143,19 @@ function createMockDatabase(): Database {
 // === Mock Fetch ===
 
 function mockFetch(response: unknown): typeof fetch {
-  return vi.fn().mockResolvedValue({
-    ok: true,
-    json: () => Promise.resolve(response),
-  } as Response);
+  return () =>
+    Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(response),
+    } as Response);
 }
 
 function mockFetchError(status: number): typeof fetch {
-  return vi.fn().mockResolvedValue({
-    ok: false,
-    status,
-  } as Response);
+  return () =>
+    Promise.resolve({
+      ok: false,
+      status,
+    } as Response);
 }
 
 // === Tests ===
@@ -160,11 +163,17 @@ function mockFetchError(status: number): typeof fetch {
 describe('ModelSyncManager', () => {
   let db: Database;
   let manager: ModelSyncManager;
+  const originalFetch = global.fetch;
 
   beforeEach(() => {
     db = createMockDatabase();
+    ModelSyncManager.resetRuntimeState();
     manager = createModelSyncManager(db);
-    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    manager.stopAllAutoSync();
+    global.fetch = originalFetch;
   });
 
   describe('syncProvider', () => {
@@ -183,9 +192,9 @@ describe('ModelSyncManager', () => {
         autoSyncIntervalMs: 24 * 60 * 60 * 1000,
       });
 
-      expect(result.modelsFound.length).toBe(2);
-      expect(result.modelsFound.some((m) => m.id === 'gpt-4o')).toBe(true);
-      expect(result.provider).toBe(PROVIDER_TYPE.OPENAI);
+      assert.strictEqual(result.modelsFound.length, 2);
+      assert.strictEqual(result.modelsFound.some((m) => m.id === 'gpt-4o'), true);
+      assert.strictEqual(result.provider, PROVIDER_TYPE.OPENAI);
     });
 
     it('should filter models by regex', async () => {
@@ -202,25 +211,22 @@ describe('ModelSyncManager', () => {
         provider: PROVIDER_TYPE.OPENAI,
         baseUrl: 'https://api.openai.com/v1',
         apiKey: 'sk-test',
-        matchRegex: '^gpt-4', // Only GPT-4 models
+        matchRegex: '^gpt-4',
         autoSyncIntervalMs: 24 * 60 * 60 * 1000,
       });
 
-      expect(result.modelsFound.length).toBe(2);
-      expect(result.modelsFound.every((m) => m.id.startsWith('gpt-4'))).toBe(
-        true
-      );
+      assert.strictEqual(result.modelsFound.length, 2);
+      assert.strictEqual(result.modelsFound.every((m) => m.id.startsWith('gpt-4')), true);
     });
 
     it('should detect added and removed models', async () => {
-      // Pre-populate with old model
       const stmt = db.prepare(`INSERT INTO provider_models 
         (provider, model_id, discovered_at, last_synced_at, is_active) 
         VALUES (?, ?, ?, ?, 1)`);
       stmt.run('openai', 'old-model', Date.now(), Date.now());
 
       global.fetch = mockFetch({
-        data: [{ id: 'gpt-4o' }], // Only new model
+        data: [{ id: 'gpt-4o' }],
       });
 
       const result = await manager.syncProvider({
@@ -230,23 +236,25 @@ describe('ModelSyncManager', () => {
         autoSyncIntervalMs: 24 * 60 * 60 * 1000,
       });
 
-      expect(result.modelsAdded.length).toBe(1);
-      expect(result.modelsAdded[0]!.id).toBe('gpt-4o');
-      expect(result.modelsRemoved.length).toBe(1);
-      expect(result.modelsRemoved[0]!).toBe('old-model');
+      assert.strictEqual(result.modelsAdded.length, 1);
+      assert.strictEqual(result.modelsAdded[0]?.id, 'gpt-4o');
+      assert.strictEqual(result.modelsRemoved.length, 1);
+      assert.strictEqual(result.modelsRemoved[0], 'old-model');
     });
 
     it('should handle fetch errors', async () => {
       global.fetch = mockFetchError(401);
 
-      await expect(
-        manager.syncProvider({
-          provider: PROVIDER_TYPE.OPENAI,
-          baseUrl: 'https://api.openai.com/v1',
-          apiKey: 'invalid-key',
-          autoSyncIntervalMs: 24 * 60 * 60 * 1000,
-        })
-      ).rejects.toThrow('Failed to fetch models');
+      await assert.rejects(
+        async () =>
+          manager.syncProvider({
+            provider: PROVIDER_TYPE.OPENAI,
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'invalid-key',
+            autoSyncIntervalMs: 24 * 60 * 60 * 1000,
+          }),
+        /Failed to fetch models/
+      );
     });
 
     it('should handle invalid regex gracefully', async () => {
@@ -258,12 +266,99 @@ describe('ModelSyncManager', () => {
         provider: PROVIDER_TYPE.OPENAI,
         baseUrl: 'https://api.openai.com/v1',
         apiKey: 'sk-test',
-        matchRegex: '[invalid(', // Invalid regex
+        matchRegex: '[invalid(',
         autoSyncIntervalMs: 24 * 60 * 60 * 1000,
       });
 
-      // Should return all models when regex is invalid
-      expect(result.modelsFound.length).toBe(2);
+      assert.strictEqual(result.modelsFound.length, 2);
+    });
+
+    it('should reject overlapping syncs for the same provider and release the lock on success', async () => {
+      let resolveFetch: ((value: Response) => void) | undefined;
+      global.fetch = (() =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })) as typeof fetch;
+
+      const firstSync = manager.syncProvider({
+        provider: PROVIDER_TYPE.OPENAI,
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-test',
+        autoSyncIntervalMs: 24 * 60 * 60 * 1000,
+      });
+
+      await Promise.resolve();
+
+      const runningStatus = manager.getRunStatus(PROVIDER_TYPE.OPENAI);
+      assert.strictEqual(runningStatus.isRunning, true);
+      assert.ok(runningStatus.startedAt);
+
+      await assert.rejects(
+        async () =>
+          manager.syncProvider({
+            provider: PROVIDER_TYPE.OPENAI,
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-test',
+            autoSyncIntervalMs: 24 * 60 * 60 * 1000,
+          }),
+        (error: unknown) => {
+          assert.ok(error instanceof ModelSyncAlreadyRunningError);
+          assert.strictEqual(error.status.provider, PROVIDER_TYPE.OPENAI);
+          assert.strictEqual(error.status.isRunning, true);
+          assert.ok(error.status.startedAt);
+          return true;
+        }
+      );
+
+      resolveFetch?.({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: 'gpt-4o' }] }),
+      } as Response);
+
+      await firstSync;
+
+      const completedStatus = manager.getRunStatus(PROVIDER_TYPE.OPENAI);
+      assert.strictEqual(completedStatus.isRunning, false);
+      assert.strictEqual(completedStatus.startedAt, null);
+      assert.ok(completedStatus.lastCompletedAt);
+      assert.strictEqual(completedStatus.lastSuccessAt, completedStatus.lastCompletedAt);
+      assert.strictEqual(completedStatus.lastError, null);
+      assert.strictEqual(completedStatus.lastResultSummary?.modelsFound, 1);
+    });
+
+    it('should release the lock and capture error status after failure', async () => {
+      global.fetch = mockFetchError(500);
+
+      await assert.rejects(
+        async () =>
+          manager.syncProvider({
+            provider: PROVIDER_TYPE.OPENAI,
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-test',
+            autoSyncIntervalMs: 24 * 60 * 60 * 1000,
+          }),
+        /Failed to fetch models/
+      );
+
+      const status = manager.getRunStatus(PROVIDER_TYPE.OPENAI);
+      assert.strictEqual(status.isRunning, false);
+      assert.strictEqual(status.startedAt, null);
+      assert.ok(status.lastCompletedAt);
+      assert.strictEqual(status.lastSuccessAt, null);
+      assert.match(status.lastError ?? '', /Failed to fetch models/);
+      assert.match(status.lastResultSummary?.error ?? '', /Failed to fetch models/);
+
+      global.fetch = mockFetch({ data: [{ id: 'gpt-4o' }] });
+
+      const recovery = await manager.syncProvider({
+        provider: PROVIDER_TYPE.OPENAI,
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-test',
+        autoSyncIntervalMs: 24 * 60 * 60 * 1000,
+      });
+
+      assert.strictEqual(recovery.modelsFound.length, 1);
+      assert.strictEqual(manager.getRunStatus(PROVIDER_TYPE.OPENAI).isRunning, false);
     });
   });
 
@@ -278,7 +373,7 @@ describe('ModelSyncManager', () => {
         autoSyncIntervalMs: 1000,
       });
 
-      expect(manager.isAutoSyncRunning(PROVIDER_TYPE.OPENAI)).toBe(true);
+      assert.strictEqual(manager.isAutoSyncRunning(PROVIDER_TYPE.OPENAI), true);
     });
 
     it('should stop auto-sync for provider', () => {
@@ -292,12 +387,11 @@ describe('ModelSyncManager', () => {
       });
 
       manager.stopAutoSync(PROVIDER_TYPE.OPENAI);
-      expect(manager.isAutoSyncRunning(PROVIDER_TYPE.OPENAI)).toBe(false);
+      assert.strictEqual(manager.isAutoSyncRunning(PROVIDER_TYPE.OPENAI), false);
     });
 
     it('should track running auto-sync providers', () => {
-      // Mock both fetch responses since sync happens immediately
-      global.fetch = vi.fn().mockImplementation((url: string | URL) => {
+      global.fetch = ((url: string | URL) => {
         const urlStr = url.toString();
         if (urlStr.includes('anthropic')) {
           return Promise.resolve({
@@ -309,7 +403,7 @@ describe('ModelSyncManager', () => {
           ok: true,
           json: () => Promise.resolve({ data: [] }),
         } as Response);
-      });
+      }) as typeof fetch;
 
       manager.startAutoSync({
         provider: PROVIDER_TYPE.OPENAI,
@@ -326,13 +420,12 @@ describe('ModelSyncManager', () => {
       });
 
       const running = manager.getRunningAutoSyncProviders();
-      expect(running).toContain(PROVIDER_TYPE.OPENAI);
-      expect(running).toContain(PROVIDER_TYPE.ANTHROPIC);
+      assert.ok(running.includes(PROVIDER_TYPE.OPENAI));
+      assert.ok(running.includes(PROVIDER_TYPE.ANTHROPIC));
     });
 
     it('should stop all auto-sync on stopAllAutoSync', () => {
-      // Mock both fetch responses since sync happens immediately
-      global.fetch = vi.fn().mockImplementation((url: string | URL) => {
+      global.fetch = ((url: string | URL) => {
         const urlStr = url.toString();
         if (urlStr.includes('anthropic')) {
           return Promise.resolve({
@@ -344,7 +437,7 @@ describe('ModelSyncManager', () => {
           ok: true,
           json: () => Promise.resolve({ data: [] }),
         } as Response);
-      });
+      }) as typeof fetch;
 
       manager.startAutoSync({
         provider: PROVIDER_TYPE.OPENAI,
@@ -361,7 +454,7 @@ describe('ModelSyncManager', () => {
       });
 
       manager.stopAllAutoSync();
-      expect(manager.getRunningAutoSyncProviders()).toHaveLength(0);
+      assert.strictEqual(manager.getRunningAutoSyncProviders().length, 0);
     });
   });
 
@@ -379,12 +472,11 @@ describe('ModelSyncManager', () => {
       });
 
       const models = manager.getModels(PROVIDER_TYPE.OPENAI);
-      expect(models.length).toBe(2);
-      expect(models.some((m) => m.id === 'gpt-4o')).toBe(true);
+      assert.strictEqual(models.length, 2);
+      assert.strictEqual(models.some((m) => m.id === 'gpt-4o'), true);
     });
 
     it('should filter to active only by default', async () => {
-      // First, pre-populate an inactive model directly
       const insertStmt = db.prepare(`INSERT INTO provider_models 
         (provider, model_id, discovered_at, last_synced_at, is_active, match_regex) 
         VALUES (?, ?, ?, ?, 0, NULL)`);
@@ -402,12 +494,11 @@ describe('ModelSyncManager', () => {
       });
 
       const models = manager.getModels(PROVIDER_TYPE.OPENAI);
-      expect(models.length).toBe(1);
-      expect(models[0]!.id).toBe('gpt-4o');
+      assert.strictEqual(models.length, 1);
+      assert.strictEqual(models[0]?.id, 'gpt-4o');
     });
 
     it('should include inactive when activeOnly is false', async () => {
-      // First, pre-populate an inactive model
       const insertStmt = db.prepare(`INSERT INTO provider_models 
         (provider, model_id, discovered_at, last_synced_at, is_active, match_regex) 
         VALUES (?, ?, ?, ?, 0, NULL)`);
@@ -425,7 +516,7 @@ describe('ModelSyncManager', () => {
       const models = manager.getModels(PROVIDER_TYPE.OPENAI, {
         activeOnly: false,
       });
-      expect(models.length).toBe(2);
+      assert.strictEqual(models.length, 2);
     });
   });
 
@@ -443,8 +534,8 @@ describe('ModelSyncManager', () => {
       });
 
       const history = manager.getSyncHistory(PROVIDER_TYPE.OPENAI, 10);
-      expect(history.length).toBeGreaterThan(0);
-      expect(history[0]!.provider).toBe(PROVIDER_TYPE.OPENAI);
+      assert.ok(history.length > 0);
+      assert.strictEqual(history[0]?.provider, PROVIDER_TYPE.OPENAI);
     });
 
     it('should filter history by provider', async () => {
@@ -457,7 +548,6 @@ describe('ModelSyncManager', () => {
         autoSyncIntervalMs: 24 * 60 * 60 * 1000,
       });
 
-      // Mock different response for Anthropic
       global.fetch = mockFetch({
         models: [{ id: 'claude-3' }],
       });
@@ -470,7 +560,8 @@ describe('ModelSyncManager', () => {
       });
 
       const openaiHistory = manager.getSyncHistory(PROVIDER_TYPE.OPENAI, 10);
-      expect(openaiHistory.every((h) => h.provider === PROVIDER_TYPE.OPENAI)).toBe(
+      assert.strictEqual(
+        openaiHistory.every((h) => h.provider === PROVIDER_TYPE.OPENAI),
         true
       );
     });
@@ -478,7 +569,6 @@ describe('ModelSyncManager', () => {
     it('should respect limit parameter', async () => {
       global.fetch = mockFetch({ data: [{ id: 'gpt-4o' }] });
 
-      // Run multiple syncs
       for (let i = 0; i < 5; i++) {
         await manager.syncProvider({
           provider: PROVIDER_TYPE.OPENAI,
@@ -489,12 +579,18 @@ describe('ModelSyncManager', () => {
       }
 
       const history = manager.getSyncHistory(PROVIDER_TYPE.OPENAI, 3);
-      expect(history.length).toBeLessThanOrEqual(3);
+      assert.ok(history.length <= 3);
     });
   });
 });
 
 describe('Model Fetchers', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
   describe('OpenAIModelFetcher', () => {
     it('should fetch and parse OpenAI models', async () => {
       global.fetch = mockFetch({
@@ -515,11 +611,11 @@ describe('Model Fetchers', () => {
         'sk-test'
       );
 
-      expect(models.length).toBe(1);
-      expect(models[0]!.id).toBe('gpt-4o');
-      expect(models[0]!.name).toBe('GPT-4o');
-      expect(models[0]!.contextLength).toBe(128000);
-      expect(models[0]!.pricing).toEqual({ input: 0.005, output: 0.015 });
+      assert.strictEqual(models.length, 1);
+      assert.strictEqual(models[0]?.id, 'gpt-4o');
+      assert.strictEqual(models[0]?.name, 'GPT-4o');
+      assert.strictEqual(models[0]?.contextLength, 128000);
+      assert.deepStrictEqual(models[0]?.pricing, { input: 0.005, output: 0.015 });
     });
 
     it('should handle missing optional fields', async () => {
@@ -533,10 +629,10 @@ describe('Model Fetchers', () => {
         'sk-test'
       );
 
-      expect(models[0]!.id).toBe('gpt-4o');
-      expect(models[0]!.name).toBe('gpt-4o'); // Falls back to id
-      expect(models[0]!.description).toBeUndefined();
-      expect(models[0]!.contextLength).toBeUndefined();
+      assert.strictEqual(models[0]?.id, 'gpt-4o');
+      assert.strictEqual(models[0]?.name, 'gpt-4o');
+      assert.strictEqual(models[0]?.description, undefined);
+      assert.strictEqual(models[0]?.contextLength, undefined);
     });
   });
 
@@ -559,9 +655,9 @@ describe('Model Fetchers', () => {
         'sk-test'
       );
 
-      expect(models.length).toBe(1);
-      expect(models[0]!.id).toBe('claude-3-opus-20240229');
-      expect(models[0]!.name).toBe('Claude 3 Opus');
+      assert.strictEqual(models.length, 1);
+      assert.strictEqual(models[0]?.id, 'claude-3-opus-20240229');
+      assert.strictEqual(models[0]?.name, 'Claude 3 Opus');
     });
   });
 
@@ -586,15 +682,15 @@ describe('Model Fetchers', () => {
         'api-key'
       );
 
-      expect(models.length).toBe(1);
-      expect(models[0]!.id).toBe('gemini-1.5-pro');
-      expect(models[0]!.name).toBe('Gemini 1.5 Pro');
-      expect(models[0]!.contextLength).toBe(1008192); // Sum of input + output
+      assert.strictEqual(models.length, 1);
+      assert.strictEqual(models[0]?.id, 'gemini-1.5-pro');
+      assert.strictEqual(models[0]?.name, 'Gemini 1.5 Pro');
+      assert.strictEqual(models[0]?.contextLength, 1008192);
     });
 
     it('should handle pagination', async () => {
       let callCount = 0;
-      global.fetch = vi.fn().mockImplementation((url: string | URL) => {
+      global.fetch = ((url: string | URL) => {
         const urlStr = url.toString();
         callCount++;
 
@@ -616,7 +712,7 @@ describe('Model Fetchers', () => {
               models: [{ name: 'models/gemini-2' }],
             }),
         } as Response);
-      });
+      }) as typeof fetch;
 
       const fetcher = new GeminiModelFetcher();
       const models = await fetcher.fetchModels(
@@ -624,8 +720,8 @@ describe('Model Fetchers', () => {
         'api-key'
       );
 
-      expect(callCount).toBe(2);
-      expect(models.length).toBe(2);
+      assert.strictEqual(callCount, 2);
+      assert.strictEqual(models.length, 2);
     });
   });
 });
@@ -633,40 +729,40 @@ describe('Model Fetchers', () => {
 describe('Type Guards', () => {
   describe('isProviderType', () => {
     it('should validate valid providers', () => {
-      expect(isProviderType('openai')).toBe(true);
-      expect(isProviderType('groq')).toBe(true);
-      expect(isProviderType('anthropic')).toBe(true);
-      expect(isProviderType('gemini')).toBe(true);
-      expect(isProviderType('openrouter')).toBe(true);
+      assert.strictEqual(isProviderType('openai'), true);
+      assert.strictEqual(isProviderType('groq'), true);
+      assert.strictEqual(isProviderType('anthropic'), true);
+      assert.strictEqual(isProviderType('gemini'), true);
+      assert.strictEqual(isProviderType('openrouter'), true);
     });
 
     it('should reject invalid providers', () => {
-      expect(isProviderType('invalid')).toBe(false);
-      expect(isProviderType('')).toBe(false);
-      expect(isProviderType(null)).toBe(false);
-      expect(isProviderType(undefined)).toBe(false);
-      expect(isProviderType(123)).toBe(false);
+      assert.strictEqual(isProviderType('invalid'), false);
+      assert.strictEqual(isProviderType(''), false);
+      assert.strictEqual(isProviderType(null), false);
+      assert.strictEqual(isProviderType(undefined), false);
+      assert.strictEqual(isProviderType(123), false);
     });
   });
 
   describe('isSupportedProvider', () => {
     it('should check if provider has a fetcher', () => {
-      expect(isSupportedProvider('openai')).toBe(true);
-      expect(isSupportedProvider('groq')).toBe(true);
-      expect(isSupportedProvider('invalid')).toBe(false);
+      assert.strictEqual(isSupportedProvider('openai'), true);
+      assert.strictEqual(isSupportedProvider('groq'), true);
+      assert.strictEqual(isSupportedProvider('invalid'), false);
     });
   });
 
   describe('getFetcherForProvider', () => {
     it('should return fetcher for supported providers', () => {
       const fetcher = getFetcherForProvider(PROVIDER_TYPE.OPENAI);
-      expect(fetcher).not.toBeNull();
-      expect(fetcher).toBeInstanceOf(OpenAIModelFetcher);
+      assert.notStrictEqual(fetcher, null);
+      assert.ok(fetcher instanceof OpenAIModelFetcher);
     });
 
     it('should return null for unsupported providers', () => {
       const fetcher = getFetcherForProvider('invalid' as ProviderType);
-      expect(fetcher).toBeNull();
+      assert.strictEqual(fetcher, null);
     });
   });
 });

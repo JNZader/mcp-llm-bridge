@@ -18,6 +18,8 @@ export type {
   ModelPricing,
   ModelSyncConfig,
   ModelSyncResult,
+  ModelSyncResultSummary,
+  ModelSyncRunStatus,
   ProviderModelRecord,
   ModelSyncLogRecord,
 } from './types.js';
@@ -36,6 +38,7 @@ export type { ModelFetcher, FetcherClass } from './fetcher.js';
 
 // Sync Manager
 export {
+  ModelSyncAlreadyRunningError,
   ModelSyncManager,
   createModelSyncManager,
 } from './sync-manager.js';

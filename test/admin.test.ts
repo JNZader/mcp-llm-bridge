@@ -32,6 +32,8 @@ import {
 import { CircuitState } from '../src/circuit-breaker/index.js';
 import { createDashboardJwt } from '../src/auth/github-oauth.js';
 import { migrate } from '../src/db/migrate.js';
+import { ModelSyncManager } from '../src/model-sync/index.js';
+import { PriceManager } from '../src/price-sync/index.js';
 
 // ── Test infrastructure ──────────────────────────────────
 
@@ -109,6 +111,8 @@ afterEach(() => {
   // Clean up environment variables between tests
   delete process.env['ADMIN_TOKEN'];
   resetCircuitBreakerV2();
+  ModelSyncManager.resetRuntimeState();
+  PriceManager.resetRuntimeState();
 });
 
 // ── HTTP helper ──────────────────────────────────────────
@@ -550,6 +554,28 @@ function mockFetch(response: unknown): typeof fetch {
     } as Response)) as unknown as typeof fetch;
 }
 
+function createDeferredFetch(response: unknown): {
+  fetch: typeof fetch;
+  resolve: () => void;
+} {
+  let resolveFetch: (() => void) | undefined;
+
+  return {
+    fetch: (async () =>
+      new Promise<Response>((resolve) => {
+        resolveFetch = () => {
+          resolve({
+            ok: true,
+            json: () => Promise.resolve(response),
+          } as Response);
+        };
+      })) as unknown as typeof fetch,
+    resolve: () => {
+      resolveFetch?.();
+    },
+  };
+}
+
 describe('POST /v1/admin/models/sync', () => {
   it('syncs models for a provider using vault credentials', async () => {
     // Store a credential in the vault for openai
@@ -648,6 +674,50 @@ describe('POST /v1/admin/models/sync', () => {
     const data = res.data as { error: string; code: string };
     assert.equal(data.code, 'MISSING_CREDENTIALS');
   });
+
+  it('returns 409 with active run details when the same provider sync overlaps', async () => {
+    vault.store('openai', 'default', 'sk-test-openai-key');
+
+    const originalFetch = global.fetch;
+    const deferred = createDeferredFetch({ data: [{ id: 'gpt-4o' }] });
+    global.fetch = deferred.fetch;
+
+    try {
+      const firstRequest = request('POST', '/v1/admin/models/sync', {
+        provider: 'openai',
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const overlap = await request('POST', '/v1/admin/models/sync', {
+        provider: 'openai',
+      });
+
+      assert.equal(overlap.status, 409);
+
+      const overlapData = overlap.data as {
+        error: string;
+        code: string;
+        details: {
+          provider: string;
+          activeRun: { provider: string; isRunning: boolean; startedAt: number | null };
+        };
+      };
+
+      assert.equal(overlapData.code, 'SYNC_ALREADY_RUNNING');
+      assert.equal(overlapData.details.provider, 'openai');
+      assert.equal(overlapData.details.activeRun.provider, 'openai');
+      assert.equal(overlapData.details.activeRun.isRunning, true);
+      assert.ok(overlapData.details.activeRun.startedAt);
+
+      deferred.resolve();
+      const firstResponse = await firstRequest;
+      assert.equal(firstResponse.status, 200);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
 
 // ── GET /v1/admin/models/sync/history ───────────────────
@@ -725,6 +795,31 @@ describe('GET /v1/admin/models/sync/history', () => {
   });
 });
 
+describe('GET /v1/admin/models/sync/status', () => {
+  it('returns provider runtime status', async () => {
+    const res = await request('GET', '/v1/admin/models/sync/status?provider=openai');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      statuses: Array<{
+        provider: string;
+        isRunning: boolean;
+        startedAt: number | null;
+        lastCompletedAt: number | null;
+        lastSuccessAt: number | null;
+        lastError: string | null;
+        lastResultSummary: unknown;
+      }>;
+      count: number;
+    };
+
+    assert.equal(data.count, 1);
+    assert.equal(data.statuses[0]?.provider, 'openai');
+    assert.equal(data.statuses[0]?.isRunning, false);
+    assert.equal(data.statuses[0]?.startedAt, null);
+  });
+});
+
 // ── POST /v1/admin/prices/sync ───────────────────────────
 
 describe('POST /v1/admin/prices/sync', () => {
@@ -778,6 +873,102 @@ describe('POST /v1/admin/prices/sync', () => {
     assert.equal(data.details.field, 'provider');
     assert.equal(data.details.received, 'invalid-provider');
     assert.ok(Array.isArray(data.details.supportedProviders));
+  });
+
+  it('returns 409 with active run details when a price sync overlaps', async () => {
+    const originalFetch = global.fetch;
+    const deferred = createDeferredFetch({
+      providers: {
+        openai: {
+          'gpt-4o': {
+            name: 'GPT-4o',
+            input: { price: 0.000005, currency: 'USD' },
+            output: { price: 0.000015, currency: 'USD' },
+          },
+        },
+      },
+    });
+    global.fetch = deferred.fetch;
+
+    try {
+      const firstRequest = request('POST', '/v1/admin/prices/sync');
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const overlap = await request('POST', '/v1/admin/prices/sync');
+      assert.equal(overlap.status, 409);
+
+      const overlapData = overlap.data as {
+        error: string;
+        code: string;
+        details: { activeRun: { isRunning: boolean; startedAt: number | null } };
+      };
+
+      assert.equal(overlapData.code, 'SYNC_ALREADY_RUNNING');
+      assert.equal(overlapData.details.activeRun.isRunning, true);
+      assert.ok(overlapData.details.activeRun.startedAt);
+
+      deferred.resolve();
+      const firstResponse = await firstRequest;
+      assert.equal(firstResponse.status, 200);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+});
+
+describe('GET /v1/admin/prices/sync/status', () => {
+  it('returns price sync runtime status', async () => {
+    const res = await request('GET', '/v1/admin/prices/sync/status');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      isRunning: boolean;
+      startedAt: number | null;
+      lastCompletedAt: number | null;
+      lastSuccessAt: number | null;
+      lastError: string | null;
+      lastResultSummary: unknown;
+    };
+
+    assert.equal(data.isRunning, false);
+    assert.equal(data.startedAt, null);
+  });
+});
+
+describe('GET /v1/admin/prices/sync/history', () => {
+  it('returns price sync history', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = mockFetch({
+      providers: {
+        openai: {
+          'gpt-4o': {
+            name: 'GPT-4o',
+            input: { price: 0.000005, currency: 'USD' },
+            output: { price: 0.000015, currency: 'USD' },
+          },
+        },
+      },
+    }) as unknown as typeof fetch;
+
+    try {
+      await request('POST', '/v1/admin/prices/sync');
+
+      const res = await request('GET', '/v1/admin/prices/sync/history');
+      assert.equal(res.status, 200);
+
+      const data = res.data as {
+        history: Array<{ id: number; modelsAdded: number; modelsUpdated: number }>;
+        count: number;
+      };
+
+      assert.ok(Array.isArray(data.history));
+      assert.ok(data.count > 0);
+      assert.ok(data.history[0]);
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });
 

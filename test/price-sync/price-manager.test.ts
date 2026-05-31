@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   PriceManager,
+  PriceSyncAlreadyRunningError,
   createPriceManager,
   PriceFetcher,
   type Database,
@@ -201,6 +202,7 @@ describe('PriceManager', () => {
 
   beforeEach(() => {
     db = createMockDatabase();
+    PriceManager.resetRuntimeState();
     manager = createPriceManager(db);
   });
 
@@ -334,6 +336,84 @@ describe('PriceManager', () => {
       assert.ok(history.length > 0);
       assert.strictEqual(history[0]!.modelsAdded, 1);
       assert.strictEqual(history[0]!.modelsUpdated, 0);
+    });
+
+    it('should reject overlapping syncs and release the lock on success', async () => {
+      let resolveFetch: ((value: Response) => void) | undefined;
+      global.fetch = (() =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })) as typeof fetch;
+
+      const firstSync = manager.syncFromUpstream();
+      await Promise.resolve();
+
+      const runningStatus = manager.getRunStatus();
+      assert.strictEqual(runningStatus.isRunning, true);
+      assert.ok(runningStatus.startedAt);
+
+      await assert.rejects(
+        async () => manager.syncFromUpstream(),
+        (error: unknown) => error instanceof PriceSyncAlreadyRunningError
+      );
+
+      resolveFetch?.({
+        ok: true,
+        json: () => Promise.resolve({
+          providers: {
+            openai: {
+              'gpt-4o': {
+                name: 'GPT-4o',
+                input: { price: 2.5, currency: 'USD' },
+                output: { price: 10.0, currency: 'USD' },
+              },
+            },
+          },
+        }),
+      } as Response);
+
+      await firstSync;
+
+      const completedStatus = manager.getRunStatus();
+      assert.strictEqual(completedStatus.isRunning, false);
+      assert.strictEqual(completedStatus.startedAt, null);
+      assert.ok(completedStatus.lastCompletedAt);
+      assert.strictEqual(completedStatus.lastSuccessAt, completedStatus.lastCompletedAt);
+      assert.strictEqual(completedStatus.lastError, null);
+      assert.strictEqual(completedStatus.lastResultSummary?.added, 1);
+    });
+
+    it('should release the lock and capture error status after failure', async () => {
+      global.fetch = mockFetchError(500);
+
+      await assert.rejects(
+        async () => manager.syncFromUpstream(),
+        /Failed to fetch prices/
+      );
+
+      const status = manager.getRunStatus();
+      assert.strictEqual(status.isRunning, false);
+      assert.strictEqual(status.startedAt, null);
+      assert.ok(status.lastCompletedAt);
+      assert.strictEqual(status.lastSuccessAt, null);
+      assert.match(status.lastError ?? '', /Failed to fetch prices/);
+      assert.match(status.lastResultSummary?.error ?? '', /Failed to fetch prices/);
+
+      global.fetch = mockFetch({
+        providers: {
+          openai: {
+            'gpt-4o': {
+              name: 'GPT-4o',
+              input: { price: 2.5, currency: 'USD' },
+              output: { price: 10.0, currency: 'USD' },
+            },
+          },
+        },
+      });
+
+      const recovery = await manager.syncFromUpstream();
+      assert.strictEqual(recovery.added, 1);
+      assert.strictEqual(manager.getRunStatus().isRunning, false);
     });
   });
 

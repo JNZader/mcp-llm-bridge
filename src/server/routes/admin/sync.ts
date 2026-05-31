@@ -3,12 +3,13 @@ import type Database from 'better-sqlite3';
 
 import type { Vault } from '../../../vault/vault.js';
 import {
+  ModelSyncAlreadyRunningError,
   ModelSyncManager,
   isProviderType,
   PROVIDER_TYPE,
   type ProviderType,
 } from '../../../model-sync/index.js';
-import { PriceManager } from '../../../price-sync/index.js';
+import { PriceManager, PriceSyncAlreadyRunningError } from '../../../price-sync/index.js';
 import {
   resolveProviderApiKey,
   resolveProviderApiKeyEnv,
@@ -34,7 +35,7 @@ const DEFAULT_PROVIDER_BASE_URLS: Record<ProviderType, string> = {
 
 function jsonError(
   c: Context,
-  status: 400 | 404 | 500 | 503,
+  status: 400 | 404 | 409 | 500 | 503,
   error: string,
   code: string,
   details?: Record<string, unknown>,
@@ -183,13 +184,25 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           : 24 * 60 * 60 * 1000;
 
       const syncManager = new ModelSyncManager(deps.db);
-      const result = await syncManager.syncProvider({
-        provider: resolvedProvider,
-        baseUrl,
-        apiKey,
-        matchRegex,
-        autoSyncIntervalMs,
-      });
+      let result;
+      try {
+        result = await syncManager.syncProvider({
+          provider: resolvedProvider,
+          baseUrl,
+          apiKey,
+          matchRegex,
+          autoSyncIntervalMs,
+        });
+      } catch (error) {
+        if (error instanceof ModelSyncAlreadyRunningError) {
+          return jsonError(c, 409, 'Model sync already running', 'SYNC_ALREADY_RUNNING', {
+            provider: resolvedProvider,
+            activeRun: error.status,
+          });
+        }
+
+        throw error;
+      }
 
       return c.json({
         ok: true,
@@ -199,6 +212,33 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         added: result.modelsAdded,
         removed: result.modelsRemoved,
         timestamp: result.timestamp,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    }
+  });
+
+  app.get('/v1/admin/models/sync/status', (c) => {
+    try {
+      if (!deps.db) {
+        return jsonError(c, 500, 'Database not configured', 'NOT_CONFIGURED');
+      }
+
+      const provider = c.req.query('provider') ?? undefined;
+      const providerValidation = validateOptionalProvider(provider, 'provider');
+      if (!providerValidation.ok) {
+        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', providerValidation.details);
+      }
+
+      const syncManager = new ModelSyncManager(deps.db);
+      const statuses = providerValidation.provider
+        ? [syncManager.getRunStatus(providerValidation.provider)]
+        : supportedSyncProviders.map((supportedProvider) => syncManager.getRunStatus(supportedProvider));
+
+      return c.json({
+        statuses,
+        count: statuses.length,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -289,8 +329,65 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       }
 
       const priceManager = new PriceManager(deps.db);
-      const result = await priceManager.syncPrices();
+      let result;
+      try {
+        result = await priceManager.syncPrices();
+      } catch (error) {
+        if (error instanceof PriceSyncAlreadyRunningError) {
+          return jsonError(c, 409, 'Price sync already running', 'SYNC_ALREADY_RUNNING', {
+            activeRun: error.status,
+          });
+        }
+
+        throw error;
+      }
+
       return c.json({ ok: true, synced: result.added + result.updated, details: result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    }
+  });
+
+  app.get('/v1/admin/prices/sync/status', (c) => {
+    try {
+      if (!deps.db) {
+        return jsonError(c, 500, 'Database not configured', 'NOT_CONFIGURED');
+      }
+
+      const priceManager = new PriceManager(deps.db);
+      return c.json(priceManager.getRunStatus());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    }
+  });
+
+  app.get('/v1/admin/prices/sync/history', (c) => {
+    try {
+      if (!deps.db) {
+        return jsonError(c, 500, 'Database not configured', 'NOT_CONFIGURED');
+      }
+
+      const limitStr = c.req.query('limit');
+      const limitValidation = validateLimit(limitStr, 'limit');
+      if (!limitValidation.ok) {
+        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', limitValidation.details);
+      }
+
+      const priceManager = new PriceManager(deps.db);
+      const history = priceManager.getSyncHistory(limitValidation.limit);
+
+      return c.json({
+        history: history.map((entry) => ({
+          id: entry.id,
+          syncedAt: entry.syncedAt,
+          modelsUpdated: entry.modelsUpdated,
+          modelsAdded: entry.modelsAdded,
+          error: entry.error,
+        })),
+        count: history.length,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return jsonError(c, 500, message, 'INTERNAL_ERROR');

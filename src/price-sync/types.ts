@@ -72,6 +72,23 @@ export interface PriceSyncResult {
   error?: string;
 }
 
+export interface PriceSyncResultSummary {
+  timestamp: number;
+  updated: number;
+  added: number;
+  unchanged: number;
+  error: string | null;
+}
+
+export interface PriceSyncRunStatus {
+  isRunning: boolean;
+  startedAt: number | null;
+  lastCompletedAt: number | null;
+  lastSuccessAt: number | null;
+  lastError: string | null;
+  lastResultSummary: PriceSyncResultSummary | null;
+}
+
 // Type guards
 export function isModelPrice(value: unknown): value is ModelPrice {
   if (typeof value !== 'object' || value === null) return false;

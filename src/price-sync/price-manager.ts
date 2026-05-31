@@ -12,7 +12,9 @@ import {
   StoredPrice,
   NewStoredPrice,
   PriceSyncLogRecord,
+  PriceSyncRunStatus,
   PriceSyncResult,
+  PriceSyncResultSummary,
   DEFAULT_CURRENCY,
   DEFAULT_SYNC_INTERVAL_MS,
 } from './types.js';
@@ -30,6 +32,16 @@ export interface Statement {
   get(...params: unknown[]): unknown | undefined;
 }
 
+export class PriceSyncAlreadyRunningError extends Error {
+  readonly status: PriceSyncRunStatus;
+
+  constructor(status: PriceSyncRunStatus) {
+    super('Price sync already running');
+    this.name = 'PriceSyncAlreadyRunningError';
+    this.status = status;
+  }
+}
+
 // === Price Manager ===
 
 export class PriceManager {
@@ -37,6 +49,14 @@ export class PriceManager {
   private prices: Map<string, ModelPrice>; // Cache: "provider:modelId"
   private syncTimer?: NodeJS.Timeout;
   private config: PriceSyncConfig;
+  private static runStatus: PriceSyncRunStatus = {
+    isRunning: false,
+    startedAt: null,
+    lastCompletedAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+    lastResultSummary: null,
+  };
 
   constructor(db: Database, config?: Partial<PriceSyncConfig>) {
     this.db = db;
@@ -46,6 +66,23 @@ export class PriceManager {
       defaultCurrency: config?.defaultCurrency ?? DEFAULT_CURRENCY,
     };
     this.refreshCache();
+  }
+
+  private static cloneRunStatus(status: PriceSyncRunStatus): PriceSyncRunStatus {
+    return {
+      ...status,
+      lastResultSummary: status.lastResultSummary ? { ...status.lastResultSummary } : null,
+    };
+  }
+
+  private static summarizeResult(result: PriceSyncResult): PriceSyncResultSummary {
+    return {
+      timestamp: result.timestamp,
+      updated: result.updated,
+      added: result.added,
+      unchanged: result.unchanged,
+      error: result.error ?? null,
+    };
   }
 
   /**
@@ -59,62 +96,106 @@ export class PriceManager {
    * Sync prices from models.dev
    */
   async syncFromUpstream(): Promise<PriceSyncResult> {
-    const fetcher = createPriceFetcher();
-    const upstreamPrices = await fetcher.fetchPrices();
-
-    let updated = 0;
-    let added = 0;
-    let unchanged = 0;
-
-    for (const price of upstreamPrices) {
-      const existing = this.getStoredPrice(price.provider, price.modelId);
-
-      if (!existing) {
-        // New price
-        this.storePrice({
-          provider: price.provider,
-          modelId: price.modelId,
-          modelName: price.modelName ?? null,
-          inputPrice: price.inputPrice,
-          outputPrice: price.outputPrice,
-          cacheReadPrice: price.cacheReadPrice ?? null,
-          cacheWritePrice: price.cacheWritePrice ?? null,
-          currency: price.currency,
-          source: 'models.dev',
-          updatedAt: Date.now(),
-          isOverridden: false,
-        });
-        added++;
-      } else if (!existing.isOverridden) {
-        // Update only if not manually overridden
-        if (this.hasPriceChanged(existing, price)) {
-          this.updatePrice(price.provider, price.modelId, {
-            ...price,
-            source: 'models.dev',
-            updatedAt: Date.now(),
-          });
-          updated++;
-        } else {
-          unchanged++;
-        }
-      } else {
-        unchanged++; // User override, skip
-      }
+    if (PriceManager.runStatus.isRunning) {
+      throw new PriceSyncAlreadyRunningError(PriceManager.cloneRunStatus(PriceManager.runStatus));
     }
 
-    // Refresh cache
-    this.refreshCache();
-
-    // Log sync
-    const result: PriceSyncResult = {
-      updated,
-      added,
-      unchanged,
-      timestamp: Date.now(),
+    PriceManager.runStatus = {
+      ...PriceManager.runStatus,
+      isRunning: true,
+      startedAt: Date.now(),
     };
-    this.logSync(result);
 
-    return result;
+    const fetcher = createPriceFetcher();
+    try {
+      const upstreamPrices = await fetcher.fetchPrices();
+
+      let updated = 0;
+      let added = 0;
+      let unchanged = 0;
+
+      for (const price of upstreamPrices) {
+        const existing = this.getStoredPrice(price.provider, price.modelId);
+
+        if (!existing) {
+          // New price
+          this.storePrice({
+            provider: price.provider,
+            modelId: price.modelId,
+            modelName: price.modelName ?? null,
+            inputPrice: price.inputPrice,
+            outputPrice: price.outputPrice,
+            cacheReadPrice: price.cacheReadPrice ?? null,
+            cacheWritePrice: price.cacheWritePrice ?? null,
+            currency: price.currency,
+            source: 'models.dev',
+            updatedAt: Date.now(),
+            isOverridden: false,
+          });
+          added++;
+        } else if (!existing.isOverridden) {
+          // Update only if not manually overridden
+          if (this.hasPriceChanged(existing, price)) {
+            this.updatePrice(price.provider, price.modelId, {
+              ...price,
+              source: 'models.dev',
+              updatedAt: Date.now(),
+            });
+            updated++;
+          } else {
+            unchanged++;
+          }
+        } else {
+          unchanged++; // User override, skip
+        }
+      }
+
+      // Refresh cache
+      this.refreshCache();
+
+      // Log sync
+      const result: PriceSyncResult = {
+        updated,
+        added,
+        unchanged,
+        timestamp: Date.now(),
+      };
+      this.logSync(result);
+
+      PriceManager.runStatus = {
+        ...PriceManager.runStatus,
+        isRunning: false,
+        startedAt: null,
+        lastCompletedAt: result.timestamp,
+        lastSuccessAt: result.timestamp,
+        lastError: null,
+        lastResultSummary: PriceManager.summarizeResult(result),
+      };
+
+      return result;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const result: PriceSyncResult = {
+        updated: 0,
+        added: 0,
+        unchanged: 0,
+        timestamp: Date.now(),
+        error: errorMessage,
+      };
+
+      this.logSync(result);
+
+      PriceManager.runStatus = {
+        ...PriceManager.runStatus,
+        isRunning: false,
+        startedAt: null,
+        lastCompletedAt: result.timestamp,
+        lastError: errorMessage,
+        lastResultSummary: PriceManager.summarizeResult(result),
+      };
+
+      throw error;
+    }
   }
 
   /**
@@ -369,6 +450,21 @@ export class PriceManager {
 
       return price;
     });
+  }
+
+  getRunStatus(): PriceSyncRunStatus {
+    return PriceManager.cloneRunStatus(PriceManager.runStatus);
+  }
+
+  static resetRuntimeState(): void {
+    PriceManager.runStatus = {
+      isRunning: false,
+      startedAt: null,
+      lastCompletedAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      lastResultSummary: null,
+    };
   }
 
   // === Private Methods ===

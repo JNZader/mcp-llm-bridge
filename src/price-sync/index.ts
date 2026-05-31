@@ -21,6 +21,8 @@ export type {
   NewStoredPrice,
   PriceSyncLogRecord,
   PriceSyncResult,
+  PriceSyncResultSummary,
+  PriceSyncRunStatus,
 } from './types.js';
 
 // Fetcher
@@ -29,6 +31,7 @@ export { PriceFetcher, createPriceFetcher } from './fetcher.js';
 // Price Manager
 export {
   PriceManager,
+  PriceSyncAlreadyRunningError,
   createPriceManager,
 } from './price-manager.js';
 

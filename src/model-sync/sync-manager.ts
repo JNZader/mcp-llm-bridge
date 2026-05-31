@@ -7,7 +7,9 @@
 import {
   type ModelInfo,
   type ModelSyncConfig,
+  type ModelSyncRunStatus,
   type ModelSyncResult,
+  type ModelSyncResultSummary,
   type ProviderType,
   type ModelSyncLogRecord,
 } from './types.js';
@@ -25,20 +27,84 @@ export interface Statement {
   get(...params: unknown[]): unknown | undefined;
 }
 
+export class ModelSyncAlreadyRunningError extends Error {
+  readonly status: ModelSyncRunStatus;
+
+  constructor(status: ModelSyncRunStatus) {
+    super(`Model sync already running for provider: ${status.provider}`);
+    this.name = 'ModelSyncAlreadyRunningError';
+    this.status = status;
+  }
+}
+
 // === Sync Manager ===
 
 export class ModelSyncManager {
   private db: Database;
   private syncTimers: Map<ProviderType, NodeJS.Timeout> = new Map();
+  private static runStates: Map<ProviderType, ModelSyncRunStatus> = new Map();
 
   constructor(db: Database) {
     this.db = db;
+  }
+
+  private static createInitialRunStatus(provider: ProviderType): ModelSyncRunStatus {
+    return {
+      provider,
+      isRunning: false,
+      startedAt: null,
+      lastCompletedAt: null,
+      lastSuccessAt: null,
+      lastError: null,
+      lastResultSummary: null,
+    };
+  }
+
+  private static cloneRunStatus(status: ModelSyncRunStatus): ModelSyncRunStatus {
+    return {
+      ...status,
+      lastResultSummary: status.lastResultSummary ? { ...status.lastResultSummary } : null,
+    };
+  }
+
+  private static summarizeResult(result: ModelSyncResult): ModelSyncResultSummary {
+    return {
+      provider: result.provider,
+      timestamp: result.timestamp,
+      modelsFound: result.modelsFound.length,
+      modelsAdded: result.modelsAdded.length,
+      modelsRemoved: result.modelsRemoved.length,
+      error: result.error ?? null,
+    };
+  }
+
+  private getOrCreateRunStatus(provider: ProviderType): ModelSyncRunStatus {
+    const existing = ModelSyncManager.runStates.get(provider);
+    if (existing) {
+      return existing;
+    }
+
+    const initial = ModelSyncManager.createInitialRunStatus(provider);
+    ModelSyncManager.runStates.set(provider, initial);
+    return initial;
   }
 
   /**
    * Sync models for a provider
    */
   async syncProvider(config: ModelSyncConfig): Promise<ModelSyncResult> {
+    const runningStatus = this.getOrCreateRunStatus(config.provider);
+    if (runningStatus.isRunning) {
+      throw new ModelSyncAlreadyRunningError(ModelSyncManager.cloneRunStatus(runningStatus));
+    }
+
+    const startedAt = Date.now();
+    ModelSyncManager.runStates.set(config.provider, {
+      ...runningStatus,
+      isRunning: true,
+      startedAt,
+    });
+
     try {
       // Get fetcher for provider
       const fetcher = getFetcherForProvider(config.provider);
@@ -70,6 +136,16 @@ export class ModelSyncManager {
 
       this.logSync(result);
 
+      ModelSyncManager.runStates.set(config.provider, {
+        ...runningStatus,
+        isRunning: false,
+        startedAt: null,
+        lastCompletedAt: result.timestamp,
+        lastSuccessAt: result.timestamp,
+        lastError: null,
+        lastResultSummary: ModelSyncManager.summarizeResult(result),
+      });
+
       return result;
     } catch (error) {
       const errorMessage =
@@ -85,6 +161,16 @@ export class ModelSyncManager {
       };
 
       this.logSync(result);
+
+      ModelSyncManager.runStates.set(config.provider, {
+        ...runningStatus,
+        isRunning: false,
+        startedAt: null,
+        lastCompletedAt: result.timestamp,
+        lastError: errorMessage,
+        lastResultSummary: ModelSyncManager.summarizeResult(result),
+      });
+
       throw error;
     }
   }
@@ -373,6 +459,20 @@ export class ModelSyncManager {
    */
   getRunningAutoSyncProviders(): ProviderType[] {
     return Array.from(this.syncTimers.keys());
+  }
+
+  getRunStatus(provider: ProviderType): ModelSyncRunStatus {
+    return ModelSyncManager.cloneRunStatus(this.getOrCreateRunStatus(provider));
+  }
+
+  getAllRunStatuses(): ModelSyncRunStatus[] {
+    return Array.from(ModelSyncManager.runStates.values()).map((status) =>
+      ModelSyncManager.cloneRunStatus(status)
+    );
+  }
+
+  static resetRuntimeState(): void {
+    ModelSyncManager.runStates.clear();
   }
 }
 

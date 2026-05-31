@@ -48,6 +48,25 @@ export interface ModelSyncResult {
   error?: string;
 }
 
+export interface ModelSyncResultSummary {
+  provider: ProviderType;
+  timestamp: number;
+  modelsFound: number;
+  modelsAdded: number;
+  modelsRemoved: number;
+  error: string | null;
+}
+
+export interface ModelSyncRunStatus {
+  provider: ProviderType;
+  isRunning: boolean;
+  startedAt: number | null;
+  lastCompletedAt: number | null;
+  lastSuccessAt: number | null;
+  lastError: string | null;
+  lastResultSummary: ModelSyncResultSummary | null;
+}
+
 // Database record interfaces
 export interface ProviderModelRecord {
   id: number;
