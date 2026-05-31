@@ -24,15 +24,13 @@ import {
 	createToolingServices,
 } from "./bootstrap/core-services.js";
 import { bootstrapFreeModels } from "./bootstrap/free-models.js";
+import { bootstrapLatencyRouting } from "./bootstrap/latency.js";
 import { bootstrapLocalLLM } from "./bootstrap/local-llm.js";
 import { bootstrapModelRouting } from "./bootstrap/model-routing.js";
 import { loadConfig } from "./core/config.js";
-import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
-import { latencyRoutingEnabled } from "./core/runtime-flags.js";
 import { Router } from "./core/router.js";
 import { registry } from "./core/transformer.js";
-import { LatencyMeasurer } from "./latency/index.js";
 import {
 	startHttpServerWithDeps,
 	type StartHttpServerDeps,
@@ -97,13 +95,7 @@ router.setSessionManager(sessionManager);
 
 const { freeModelEnabled, freeModelRouter } = bootstrapFreeModels(router);
 
-// Initialize latency-based routing (opt-in via LATENCY_ROUTING=true)
-const latencyRouting = latencyRoutingEnabled();
-const latencyMeasurer = new LatencyMeasurer();
-if (latencyRouting) {
-	router.setLatencyMeasurer(latencyMeasurer);
-	logger.info("Latency-based routing enabled");
-}
+const latencyMeasurer = bootstrapLatencyRouting(router);
 
 // ── Model Routing ───────────────────────────────────────
 await bootstrapModelRouting(router);
