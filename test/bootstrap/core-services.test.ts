@@ -58,7 +58,7 @@ describe("createCoreServices", () => {
 		assert.ok(toolingServices.pageIndex.service);
 		assert.ok(toolingServices.pageIndexTools);
 		assert.ok(comparisonServices.comparisonStore);
-		assert.equal((coreServices.sessionManager as { cleanupTimer?: unknown }).cleanupTimer, undefined);
+		assert.equal(Reflect.get(coreServices.sessionManager, "cleanupTimer"), undefined);
 
 		coreServices.compressor.destroy();
 		coreServices.costTracker.destroy();

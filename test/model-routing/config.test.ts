@@ -185,7 +185,9 @@ test('validates maxTokens positive number', () => {
   for (const val of badValues) {
     try {
       const cfg = validBaseConfig();
-      const ep = cfg.endpoints[0] as Record<string, unknown>;
+      const endpoints = cfg.endpoints as Record<string, unknown>[];
+      const ep = endpoints[0];
+      assert.ok(ep);
       ep.maxTokens = val;
       writeConfig(cfg);
       const config = loadConfig();

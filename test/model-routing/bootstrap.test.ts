@@ -60,10 +60,12 @@ describe('createModelRouter', () => {
     const router = createModelRouter(new Map([['openai', provider]]), config);
 
     assert.ok(router instanceof ModelRouter);
-    assert.equal(router!.enabled, true);
-    assert.equal(router!.getEndpointsByCost().length, 1);
-    assert.equal(router!.getEndpointsByCost()[0].id, 'gpt-4');
-    assert.equal(router!.getEndpointsByCost()[0].available, true);
+    assert.equal(router.enabled, true);
+    const [endpointByCost] = router.getEndpointsByCost();
+    assert.ok(endpointByCost);
+    assert.equal(router.getEndpointsByCost().length, 1);
+    assert.equal(endpointByCost.id, 'gpt-4');
+    assert.equal(endpointByCost.available, true);
   });
 
   it('returns null when config is null', () => {
@@ -139,10 +141,12 @@ describe('createModelRouter', () => {
     const router = createModelRouter(new Map([['groq', provider]]), config);
 
     assert.ok(router instanceof ModelRouter);
-    const endpoints = router!.getEndpointsByCost();
+    const endpoints = router.getEndpointsByCost();
+    const [firstEndpoint] = endpoints;
+    assert.ok(firstEndpoint);
     assert.equal(endpoints.length, 1);
-    assert.equal(endpoints[0].id, 'llama-3');
-    assert.equal(endpoints[0].available, true);
+    assert.equal(firstEndpoint.id, 'llama-3');
+    assert.equal(firstEndpoint.available, true);
   });
 
   it('handles multiple providers', () => {
@@ -179,9 +183,11 @@ describe('createModelRouter', () => {
     const router = createModelRouter(new Map([['openai', provider]]), config);
 
     assert.ok(router);
-    const endpoints = router!.getEndpointsByCost();
+    const endpoints = router.getEndpointsByCost();
+    const [firstEndpoint] = endpoints;
+    assert.ok(firstEndpoint);
     assert.equal(endpoints.length, 1); // only available ones returned
-    assert.equal(endpoints[0].id, 'gpt-4');
+    assert.equal(firstEndpoint.id, 'gpt-4');
 
     // Verify the unavailable endpoint exists but is marked unavailable
     const allEndpoints = (router as any).config.endpoints as ModelEndpoint[];

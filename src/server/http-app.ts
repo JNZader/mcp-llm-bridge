@@ -298,10 +298,9 @@ export function createHttpApp(deps: CreateHttpAppDeps): Hono {
 		}),
 	);
 
-	const multiTenantDb = db;
-	const multiTenantEnabled = isMultiTenantEnabled() && Boolean(multiTenantDb);
+	const multiTenantDb = isMultiTenantEnabled() ? db : undefined;
 
-	if (multiTenantEnabled) {
+	if (multiTenantDb) {
 		app.use("/v1/*", async (c: Context, next: Next) => {
 			if (c.req.path.startsWith("/v1/admin/")) {
 				return next();

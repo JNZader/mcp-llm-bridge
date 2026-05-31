@@ -3,7 +3,6 @@
  */
 
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { describe, it } from "node:test";
 
 import {
@@ -143,14 +142,8 @@ describe("ComparisonService", () => {
 	});
 
 	it("cost guard — CostExceededError has correct properties", async () => {
-		const router = createMockRouter(async (req) =>
-			makeSuccessResponse(req.model ?? "unknown"),
-		);
-
 		// Override estimateCost to simulate an expensive run by setting a very small ceiling
 		// and using maxEstimatedCost to force a rejection on request-level limit
-		const service = new ComparisonService(router, { maxCostCeiling: Infinity });
-
 		// Directly test CostExceededError by calling with a cost ceiling below what the estimator returns
 		// We need to provide models that have known pricing to force the guard
 		// Since we can't guarantee pricing data in tests, test the error class directly

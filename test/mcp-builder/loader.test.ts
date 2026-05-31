@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { mkdir, writeFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
-import { loadPlugins, LoadedPlugin } from '../../src/mcp-builder/loader.js';
+import { loadPlugins } from '../../src/mcp-builder/loader.js';
 import type { McpServerDefinition } from '../../src/mcp-builder/index.js';
 
 let tempDir: string;

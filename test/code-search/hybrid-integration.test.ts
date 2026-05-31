@@ -8,6 +8,16 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { CodeSearchService } from '../../src/code-search/searcher.js';
 import type { Embedder } from '../../src/code-search/embedder.js';
+import type { FusedSearchResult } from '../../src/code-search/hybrid-rrf.js';
+
+function isFusedSearchResult(result: object): result is FusedSearchResult {
+  return (
+    'rrfScore' in result &&
+    typeof result.rrfScore === 'number' &&
+    'methodCount' in result &&
+    typeof result.methodCount === 'number'
+  );
+}
 
 const TEST_DIR = join('/tmp', `hybrid-integration-test-${Date.now()}`);
 
@@ -233,15 +243,13 @@ describe('CodeSearchService mode dispatch', () => {
     // lists, it might rank higher than in keyword-only. But the key assertion
     // is that the hybrid ranking differs from keyword-only, showing fusion works.
     const hybridNames = hybridResults.map((r) => r.name);
-    const keywordNames = keywordResults.map((r) => r.name);
-
     // The union of keyword and BM25 should be present in hybrid
     assert.ok(hybridNames.includes('alpha'), 'Hybrid should include alpha');
 
     // At least one item in hybrid should have methodCount >= 2
     // (meaning it was found by multiple strategies)
     const multiMethod = hybridResults.find(
-      (r) => (r as Record<string, unknown>).methodCount >= 2,
+      (result) => isFusedSearchResult(result) && result.methodCount >= 2,
     );
     assert.ok(
       multiMethod,
@@ -259,15 +267,14 @@ describe('CodeSearchService mode dispatch', () => {
     assert.ok(results.length > 0, 'Should find hybrid results');
 
     for (const result of results) {
-      const rrfScore = (result as Record<string, unknown>).rrfScore;
-      const methodCount = (result as Record<string, unknown>).methodCount;
+      assert.ok(isFusedSearchResult(result), 'Each hybrid result should include fusion metadata');
 
       assert.ok(
-        typeof rrfScore === 'number' && rrfScore > 0,
+        result.rrfScore > 0,
         'Each hybrid result should have a positive rrfScore',
       );
       assert.ok(
-        typeof methodCount === 'number' && methodCount >= 1,
+        result.methodCount >= 1,
         'Each hybrid result should have methodCount >= 1',
       );
     }
