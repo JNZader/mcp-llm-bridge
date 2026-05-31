@@ -4,6 +4,7 @@ import { detectLocalLLMs, pickBestLocalModel } from '../local-llm/detector.js';
 import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
 import { discoverModels } from '../model-discovery/discovery.js';
+import { getLocalLLMUrls, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
@@ -114,11 +115,8 @@ export async function handleDiscoverModelsTool(
   const hfToken = args['hfToken'] as string | undefined;
   try {
     const result = await discoverModels(
-      { hfToken: hfToken ?? process.env['HF_TOKEN'], enabled: true },
-      {
-        ollamaUrl: process.env['OLLAMA_URL'] ?? 'http://localhost:11434',
-        lmStudioUrl: process.env['LM_STUDIO_URL'] ?? 'http://localhost:1234',
-      },
+      { hfToken: resolveHfToken(hfToken), enabled: true },
+      getLocalLLMUrls(),
     );
     return jsonResult({
       models: result.models,

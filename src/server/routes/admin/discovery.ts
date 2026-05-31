@@ -1,6 +1,7 @@
 import type { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 
+import { getLocalLLMUrls, resolveHfToken } from '../../../core/local-llm-env.js';
 import type { FreeModelRouter } from '../../../free-models/router.js';
 import { loadCatalog, importCatalog } from '../../../free-models/registry.js';
 import { discoverModels } from '../../../model-discovery/discovery.js';
@@ -46,17 +47,14 @@ export function registerAdminDiscoveryRoutes(
   app.post('/v1/admin/discover', async (c) => {
     try {
       const body = await c.req.json().catch(() => ({}));
-      const hfToken = body['hfToken'] ?? process.env['HF_TOKEN'];
+      const hfToken = resolveHfToken(body['hfToken'] as string | undefined);
 
       const result = await discoverModels(
         {
           hfToken,
           enabled: true,
         },
-        {
-          ollamaUrl: process.env['OLLAMA_URL'] ?? 'http://localhost:11434',
-          lmStudioUrl: process.env['LM_STUDIO_URL'] ?? 'http://localhost:1234',
-        },
+        getLocalLLMUrls(),
         deps.db,
       );
 

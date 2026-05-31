@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { logger } from "../core/logger.js";
+import { getLocalLLMUrls, resolveHfToken } from "../core/local-llm-env.js";
 import {
 	autoDiscoverModelsEnabled,
 	localLLMEnabled,
@@ -8,13 +9,6 @@ import {
 import type { Router } from "../core/router.js";
 import { LocalLLMProvider } from "../local-llm/provider.js";
 import { discoverModels } from "../model-discovery/index.js";
-
-function getLocalLLMUrls(): { ollamaUrl: string; lmStudioUrl: string } {
-	return {
-		ollamaUrl: process.env["OLLAMA_URL"] ?? "http://localhost:11434",
-		lmStudioUrl: process.env["LM_STUDIO_URL"] ?? "http://localhost:1234",
-	};
-}
 
 export async function bootstrapLocalLLM(
 	router: Router,
@@ -49,7 +43,7 @@ export async function bootstrapLocalLLM(
 		try {
 			const discoveryResult = await discoverModels(
 				{
-					hfToken: process.env["HF_TOKEN"],
+					hfToken: resolveHfToken(),
 					enabled: true,
 				},
 				getLocalLLMUrls(),
