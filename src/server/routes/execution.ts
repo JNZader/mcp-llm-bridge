@@ -115,6 +115,7 @@ function handleStreamingRequest(
 			vault,
 			requestLogger,
 			project,
+			abortSignal: c.req.raw.signal,
 		});
 
 		const abortHandler = () => {

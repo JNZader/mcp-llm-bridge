@@ -43,7 +43,7 @@ describe("createStreamExecutor", () => {
 			canonical,
 			router: {
 				resolveStreamingProviders: async () => [],
-				generate: async (request) => {
+				generate: async (request: unknown) => {
 					generateRequests.push(request);
 					return fallbackResult;
 				},
@@ -193,5 +193,106 @@ describe("createStreamExecutor", () => {
 
 		assert.equal(recoveryProviderCalls, 0);
 		assert.deepEqual(observed, ["chunk:partial", "error:mid-stream failure", "done"]);
+	});
+
+	it("finalizes locally, aborts upstream, and stops processing chunks after abort", async () => {
+		const observedChunks: string[] = [];
+		const loggedErrors: Error[] = [];
+		const passedSignals: AbortSignal[] = [];
+		let releaseExtraChunks: (() => void) | undefined;
+		let executor: ReturnType<typeof createStreamExecutor>;
+
+		const extraChunksReady = new Promise<void>((resolve) => {
+			releaseExtraChunks = resolve;
+		});
+
+		executor = createStreamExecutor({
+			canonical: createCanonicalRequest(),
+			router: {
+				resolveStreamingProviders: async () => [
+					{
+						provider: { id: "abortable-provider" },
+						request: { model: "test-model", messages: [] },
+						streamTransformer: {
+							name: "abortable-provider",
+							async *transformStream(
+								_request: unknown,
+								providerCall: (request: unknown) => AsyncIterable<unknown>,
+							) {
+								for await (const chunk of providerCall({})) {
+									yield chunk as InternalLLMChunk;
+								}
+							},
+						},
+						recordResult: () => {},
+					},
+				],
+				generate: async () => {
+					assert.fail("should not use router.generate");
+				},
+			} as never,
+			requestLogger: {
+				captureStart: () => ({}) as never,
+				captureEnd: async (_ctx: unknown, input?: { error?: Error }) => {
+					if (input?.error instanceof Error) {
+						loggedErrors.push(input.error);
+					}
+				},
+			} as never,
+			providerStreamCallFactory,
+		});
+
+		await executor.execute({
+			writeChunk: async (chunk) => {
+				observedChunks.push(chunk.content || "<done>");
+				if (chunk.content === "first") {
+					await executor.abort();
+					releaseExtraChunks?.();
+				}
+			},
+			writeFallbackResult: async () => {
+				assert.fail("should not use fallback result");
+			},
+			writeTerminalError: async () => {
+				assert.fail("should not emit terminal error on abort");
+			},
+			writeDone: async () => {
+				assert.fail("should not emit done on abort");
+			},
+		});
+
+		assert.deepEqual(observedChunks, ["first"]);
+		assert.equal(loggedErrors.length, 1);
+		assert.equal(loggedErrors[0]?.message, "Stream aborted by client");
+		assert.equal(passedSignals.length, 1);
+		assert.equal(passedSignals[0]?.aborted, true);
+
+		function createAbortError(): Error {
+			const error = new Error("The operation was aborted");
+			error.name = "AbortError";
+			return error;
+		}
+
+		function providerStreamCallFactory(
+			_providerId: string,
+			_vault: unknown,
+			_project: string | undefined,
+			signal?: AbortSignal,
+		): (request: unknown) => AsyncIterable<unknown> {
+			assert.ok(signal, "executor should pass an AbortSignal upstream");
+			passedSignals.push(signal);
+
+			return () => ({
+				[Symbol.asyncIterator]: async function* () {
+					yield { content: "first", done: false };
+					await extraChunksReady;
+					if (signal.aborted) {
+						throw createAbortError();
+					}
+					yield { content: "late", done: false };
+					yield { content: "", done: true, finishReason: "stop" };
+				},
+			});
+		}
 	});
 });

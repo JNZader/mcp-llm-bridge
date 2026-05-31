@@ -15,6 +15,7 @@ export function buildProviderStreamCall(
 	providerId: string,
 	vault?: Vault,
 	project?: string,
+	abortSignal?: AbortSignal,
 ): (request: unknown) => AsyncIterable<unknown> {
 	return async function* streamCall(request: unknown): AsyncIterable<unknown> {
 		const body = request as Record<string, unknown>;
@@ -39,6 +40,7 @@ export function buildProviderStreamCall(
 
 			const messageStream = client.messages.stream(
 				restBody as unknown as Parameters<typeof client.messages.stream>[0],
+				abortSignal ? { signal: abortSignal } : undefined,
 			);
 			for await (const event of messageStream) {
 				yield event;
@@ -69,7 +71,7 @@ export function buildProviderStreamCall(
 			...(restBody as unknown as Parameters<typeof client.chat.completions.create>[0]),
 			stream: true,
 			stream_options: { include_usage: true },
-		});
+		}, abortSignal ? { signal: abortSignal } : undefined);
 
 		for await (const chunk of streamResponse) {
 			yield chunk;
