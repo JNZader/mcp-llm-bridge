@@ -74,9 +74,9 @@ export class LocalLLMProvider implements LLMProvider {
   /** True if at least one local backend is connected. */
   async isAvailable(): Promise<boolean> {
     if (!this.config.enabled) return false;
-    if (this.models.length === 0) {
-      await this.refreshModels();
-    }
+
+    await this.refreshModels();
+
     return this.models.length > 0;
   }
 
@@ -91,10 +91,8 @@ export class LocalLLMProvider implements LLMProvider {
       throw new LocalLLMError('Local LLM is disabled', 'ollama');
     }
 
-    // Ensure models are loaded
-    if (this.models.length === 0) {
-      await this.refreshModels();
-    }
+    // Re-sync through the shared detector cache so stale positive state expires.
+    await this.refreshModels();
 
     if (this.models.length === 0) {
       throw new LocalLLMError('No local models available', 'ollama');

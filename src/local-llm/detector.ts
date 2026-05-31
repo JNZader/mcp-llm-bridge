@@ -14,6 +14,23 @@ import type {
 } from './types.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from './types.js';
 
+const DEFAULT_SUCCESS_CACHE_TTL_MS = 5000;
+const DEFAULT_FAILURE_CACHE_TTL_MS = 1500;
+
+interface LocalLLMDetectionCacheEntry {
+  expiresAt: number;
+  results?: DetectionResult[];
+  inFlight?: Promise<DetectionResult[]>;
+}
+
+export interface DetectLocalLLMsOptions {
+  forceRefresh?: boolean;
+  successCacheTtlMs?: number;
+  failureCacheTtlMs?: number;
+}
+
+const detectionCache = new Map<string, LocalLLMDetectionCacheEntry>();
+
 /**
  * Raw Ollama model entry from /api/tags response.
  */
@@ -32,6 +49,42 @@ interface OllamaModelEntry {
 interface LMStudioModelEntry {
   id: string;
   object?: string;
+}
+
+function getCacheKey(config: LocalLLMConfig): string {
+  return JSON.stringify({
+    ollamaUrl: config.ollamaUrl,
+    lmStudioUrl: config.lmStudioUrl,
+    connectionTimeoutMs: config.connectionTimeoutMs,
+  });
+}
+
+function hasAvailableModels(results: DetectionResult[]): boolean {
+  return results.some((result) => result.status === 'connected' && result.models.length > 0);
+}
+
+async function runDetections(config: LocalLLMConfig): Promise<DetectionResult[]> {
+  const probeInputs = [
+    { backend: 'ollama' as const, baseUrl: config.ollamaUrl },
+    { backend: 'lm-studio' as const, baseUrl: config.lmStudioUrl },
+  ];
+
+  const probes = await Promise.allSettled(
+    probeInputs.map(({ backend, baseUrl }) => probeBackend(backend, baseUrl, config.connectionTimeoutMs)),
+  );
+
+  return probes.map((result, index) => {
+    if (result.status === 'fulfilled') return result.value;
+
+    const probe = probeInputs[index]!;
+    return {
+      backend: probe.backend,
+      status: 'error' as const,
+      baseUrl: probe.baseUrl,
+      models: [],
+      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+    };
+  });
 }
 
 /**
@@ -143,24 +196,55 @@ export function parseParameterSize(sizeStr: string): number | undefined {
  */
 export async function detectLocalLLMs(
   config?: Partial<LocalLLMConfig>,
+  options?: DetectLocalLLMsOptions,
 ): Promise<DetectionResult[]> {
   const cfg = { ...DEFAULT_LOCAL_LLM_CONFIG, ...config };
+  const cacheKey = getCacheKey(cfg);
+  const now = Date.now();
+  const cached = detectionCache.get(cacheKey);
 
-  const probes = await Promise.allSettled([
-    probeBackend('ollama', cfg.ollamaUrl, cfg.connectionTimeoutMs),
-    probeBackend('lm-studio', cfg.lmStudioUrl, cfg.connectionTimeoutMs),
-  ]);
+  if (!options?.forceRefresh && cached?.results && cached.expiresAt > now) {
+    return cached.results;
+  }
 
-  return probes.map((result) => {
-    if (result.status === 'fulfilled') return result.value;
-    return {
-      backend: 'ollama' as LocalLLMBackend,
-      status: 'error' as const,
-      baseUrl: '',
-      models: [],
-      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-    };
+  if (cached?.inFlight) {
+    return cached.inFlight;
+  }
+
+  const inFlight = runDetections(cfg)
+    .then((results) => {
+      const ttlMs = hasAvailableModels(results)
+        ? (options?.successCacheTtlMs ?? DEFAULT_SUCCESS_CACHE_TTL_MS)
+        : (options?.failureCacheTtlMs ?? DEFAULT_FAILURE_CACHE_TTL_MS);
+
+      detectionCache.set(cacheKey, {
+        results,
+        expiresAt: Date.now() + ttlMs,
+      });
+
+      return results;
+    })
+    .finally(() => {
+      const current = detectionCache.get(cacheKey);
+      if (current?.inFlight === inFlight) {
+        detectionCache.set(cacheKey, {
+          results: current.results,
+          expiresAt: current.expiresAt,
+        });
+      }
+    });
+
+  detectionCache.set(cacheKey, {
+    results: cached?.results,
+    expiresAt: cached?.expiresAt ?? 0,
+    inFlight,
   });
+
+  return inFlight;
+}
+
+export function resetLocalLLMDetectionCache(): void {
+  detectionCache.clear();
 }
 
 /**

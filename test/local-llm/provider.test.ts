@@ -2,16 +2,31 @@
  * Local LLM provider tests — verify LLMProvider interface compliance.
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { LocalLLMProvider, LocalLLMError } from '../../src/local-llm/provider.js';
+import { resetLocalLLMDetectionCache } from '../../src/local-llm/detector.js';
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? 'OK' : 'ERROR',
+    json: async () => body,
+  } as Response;
+}
 
 describe('LocalLLMProvider', () => {
   let provider: LocalLLMProvider;
 
   beforeEach(() => {
     provider = new LocalLLMProvider({ enabled: false });
+  });
+
+  afterEach(() => {
+    mock.restoreAll();
+    resetLocalLLMDetectionCache();
   });
 
   it('has correct id and name', () => {
@@ -43,5 +58,28 @@ describe('LocalLLMProvider', () => {
     const err = new LocalLLMError('test', 'ollama');
     assert.equal(err.name, 'LocalLLMError');
     assert.equal(err.backend, 'ollama');
+  });
+
+  it('isAvailable reuses shared detection cache within the TTL', async () => {
+    provider = new LocalLLMProvider({ enabled: true });
+
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'llama3.2:3b', details: { parameter_size: '3.2B' } }] });
+      }
+
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [] });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    assert.equal(await provider.isAvailable(), true);
+    assert.equal(await provider.isAvailable(), true);
+    assert.equal(fetchMock.mock.callCount(), 2);
   });
 });
