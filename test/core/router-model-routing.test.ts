@@ -849,36 +849,40 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(routeCalls, 0);
   });
 
-  it('keeps explicit provider authoritative across generate, generateFromInternal, and streaming', async () => {
+  it('keeps explicit provider authoritative across generateFromInternal and streaming when the model conflicts', async () => {
     const router = new Router();
     const registry = new TransformerRegistry();
     let routeCalls = 0;
+    let alphaInternalRequest: GenerateRequest | undefined;
 
     const alpha = createMockProvider({
       id: 'alpha',
       name: 'Alpha',
       type: 'api',
-      models: [{ id: 'shared-model', name: 'Shared Model', provider: 'alpha', maxTokens: 4096 }],
+      models: [{ id: 'alpha-model', name: 'Alpha Model', provider: 'alpha', maxTokens: 4096 }],
       response: {
         text: 'alpha-response',
         provider: 'alpha',
-        model: 'shared-model',
+        model: 'beta-model',
         resolvedProvider: 'alpha',
-        resolvedModel: 'shared-model',
+        resolvedModel: 'beta-model',
         fallbackUsed: false,
+      },
+      onGenerate: (request) => {
+        alphaInternalRequest = request;
       },
     });
     const beta = createMockProvider({
       id: 'beta',
       name: 'Beta',
       type: 'api',
-      models: [{ id: 'shared-model', name: 'Shared Model', provider: 'beta', maxTokens: 4096 }],
+      models: [{ id: 'beta-model', name: 'Beta Model', provider: 'beta', maxTokens: 4096 }],
       response: {
         text: 'beta-response',
         provider: 'beta',
-        model: 'shared-model',
+        model: 'beta-model',
         resolvedProvider: 'beta',
-        resolvedModel: 'shared-model',
+        resolvedModel: 'beta-model',
         fallbackUsed: false,
       },
     });
@@ -904,7 +908,7 @@ describe('Router + ModelRouter integration', () => {
     router.setModelRouter(createMockModelRouter({
       enabled: true,
       decision: {
-        endpoint: createMockEndpoint({ id: 'beta-endpoint', provider: 'beta', modelId: 'shared-model' }),
+        endpoint: createMockEndpoint({ id: 'beta-endpoint', provider: 'beta', modelId: 'beta-model' }),
         matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['beta-endpoint'] }),
         reason: 'Primary model for summarization',
         isFallback: false,
@@ -915,28 +919,22 @@ describe('Router + ModelRouter integration', () => {
       },
     }));
 
-    const generated = await router.generate({
-      prompt: 'summarize this',
-      model: 'shared-model',
-      provider: 'alpha',
-      strict: true,
-    });
     const internal = await router.generateFromInternal({
       messages: [{ role: 'user', content: 'summarize this' }],
-      model: 'shared-model',
+      model: 'beta-model',
       metadata: { provider: 'alpha', strict: true },
     });
     const streamingCandidates = await router.resolveStreamingProviders({
       messages: [{ role: 'user', content: 'summarize this' }],
-      model: 'shared-model',
+      model: 'beta-model',
       metadata: { provider: 'alpha', strict: true },
     });
 
-    assert.equal(generated.provider, 'alpha');
-    assert.equal(generated.routing?.strategy, 'explicit-provider');
-    assert.equal(generated.routing?.decisionReason, 'Provider alpha requested explicitly');
     assert.equal(internal.metadata?.['provider'], 'alpha');
+    assert.equal(alphaInternalRequest?.provider, 'alpha');
+    assert.equal(alphaInternalRequest?.model, 'beta-model');
     assert.equal(streamingCandidates[0]?.provider.id, 'alpha');
+    assert.equal(streamingCandidates[0]?.request.model, 'beta-model');
     assert.equal(streamingCandidates.length, 1);
     assert.equal(routeCalls, 0);
   });

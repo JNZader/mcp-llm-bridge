@@ -472,7 +472,7 @@ export class Router {
    *    → If group found, use group's balancer strategy to order providers
    * 3. ModelRouter selection (when enabled)
    * 4. Local-LLM offloading (only if ModelRouter did not select it)
-   * 5. Standard resolution (model match → fuzzy → provider preference → API before CLI)
+   * 5. Standard resolution (provider preference → model match → fuzzy → API before CLI)
    * 6. Latency-based reordering
    *
    * After successful response: pin session if stickiness is enabled.

@@ -157,6 +157,69 @@ describe('Router.generate()', () => {
     assert.equal(result.fallbackUsed, false);
   });
 
+  it('keeps an explicit provider authoritative when the model belongs to another provider', async () => {
+    const router = new Router();
+    let alphaRequest: GenerateRequest | undefined;
+
+    router.register({
+      ...createMockProvider({
+        id: 'alpha',
+        name: 'Alpha',
+        type: 'api',
+        models: [{ id: 'alpha-model', name: 'Alpha Model', provider: 'alpha', maxTokens: 4096 }],
+        response: {
+          text: 'from-alpha',
+          provider: 'alpha',
+          model: 'beta-model',
+          resolvedProvider: 'alpha',
+          resolvedModel: 'beta-model',
+          fallbackUsed: false,
+        },
+      }),
+      async generate(request: GenerateRequest): Promise<GenerateResponse> {
+        alphaRequest = request;
+        return {
+          text: 'from-alpha',
+          provider: 'alpha',
+          model: request.model ?? 'unknown',
+          resolvedProvider: 'alpha',
+          resolvedModel: request.model ?? 'unknown',
+          fallbackUsed: false,
+        };
+      },
+    });
+    router.register(createMockProvider({
+      id: 'beta',
+      name: 'Beta',
+      type: 'api',
+      models: [{ id: 'beta-model', name: 'Beta Model', provider: 'beta', maxTokens: 4096 }],
+      response: {
+        text: 'from-beta',
+        provider: 'beta',
+        model: 'beta-model',
+        resolvedProvider: 'beta',
+        resolvedModel: 'beta-model',
+        fallbackUsed: false,
+      },
+    }));
+
+    const result = await router.generate({
+      prompt: 'test',
+      provider: 'alpha',
+      model: 'beta-model',
+      strict: true,
+    });
+
+    assert.equal(result.provider, 'alpha');
+    assert.equal(result.requestedProvider, 'alpha');
+    assert.equal(result.requestedModel, 'beta-model');
+    assert.equal(result.resolvedProvider, 'alpha');
+    assert.equal(result.resolvedModel, 'beta-model');
+    assert.equal(alphaRequest?.provider, 'alpha');
+    assert.equal(alphaRequest?.model, 'beta-model');
+    assert.equal(result.routing?.strategy, 'explicit-provider');
+  });
+
   it('falls back to second provider if first fails', async () => {
     const router = new Router();
     router.register(createMockProvider({

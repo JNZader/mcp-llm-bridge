@@ -23,6 +23,13 @@ export async function resolveCandidates(
     .filter((result) => result.available)
     .map((result) => result.provider);
 
+  if (request.provider) {
+    const preferred = available.find((provider) => provider.id === request.provider);
+    if (preferred) {
+      return [preferred, ...available.filter((provider) => provider !== preferred)];
+    }
+  }
+
   if (request.model) {
     const modelProvider = available.find((provider) =>
       provider.models.some((model) => model.id === request.model),
@@ -40,13 +47,6 @@ export async function resolveCandidates(
       if (fuzzyProvider) {
         return [fuzzyProvider, ...available.filter((provider) => provider !== fuzzyProvider)];
       }
-    }
-  }
-
-  if (request.provider) {
-    const preferred = available.find((provider) => provider.id === request.provider);
-    if (preferred) {
-      return [preferred, ...available.filter((provider) => provider !== preferred)];
     }
   }
 
