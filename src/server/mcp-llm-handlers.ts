@@ -2,13 +2,11 @@ import type { Router } from '../core/router.js';
 import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
 import type { Vault } from '../vault/vault.js';
 import { getLocalLLMStatus, pickBestLocalModel } from '../local-llm/detector.js';
-import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
-import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
+import { classifyForOffload } from '../local-llm/router.js';
 import { getSlimLocalLLMStatus, toSlimLocalLLMStatus } from '../local-llm/status.js';
 import { discoverModels } from '../model-discovery/discovery.js';
 import { getLocalLLMUrls, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
-import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
 
 function jsonResult(payload: unknown, isError?: boolean): McpToolResult {
@@ -76,6 +74,7 @@ export async function handleLocalLlmGenerateTool(
 
   const localLLMStatus = await getLocalLLMStatus({ enabled: true, ...getLocalLLMUrls() });
   const localModel = pickBestLocalModel(localLLMStatus.backends, preferredModel);
+  const slimLocalLLMStatus = toSlimLocalLLMStatus(localLLMStatus);
 
   if (!localModel) {
     const result = await router.generate({ prompt, system, maxTokens });
@@ -83,48 +82,41 @@ export async function handleLocalLlmGenerateTool(
       ...result,
       backend: 'cloud',
       reason: 'No local models available',
-      localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
+      localLLMStatus: slimLocalLLMStatus,
+    });
+  }
+
+  const result = await router.generate({
+    prompt,
+    system,
+    maxTokens,
+    provider: 'local-llm',
+    model: localModel.id,
+  });
+
+  if (result.resolvedProvider === 'local-llm') {
+    return jsonResult({
+      ...result,
+      backend: 'local',
     });
   }
 
   const classification = classifyForOffload(prompt);
-  const minConfidence = DEFAULT_LOCAL_LLM_CONFIG.minOffloadConfidence;
-  if (!meetsOffloadThreshold(classification, minConfidence)) {
-    const result = await router.generate({ prompt, system, maxTokens });
+  if (!classification.shouldOffload) {
     return jsonResult({
       ...result,
       backend: 'cloud',
       reason: `Task not offloadable: ${classification.reason}`,
-      localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
+      localLLMStatus: slimLocalLLMStatus,
     });
   }
 
-  try {
-    const localResult = await callLocalLLM(localModel, prompt, system);
-    return jsonResult({
-      text: localResult.text,
-      model: localResult.model,
-      backend: 'local',
-      provider: 'local-llm',
-      resolvedProvider: 'local-llm',
-      resolvedModel: localResult.model,
-      fallbackUsed: false,
-      latencyMs: localResult.latencyMs,
-      tokensUsed: localResult.tokensUsed,
-    });
-  } catch (error) {
-    if (error instanceof LocalLLMError) {
-      const cloudResult = await router.generate({ prompt, system, maxTokens });
-      return jsonResult({
-        ...cloudResult,
-        backend: 'cloud',
-        fallbackUsed: true,
-        fallbackReason: `Local LLM failed: ${error.message}`,
-        localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
-      });
-    }
-    throw error;
-  }
+  return jsonResult({
+    ...result,
+    backend: 'cloud',
+    fallbackReason: 'Local LLM provider failed and router fell back to a cloud provider',
+    localLLMStatus: slimLocalLLMStatus,
+  });
 }
 
 export async function handleDiscoverModelsTool(
