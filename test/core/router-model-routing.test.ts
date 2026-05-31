@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 
 import { Router, resetCircuitBreakerV2 } from '../../src/core/router.js';
 import { TransformerRegistry } from '../../src/core/transformer.js';
+import { LocalLLMError } from '../../src/local-llm/client.js';
 import type {
   LLMProvider,
   GenerateRequest,
@@ -118,6 +119,22 @@ function createMockRule(opts: Partial<RouteRule> & { id: string; preferredModels
     keywordPatterns: opts.keywordPatterns ?? [],
     ...opts,
   };
+}
+
+function registerPassthroughOutbound(
+  registry: TransformerRegistry,
+  providerId: string,
+): void {
+  registry.registerOutbound(providerId, {
+    name: providerId,
+    transformRequest: (_req: InternalLLMRequest) => ({ transformed: true }),
+    transformResponse: (_res: unknown) => ({
+      content: 'transformed',
+      model: 'test-model',
+      finishReason: 'stop' as const,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    }),
+  });
 }
 
 // ── Tests ─────────────────────────────────────────────────
@@ -801,6 +818,255 @@ describe('Router + ModelRouter integration', () => {
 
     assert.equal(result.content, 'first-response');
     assert.equal(result.metadata?.['provider'], 'first');
+  });
+
+  it('generateFromInternal applies local-llm precedence for offloadable prompts', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const callOrder: string[] = [];
+
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+      },
+      onGenerate: () => {
+        callOrder.push('cloud');
+      },
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: {
+        text: 'local-response',
+        provider: 'local-llm',
+        model: 'local-model',
+        resolvedProvider: 'local-llm',
+        resolvedModel: 'local-model',
+        fallbackUsed: false,
+      },
+      onGenerate: () => {
+        callOrder.push('local-llm');
+      },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+    router.setTransformerRegistry(registry);
+    router.setModelRouter(createMockModelRouter({ enabled: true, decision: null }));
+    registerPassthroughOutbound(registry, 'cloud');
+    registerPassthroughOutbound(registry, 'local-llm');
+
+    const result = await router.generateFromInternal({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'cloud-model',
+    });
+
+    assert.equal(result.content, 'local-response');
+    assert.equal(result.metadata?.['provider'], 'local-llm');
+    assert.deepEqual(callOrder, ['local-llm']);
+  });
+
+  it('generateFromInternal falls back to cloud when local-llm fails', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const callOrder: string[] = [];
+
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      onGenerate: () => {
+        callOrder.push('local-llm');
+      },
+    });
+    localProvider.generate = async () => {
+      callOrder.push('local-llm');
+      throw new LocalLLMError('ollama unavailable', 'ollama');
+    };
+
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-fallback-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+      },
+      onGenerate: () => {
+        callOrder.push('cloud');
+      },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+    router.setTransformerRegistry(registry);
+    router.setModelRouter(createMockModelRouter({ enabled: true, decision: null }));
+    registerPassthroughOutbound(registry, 'cloud');
+    registerPassthroughOutbound(registry, 'local-llm');
+
+    const result = await router.generateFromInternal({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'cloud-model',
+    });
+
+    assert.equal(result.content, 'cloud-fallback-response');
+    assert.equal(result.metadata?.['provider'], 'cloud');
+    assert.deepEqual(callOrder, ['local-llm', 'cloud']);
+  });
+
+  it('generateFromInternal preserves optimized request shaping on the local path', async () => {
+    const savedOptimizeMessages = process.env['OPTIMIZE_MESSAGES_ENABLED'];
+    process.env['OPTIMIZE_MESSAGES_ENABLED'] = 'true';
+
+    try {
+      const router = new Router();
+      const registry = new TransformerRegistry();
+      let localRequest: GenerateRequest | undefined;
+
+      const cloudProvider = createMockProvider({
+        id: 'cloud',
+        name: 'Cloud',
+        type: 'api',
+        models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      });
+      const localProvider = createMockProvider({
+        id: 'local-llm',
+        name: 'Local LLM',
+        type: 'api',
+        models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+        response: {
+          text: 'local-response',
+          provider: 'local-llm',
+          model: 'local-model',
+          resolvedProvider: 'local-llm',
+          resolvedModel: 'local-model',
+          fallbackUsed: false,
+        },
+        onGenerate: (request) => {
+          localRequest = request;
+        },
+      });
+
+      router.register(cloudProvider);
+      router.register(localProvider);
+      router.setTransformerRegistry(registry);
+      router.setModelRouter(createMockModelRouter({ enabled: true, decision: null }));
+      registerPassthroughOutbound(registry, 'cloud');
+      registerPassthroughOutbound(registry, 'local-llm');
+
+      await router.generateFromInternal({
+        model: 'cloud-model',
+        messages: [
+          {
+            role: 'user',
+            content:
+              'You are an expert in TypeScript.\n\nContext: We use strict mode.\n\nTask: summarize this generic helper.',
+          },
+        ],
+      });
+
+      assert.ok(localRequest);
+      assert.ok(localRequest.system);
+      assert.match(localRequest.system ?? '', /TypeScript/);
+      assert.match(localRequest.prompt, /summarize this generic helper/i);
+    } finally {
+      if (savedOptimizeMessages === undefined) {
+        delete process.env['OPTIMIZE_MESSAGES_ENABLED'];
+      } else {
+        process.env['OPTIMIZE_MESSAGES_ENABLED'] = savedOptimizeMessages;
+      }
+    }
+  });
+
+  it('keeps offload decisions consistent between generate and generateFromInternal', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const offloadCalls: string[] = [];
+    const complexCalls: string[] = [];
+
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+      },
+      onGenerate: (request) => {
+        if (request.prompt.includes('security audit')) {
+          complexCalls.push('cloud');
+        } else {
+          offloadCalls.push('cloud');
+        }
+      },
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: {
+        text: 'local-response',
+        provider: 'local-llm',
+        model: 'local-model',
+        resolvedProvider: 'local-llm',
+        resolvedModel: 'local-model',
+        fallbackUsed: false,
+      },
+      onGenerate: (request) => {
+        if (request.prompt.includes('security audit')) {
+          complexCalls.push('local-llm');
+        } else {
+          offloadCalls.push('local-llm');
+        }
+      },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+    router.setTransformerRegistry(registry);
+    registerPassthroughOutbound(registry, 'cloud');
+    registerPassthroughOutbound(registry, 'local-llm');
+
+    const legacyOffload = await router.generate({ prompt: 'summarize this' });
+    const internalOffload = await router.generateFromInternal({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'cloud-model',
+    });
+    const legacyComplex = await router.generate({ prompt: 'security audit and threat model' });
+    const internalComplex = await router.generateFromInternal({
+      messages: [{ role: 'user', content: 'security audit and threat model' }],
+      model: 'cloud-model',
+    });
+
+    assert.equal(legacyOffload.provider, 'local-llm');
+    assert.equal(internalOffload.metadata?.['provider'], 'local-llm');
+    assert.equal(legacyComplex.provider, 'cloud');
+    assert.equal(internalComplex.metadata?.['provider'], 'cloud');
+    assert.deepEqual(offloadCalls, ['local-llm', 'local-llm']);
+    assert.deepEqual(complexCalls, ['cloud', 'cloud']);
   });
 
   it('resolveStreamingProvider returns a success telemetry hook for ModelRouter feedback', async () => {
