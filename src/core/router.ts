@@ -35,12 +35,11 @@ import { LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload } from '../local-llm/router.js';
 import { classify } from '../classification/index.js';
 import type { TaskClassification } from '../classification/index.js';
-import type { ModelEndpoint, RoutingDecision } from '../model-routing/types.js';
+import type { RoutingDecision } from '../model-routing/types.js';
 import {
   prioritizeEndpointCandidate,
   reorderByLatency,
   resolveCandidates,
-  resolveProviderModel,
 } from './router-candidate-planner.js';
 import {
   createAttemptTelemetryCallbacks,
@@ -50,6 +49,11 @@ import {
 } from './router-telemetry.js';
 import { executeGenerateAttempt, tryProvider } from './router-executor.js';
 import { buildInternalRoutingPlan } from './router-internal-plan.js';
+import {
+  buildGenerateRequest,
+  buildInternalRequest,
+  withResolutionMetadata,
+} from './router-shaping.js';
 import { optimizeMessagesEnabled } from './runtime-flags.js';
 
 import { logger } from './logger.js';
@@ -210,24 +214,6 @@ export class Router {
     };
   }
 
-  private withResolutionMetadata(
-    request: GenerateRequest,
-    result: GenerateResponse,
-    fallbackUsed: boolean,
-    latencyMs: number,
-  ): GenerateResponse {
-    return {
-      ...result,
-      requestedProvider: request.provider,
-      requestedModel: request.model,
-      resolvedProvider: result.provider,
-      resolvedModel: result.model,
-      fallbackUsed,
-      latencyMs,
-      sessionId: result.sessionId,
-    };
-  }
-
   /** Register a provider adapter with the router. */
   register(provider: LLMProvider): void {
     this._providers.push(provider);
@@ -322,7 +308,7 @@ export class Router {
 
       const result = await executeGenerateAttempt({
         provider,
-        request: this.buildGenerateRequest(
+        request: buildGenerateRequest(
           request,
           provider,
           modelRouterDecision?.endpoint,
@@ -338,7 +324,7 @@ export class Router {
         },
       });
       const latencyMs = Date.now() - startTime;
-      return this.withResolutionMetadata(request, result, false, latencyMs);
+      return withResolutionMetadata(request, result, false, latencyMs);
     }
 
     const errors: string[] = [];
@@ -347,7 +333,7 @@ export class Router {
       try {
         const result = await executeGenerateAttempt({
           provider,
-          request: this.buildGenerateRequest(
+          request: buildGenerateRequest(
             request,
             provider,
             modelRouterDecision?.endpoint,
@@ -382,7 +368,7 @@ export class Router {
           },
         });
         const latencyMs = Date.now() - startTime;
-        return this.withResolutionMetadata(request, result, index > 0, latencyMs);
+        return withResolutionMetadata(request, result, index > 0, latencyMs);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push(`${provider.id}: ${message}`);
@@ -396,7 +382,7 @@ export class Router {
         logger.info('All paid providers failed, attempting free model fallback');
         const freeResult = await this._freeModelRouter.generate(request);
         const latencyMs = Date.now() - startTime;
-        return this.withResolutionMetadata(request, freeResult, true, latencyMs);
+        return withResolutionMetadata(request, freeResult, true, latencyMs);
       } catch (freeError) {
         const freeMsg = freeError instanceof Error ? freeError.message : String(freeError);
         errors.push(`free-models: ${freeMsg}`);
@@ -495,7 +481,7 @@ export class Router {
       try {
         const result = await tryProvider({
           provider,
-          request: this.buildInternalRequest(
+          request: buildInternalRequest(
             optimizedRequest,
             provider,
             plan.modelRouterDecision?.endpoint,
@@ -578,7 +564,7 @@ export class Router {
         const routedEndpoint = plan.modelRouterDecision?.endpoint;
         resolvedProviders.push({
           provider,
-          request: this.buildInternalRequest(
+          request: buildInternalRequest(
             plan.optimizedRequest,
             provider,
             routedEndpoint,
@@ -596,33 +582,6 @@ export class Router {
     }
 
     return resolvedProviders;
-  }
-
-  private buildGenerateRequest(
-    request: GenerateRequest,
-    provider: LLMProvider,
-    routedEndpoint?: ModelEndpoint,
-  ): GenerateRequest {
-    return {
-      ...request,
-      provider: provider.id,
-      model: resolveProviderModel(request.model, provider, routedEndpoint),
-    };
-  }
-
-  private buildInternalRequest(
-    request: InternalLLMRequest,
-    provider: LLMProvider,
-    routedEndpoint?: ModelEndpoint,
-  ): InternalLLMRequest {
-    return {
-      ...request,
-      metadata: {
-        ...request.metadata,
-        provider: provider.id,
-      },
-      model: resolveProviderModel(request.model, provider, routedEndpoint),
-    };
   }
 
   /** Return models from all registered providers. */
