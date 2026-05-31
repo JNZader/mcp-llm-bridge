@@ -1,10 +1,11 @@
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Router } from '../src/core/router.js';
 import { GroupStore } from '../src/core/groups.js';
 import type { InternalLLMRequest } from '../src/core/internal-model.js';
 import { TransformerRegistry } from '../src/core/transformer.js';
+import { openaiOutbound } from '../src/transformers/outbound/openai.js';
 import type {
   GenerateRequest,
   GenerateResponse,
@@ -60,6 +61,21 @@ function registerOutbound(registry: TransformerRegistry, providerId: string): vo
 }
 
 describe('Router sticky sessions via SessionManager', () => {
+  let savedOptimizeMessagesEnabled: string | undefined;
+
+  beforeEach(() => {
+    savedOptimizeMessagesEnabled = process.env['OPTIMIZE_MESSAGES_ENABLED'];
+  });
+
+  afterEach(() => {
+    if (savedOptimizeMessagesEnabled === undefined) {
+      delete process.env['OPTIMIZE_MESSAGES_ENABLED'];
+      return;
+    }
+
+    process.env['OPTIMIZE_MESSAGES_ENABLED'] = savedOptimizeMessagesEnabled;
+  });
+
   it('reuses the same clientId and model pin', async () => {
     const router = new Router();
     const registry = new TransformerRegistry();
@@ -178,5 +194,60 @@ describe('Router sticky sessions via SessionManager', () => {
 
     sessionManager.stopCleanup();
     groupStore.close();
+  });
+
+  it('applies optimized internal request shaping on sticky-session reuse', async () => {
+    process.env['OPTIMIZE_MESSAGES_ENABLED'] = 'true';
+
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const sessionManager = new SessionManager();
+
+    let lastRequest: GenerateRequest | undefined;
+    const provider: LLMProvider = {
+      id: 'openai',
+      name: 'openai',
+      type: 'api',
+      models: [{ id: 'test-model', name: 'test-model', provider: 'openai', maxTokens: 4096 }],
+      async generate(request: GenerateRequest): Promise<GenerateResponse> {
+        lastRequest = request;
+        return {
+          text: 'sticky-response',
+          provider: 'openai',
+          model: 'test-model',
+          resolvedProvider: 'openai',
+          resolvedModel: 'test-model',
+          fallbackUsed: false,
+        };
+      },
+      async isAvailable(): Promise<boolean> {
+        return true;
+      },
+    };
+
+    registry.registerOutbound('openai', openaiOutbound);
+    router.setTransformerRegistry(registry);
+    router.setSessionManager(sessionManager);
+    router.register(provider);
+
+    sessionManager.pinRouterStickySession('client-1', 'test-model', 'openai', 'default', 30_000);
+
+    const result = await router.generateFromInternal({
+      model: 'test-model',
+      messages: [
+        {
+          role: 'user',
+          content: 'You are an expert in TypeScript.\n\nContext: We use strict mode.\n\nTask: Explain generics.',
+        },
+      ],
+      metadata: { clientId: 'client-1' },
+    });
+
+    assert.equal(result.metadata?.['provider'], 'openai');
+    assert.ok(lastRequest, 'Provider should have received a request');
+    assert.ok(lastRequest.system, 'Sticky fast path should preserve optimized system shaping');
+    assert.ok(lastRequest.system.includes('TypeScript'));
+
+    sessionManager.stopCleanup();
   });
 });

@@ -444,18 +444,24 @@ export class Router {
       if (pinned) {
         const stickyProvider = this._providers.find((p) => p.id === pinned.provider);
         if (stickyProvider) {
-          if (circuitBreaker.canExecute(stickyProvider.id, 'default', model).allowed) {
+          if (circuitBreaker.canExecute(stickyProvider.id, 'default', plan.routedModel).allowed) {
             try {
               const result = await tryProvider({
                 provider: stickyProvider,
-                 request,
-                 registry,
-                 circuitBreaker,
-                 startTime,
-                 model,
-                 ...telemetry,
-               });
-               return result;
+                request: buildInternalRequest(
+                  optimizedRequest,
+                  stickyProvider,
+                  plan.modelRouterDecision?.endpoint,
+                ),
+                registry,
+                circuitBreaker,
+                startTime,
+                model: plan.routedModel,
+                classification: plan.classification ?? undefined,
+                routedEndpoint: plan.modelRouterDecision?.endpoint,
+                ...telemetry,
+              });
+              return result;
             } catch {
               // Sticky provider failed — fall through to normal routing
               logger.warn({ provider: stickyProvider.id, clientId, model }, 'Sticky provider failed, falling through');
