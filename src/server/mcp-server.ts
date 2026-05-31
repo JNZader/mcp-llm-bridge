@@ -14,6 +14,7 @@ import type { CodeSearchService } from '../code-search/index.js';
 import type { StateManager } from '../crdt/index.js';
 import type { TrustLevel } from '../core/types.js';
 import { VERSION } from '../core/constants.js';
+import { dynamicMcpServersEnabled, mcpServersDir } from '../core/mcp-runtime-config.js';
 import { logger } from '../core/logger.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
 import type { ApprovalStore } from '../approval/index.js';
@@ -142,8 +143,8 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
   }
 
   // Dynamic plugin loading
-  const dynamicServersEnabled = process.env.MCP_DYNAMIC_SERVERS === 'true';
-  const pluginsDir = process.env.MCP_SERVERS_DIR || './mcp-servers';
+  const dynamicServersEnabled = dynamicMcpServersEnabled();
+  const pluginsDir = mcpServersDir();
 
   if (dynamicServersEnabled) {
     dynamicToolAdapter = new McpDefinitionAdapter();
