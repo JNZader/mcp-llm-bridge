@@ -150,6 +150,43 @@ describe('discoverModels hardening', () => {
     }
   });
 
+  it('keeps specialization-aware HF enrichment and capability inference aligned', async () => {
+    const { vault, dbPath } = createVault();
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return jsonResponse({
+          models: [{ name: 'qwen2.5-coder-7b-instruct-GGUF', details: { parameter_size: '7B' } }],
+        });
+      }
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [] });
+      }
+      if (url.includes('huggingface.co/api/models/')) {
+        return jsonResponse({
+          id: 'Qwen/Qwen2.5-Coder-7B-Instruct',
+          tags: ['Qwen2.5-Coder', 'assistant'],
+          pipeline_tag: 'text-generation',
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    try {
+      const result = await discoverModels(undefined, undefined, vault.getDb());
+
+      assert.equal(result.models.length, 1);
+      assert.equal(result.models[0]?.resolvedHfId, 'Qwen/Qwen2.5-Coder-7B-Instruct');
+      assert.deepEqual(result.models[0]?.capabilities, ['chat', 'code']);
+      assert.equal(fetchMock.mock.callCount(), 3);
+    } finally {
+      vault.destroy();
+      cleanupDb(dbPath);
+    }
+  });
+
   it('returns partial heuristic results when the discovery budget is exhausted', async () => {
     const { vault, dbPath } = createVault();
     const fetchMock = mock.fn(async (input: string | URL | Request) => {

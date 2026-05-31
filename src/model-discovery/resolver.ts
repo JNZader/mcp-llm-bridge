@@ -41,6 +41,11 @@ const KNOWN_MAPPINGS: Array<{ pattern: RegExp; hfId: string }> = [
   { pattern: /phi[- ]?3.*medium/i, hfId: 'microsoft/Phi-3-medium-4k-instruct' },
 
   // Qwen
+  { pattern: /qwen[- ]?2\.?5.*coder.*:?0\.5b/i, hfId: 'Qwen/Qwen2.5-Coder-0.5B-Instruct' },
+  { pattern: /qwen[- ]?2\.?5.*coder.*:?1\.5b/i, hfId: 'Qwen/Qwen2.5-Coder-1.5B-Instruct' },
+  { pattern: /qwen[- ]?2\.?5.*coder.*:?3b/i, hfId: 'Qwen/Qwen2.5-Coder-3B-Instruct' },
+  { pattern: /qwen[- ]?2\.?5.*coder.*:?7b/i, hfId: 'Qwen/Qwen2.5-Coder-7B-Instruct' },
+  { pattern: /codeqwen[- ]?1\.?5.*:?7b/i, hfId: 'Qwen/CodeQwen1.5-7B-Chat' },
   { pattern: /qwen[- ]?2\.?5.*:?0\.5b/i, hfId: 'Qwen/Qwen2.5-0.5B' },
   { pattern: /qwen[- ]?2\.?5.*:?1\.5b/i, hfId: 'Qwen/Qwen2.5-1.5B' },
   { pattern: /qwen[- ]?2\.?5.*:?7b/i, hfId: 'Qwen/Qwen2.5-7B' },
@@ -63,12 +68,22 @@ const KNOWN_MAPPINGS: Array<{ pattern: RegExp; hfId: string }> = [
  * Returns null if no match is found.
  */
 export function resolveHFModelId(localModelId: string): string | null {
+  const normalizedModelId = normalizeLocalModelId(localModelId);
+
   for (const mapping of KNOWN_MAPPINGS) {
-    if (mapping.pattern.test(localModelId)) {
+    if (mapping.pattern.test(normalizedModelId)) {
       return mapping.hfId;
     }
   }
   return null;
+}
+
+function normalizeLocalModelId(localModelId: string): string {
+  return localModelId
+    .trim()
+    .replace(/:latest$/i, '')
+    .replace(/[-_.]gguf$/i, '')
+    .replace(/[-_.](?:q\d+(?:_k_[msl]|_0)?|iq\d+(?:_[a-z0-9]+)?|fp16|fp8|bf16)$/i, '');
 }
 
 /**
@@ -86,10 +101,30 @@ export function inferCapabilities(
   if (pipelineTag === 'feature-extraction') capabilities.push('embedding');
 
   // Tag-based inference
-  const tagSet = new Set(tags.map((t) => t.toLowerCase()));
+  const normalizedTags = tags.map((t) => t.toLowerCase());
+  const tagSet = new Set(normalizedTags);
+  const tokenSet = new Set(
+    normalizedTags.flatMap((tag) => tag.split(/[^a-z0-9.]+/).filter(Boolean)),
+  );
+
   if (tagSet.has('code') || tagSet.has('coding')) capabilities.push('code');
   if (tagSet.has('conversational')) capabilities.push('chat');
   if (tagSet.has('math') || tagSet.has('reasoning')) capabilities.push('reasoning');
+  if (
+    tokenSet.has('chat') ||
+    tokenSet.has('instruct') ||
+    tokenSet.has('assistant')
+  ) {
+    capabilities.push('chat');
+  }
+  if (
+    tokenSet.has('coder') ||
+    tokenSet.has('codeqwen') ||
+    tokenSet.has('starcoder') ||
+    tokenSet.has('codellama')
+  ) {
+    capabilities.push('code');
+  }
 
   // Deduplicate
   return [...new Set(capabilities)];

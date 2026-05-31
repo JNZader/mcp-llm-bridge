@@ -46,6 +46,15 @@ describe('resolveHFModelId', () => {
     assert.equal(resolveHFModelId('qwen2.5:7b'), 'Qwen/Qwen2.5-7B');
   });
 
+  it('resolves qwen2.5 coder variants to coder repos', () => {
+    assert.equal(resolveHFModelId('qwen2.5-coder:7b'), 'Qwen/Qwen2.5-Coder-7B-Instruct');
+    assert.equal(resolveHFModelId('qwen2.5-coder:1.5b'), 'Qwen/Qwen2.5-Coder-1.5B-Instruct');
+  });
+
+  it('resolves codeqwen variants to chat repos', () => {
+    assert.equal(resolveHFModelId('codeqwen1.5:7b'), 'Qwen/CodeQwen1.5-7B-Chat');
+  });
+
   it('resolves starcoder2:3b', () => {
     assert.equal(resolveHFModelId('starcoder2:3b'), 'bigcode/starcoder2-3b');
   });
@@ -64,6 +73,25 @@ describe('resolveHFModelId', () => {
 
   it('handles LM Studio naming (hyphenated)', () => {
     assert.equal(resolveHFModelId('llama-3.2-3b-instruct-GGUF'), 'meta-llama/Llama-3.2-3B');
+  });
+
+  it('ignores packaging noise for specialized Qwen variants', () => {
+    assert.equal(
+      resolveHFModelId('Qwen2.5-Coder-7B-Instruct-GGUF'),
+      'Qwen/Qwen2.5-Coder-7B-Instruct',
+    );
+    assert.equal(
+      resolveHFModelId('qwen2.5-coder:7b-q4_k_m'),
+      'Qwen/Qwen2.5-Coder-7B-Instruct',
+    );
+    assert.equal(
+      resolveHFModelId('qwen2.5-coder-7b-instruct.gguf'),
+      'Qwen/Qwen2.5-Coder-7B-Instruct',
+    );
+    assert.equal(
+      resolveHFModelId('qwen2.5-coder-7b-instruct:latest'),
+      'Qwen/Qwen2.5-Coder-7B-Instruct',
+    );
   });
 });
 
@@ -90,10 +118,31 @@ describe('inferCapabilities', () => {
     assert.ok(caps.includes('reasoning'));
   });
 
+  it('infers chat from instruct or assistant tag tokens', () => {
+    assert.deepEqual(
+      inferCapabilities(['Qwen2.5-Instruct', 'assistant']),
+      ['chat'],
+    );
+  });
+
+  it('infers code from coder family tag tokens', () => {
+    const caps = inferCapabilities(['Qwen2.5-Coder', 'CodeLlama', 'StarCoder']);
+    assert.ok(caps.includes('code'));
+  });
+
   it('deduplicates capabilities', () => {
     const caps = inferCapabilities(['conversational'], 'text-generation');
     const chatCount = caps.filter((c) => c === 'chat').length;
     assert.equal(chatCount, 1);
+  });
+
+  it('deduplicates inferred chat and code signals across pipelines and tags', () => {
+    const caps = inferCapabilities(
+      ['assistant', 'Qwen2.5-Coder', 'code'],
+      'text-generation',
+    );
+    assert.equal(caps.filter((c) => c === 'chat').length, 1);
+    assert.equal(caps.filter((c) => c === 'code').length, 1);
   });
 
   it('returns empty for no signals', () => {
