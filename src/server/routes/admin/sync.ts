@@ -9,6 +9,11 @@ import {
   type ProviderType,
 } from '../../../model-sync/index.js';
 import { PriceManager } from '../../../price-sync/index.js';
+import {
+  resolveProviderApiKey,
+  resolveProviderApiKeyEnv,
+  resolveProviderBaseUrl,
+} from '../../../core/provider-runtime-config.js';
 
 export interface AdminSyncRoutesDeps {
   db?: Database.Database;
@@ -137,12 +142,12 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
 
       const baseUrl =
         requestedBaseUrl ??
-        process.env[`${resolvedProvider.toUpperCase()}_BASE_URL`] ??
+        resolveProviderBaseUrl(resolvedProvider) ??
         DEFAULT_PROVIDER_BASE_URLS[resolvedProvider];
 
       let apiKey: string | undefined = typeof requestBody['apiKey'] === 'string' ? requestBody['apiKey'] : undefined;
       if (!apiKey) {
-        const envKey = process.env[`${resolvedProvider.toUpperCase()}_API_KEY`];
+        const envKey = resolveProviderApiKey(resolvedProvider);
         if (envKey) {
           apiKey = envKey;
         } else {
@@ -161,13 +166,13 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           `No API key found for provider: ${resolvedProvider}`,
           'MISSING_CREDENTIALS',
           {
-            provider: resolvedProvider,
-            resolution: [
-              'Provide apiKey in the request body',
-              `Set ${resolvedProvider.toUpperCase()}_API_KEY in the environment`,
-              'Store a default credential in the vault',
-            ],
-          },
+              provider: resolvedProvider,
+              resolution: [
+                'Provide apiKey in the request body',
+                `Set ${resolveProviderApiKeyEnv(resolvedProvider)} in the environment`,
+                'Store a default credential in the vault',
+              ],
+            },
         );
       }
 

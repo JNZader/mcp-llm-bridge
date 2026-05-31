@@ -7,6 +7,7 @@
  */
 
 import { logger } from '../core/logger.js';
+import { readRuntimeEnv } from '../core/provider-runtime-config.js';
 import type { FreeModelEntry, HealthCheckResult, HealthStatus } from './types.js';
 
 /**
@@ -25,7 +26,7 @@ export async function checkHealth(
 
   try {
     // Resolve API key from environment if specified
-    const apiKey = entry.apiKeyEnv ? process.env[entry.apiKeyEnv] : undefined;
+    const apiKey = readRuntimeEnv(entry.apiKeyEnv);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

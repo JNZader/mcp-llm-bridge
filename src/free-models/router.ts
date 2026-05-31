@@ -10,6 +10,7 @@
  */
 
 import { logger } from '../core/logger.js';
+import { readRuntimeEnv } from '../core/provider-runtime-config.js';
 import type { GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { FreeModelEntry, FreeModelConfig, ModelCapability } from './types.js';
 import { FreeModelRegistry, loadUserModels } from './registry.js';
@@ -137,7 +138,7 @@ export class FreeModelRouter {
    * Returns the generated text content.
    */
   private async callModel(entry: FreeModelEntry, request: GenerateRequest): Promise<string> {
-    const apiKey = entry.apiKeyEnv ? process.env[entry.apiKeyEnv] : undefined;
+    const apiKey = readRuntimeEnv(entry.apiKeyEnv);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
