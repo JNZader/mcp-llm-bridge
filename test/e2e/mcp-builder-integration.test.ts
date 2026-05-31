@@ -16,6 +16,7 @@ import { createAllAdapters } from '../../src/adapters/index.js';
 import type { GatewayConfig } from '../../src/core/types.js';
 import { startMcpServer, handleToolCall } from '../../src/server/mcp.js';
 import { dynamicToolAdapter } from '../../src/server/mcp.js';
+import { getDynamicPluginLoadSummary, getRuntimeMcpTools } from '../../src/server/mcp.js';
 import { ProfileEnforcer } from '../../src/security/enforcer.js';
 
 const config: GatewayConfig = {
@@ -62,6 +63,15 @@ describe('MCP dynamic server startup', () => {
 
     server = await startMcpServer({ router, vault });
     assert.ok(server, 'server should start');
+    assert.equal(dynamicToolAdapter, undefined);
+    assert.deepStrictEqual(getDynamicPluginLoadSummary(), {
+      enabled: false,
+      directory: './mcp-servers',
+      loaded: [],
+      skipped: [],
+      errors: [],
+      collisions: [],
+    });
 
     // Verify no dynamic tools by calling a non-existent dynamic tool
     const result = await handleToolCall('dynamic_greet', { name: 'test' }, router, vault);
@@ -109,10 +119,15 @@ describe('MCP dynamic server startup', () => {
       server = await startMcpServer({ router, vault });
       assert.ok(server, 'server should start');
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
       assert.ok(dynamicToolAdapter, 'dynamicToolAdapter should be set');
       assert.equal(dynamicToolAdapter!.hasTool('dynamic_default_dir'), true);
+      assert.deepStrictEqual(getDynamicPluginLoadSummary().loaded, [
+        {
+          plugin: 'default-dir',
+          toolCount: 1,
+          toolNames: ['dynamic_default_dir'],
+        },
+      ]);
 
       const result = await handleToolCall('dynamic_default_dir', {}, router, vault);
       assert.ok(!result.isError, 'should not error');
@@ -155,12 +170,16 @@ describe('MCP dynamic server startup', () => {
     server = await startMcpServer({ router, vault });
     assert.ok(server, 'server should start');
 
-    // Wait for async plugin loading
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
     // Verify dynamic tool is loaded
     assert.ok(dynamicToolAdapter, 'dynamicToolAdapter should be set');
     assert.strictEqual(dynamicToolAdapter!.hasTool('dynamic_greet'), true);
+    assert.deepStrictEqual(getDynamicPluginLoadSummary().loaded, [
+      {
+        plugin: 'test',
+        toolCount: 1,
+        toolNames: ['dynamic_greet'],
+      },
+    ]);
 
     // Test dynamic tool execution via handleToolCall
     const result = await handleToolCall('dynamic_greet', { name: 'World' }, router, vault);
@@ -187,12 +206,17 @@ describe('MCP dynamic server startup', () => {
     server = await startMcpServer({ router, vault });
     assert.ok(server, 'server should start without crashing');
 
-    // Wait for async plugin loading
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
     // Verify no dynamic tools
     assert.ok(dynamicToolAdapter, 'dynamicToolAdapter should be created');
     assert.strictEqual(dynamicToolAdapter!.getToolNames().length, 0, 'should have no tools');
+    assert.deepStrictEqual(getDynamicPluginLoadSummary(), {
+      enabled: true,
+      directory: tempDir,
+      loaded: [],
+      skipped: [],
+      errors: [],
+      collisions: [],
+    });
 
     // Calling a non-existent tool should still return unknown tool
     const result = await handleToolCall('dynamic_greet', { name: 'test' }, router, vault);
@@ -233,7 +257,6 @@ describe('Dynamic tool execution', () => {
     await writeFile(join(tempDir, 'exec.mcp-server.js'), pluginContent, 'utf-8');
 
     server = await startMcpServer({ router, vault });
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     const result = await handleToolCall('dynamic_echo', { msg: 'hi' }, router, vault);
     assert.ok(!result.isError);
@@ -277,7 +300,6 @@ describe('Dynamic tool security profiles', () => {
     enforcer.registerDynamicTool('dynamic_admin', 'admin');
 
     server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     // With the enforcer passed to handleToolCall, the tool should be blocked
     const result = await handleToolCall(
@@ -305,5 +327,180 @@ describe('Dynamic tool security profiles', () => {
     await server.close();
     server = null;
     await rm(join(tempDir, 'admin.mcp-server.js'));
+  });
+
+  it('awaits delayed plugin loading before startup resolves', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+
+    const pluginContent = `
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      export default {
+        name: 'delayed-plugin',
+        version: '1.0.0',
+        description: 'Delayed plugin',
+        tools: [
+          {
+            name: 'dynamic_delayed',
+            description: 'Loads before startup resolves',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async () => ({
+              content: [{ type: 'text', text: 'ready' }],
+            }),
+          },
+        ],
+        resources: [],
+        prompts: [],
+      };
+    `;
+    await writeFile(join(tempDir, 'delayed.mcp-server.js'), pluginContent, 'utf-8');
+
+    const startedAt = Date.now();
+    server = await startMcpServer({ router, vault });
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.ok(elapsedMs >= 125, `startup should await plugin load, got ${elapsedMs}ms`);
+    assert.ok(dynamicToolAdapter?.hasTool('dynamic_delayed'));
+
+    await server.close();
+    server = null;
+    await rm(join(tempDir, 'delayed.mcp-server.js'));
+  });
+
+  it('quarantines plugin collisions and exposes them in the load summary', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+
+    await writeFile(join(tempDir, 'alpha.mcp-server.js'), `
+      export default {
+        name: 'alpha',
+        version: '1.0.0',
+        description: 'Alpha plugin',
+        tools: [{
+          name: 'dynamic_collision',
+          description: 'first owner',
+          inputSchema: { type: 'object', properties: {} },
+          handler: async () => ({ content: [{ type: 'text', text: 'alpha' }] }),
+        }],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+    await writeFile(join(tempDir, 'beta.mcp-server.js'), `
+      export default {
+        name: 'beta',
+        version: '1.0.0',
+        description: 'Beta plugin',
+        tools: [{
+          name: 'dynamic_collision',
+          description: 'duplicate owner',
+          inputSchema: { type: 'object', properties: {} },
+          handler: async () => ({ content: [{ type: 'text', text: 'beta' }] }),
+        }],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+    await writeFile(join(tempDir, 'builtin.mcp-server.js'), `
+      export default {
+        name: 'builtin',
+        version: '1.0.0',
+        description: 'Built-in collision plugin',
+        tools: [{
+          name: 'llm_generate',
+          description: 'illegal override',
+          inputSchema: { type: 'object', properties: {} },
+          handler: async () => ({ content: [{ type: 'text', text: 'override' }] }),
+        }],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+
+    server = await startMcpServer({ router, vault });
+
+    const summary = getDynamicPluginLoadSummary();
+    assert.deepStrictEqual(summary.loaded, [
+      {
+        plugin: 'alpha',
+        toolCount: 1,
+        toolNames: ['dynamic_collision'],
+      },
+    ]);
+    assert.strictEqual(summary.collisions.length, 2);
+    assert.deepStrictEqual(
+      summary.collisions.map((entry) => ({
+        plugin: entry.plugin,
+        toolName: entry.toolName,
+        code: entry.code,
+        existingPlugin: entry.existingPlugin,
+      })),
+      [
+        {
+          plugin: 'beta',
+          toolName: 'dynamic_collision',
+          code: 'plugin-tool-name',
+          existingPlugin: 'alpha',
+        },
+        {
+          plugin: 'builtin',
+          toolName: 'llm_generate',
+          code: 'built-in-tool-name',
+          existingPlugin: 'built-in',
+        },
+      ],
+    );
+    assert.ok(dynamicToolAdapter?.hasTool('dynamic_collision'));
+    assert.equal(dynamicToolAdapter?.hasTool('llm_generate'), false);
+    assert.equal(getRuntimeMcpTools().some((tool) => tool.name === 'dynamic_collision'), true);
+    assert.equal(getRuntimeMcpTools().filter((tool) => tool.name === 'llm_generate').length, 1);
+
+    await server.close();
+    server = null;
+    await rm(join(tempDir, 'alpha.mcp-server.js'));
+    await rm(join(tempDir, 'beta.mcp-server.js'));
+    await rm(join(tempDir, 'builtin.mcp-server.js'));
+  });
+
+  it('resets dynamic runtime state between startups', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+
+    await writeFile(join(tempDir, 'first.mcp-server.js'), `
+      export default {
+        name: 'first',
+        version: '1.0.0',
+        description: 'First plugin',
+        tools: [{
+          name: 'dynamic_first',
+          description: 'first tool',
+          inputSchema: { type: 'object', properties: {} },
+          handler: async () => ({ content: [{ type: 'text', text: 'first' }] }),
+        }],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+
+    server = await startMcpServer({ router, vault });
+    assert.ok(dynamicToolAdapter?.hasTool('dynamic_first'));
+    await server.close();
+    server = null;
+
+    await rm(join(tempDir, 'first.mcp-server.js'));
+    process.env.MCP_DYNAMIC_SERVERS = 'false';
+    delete process.env.MCP_SERVERS_DIR;
+
+    server = await startMcpServer({ router, vault });
+
+    assert.equal(dynamicToolAdapter, undefined);
+    assert.equal(getRuntimeMcpTools().some((tool) => tool.name === 'dynamic_first'), false);
+
+    const result = await handleToolCall('dynamic_first', {}, router, vault);
+    assert.ok(result.isError);
+    assert.ok(result.content[0]!.text.includes('Unknown tool'));
+
+    await server.close();
+    server = null;
   });
 });

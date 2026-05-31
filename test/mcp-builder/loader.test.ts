@@ -53,17 +53,19 @@ describe('loadPlugins', () => {
       `export default ${JSON.stringify(def)};`,
     );
 
-    const plugins = await loadPlugins(tempDir);
+    const result = await loadPlugins(tempDir);
 
-    assert.strictEqual(plugins.length, 1);
-    assert.strictEqual(plugins[0]!.name, 'alpha');
-    assert.strictEqual(plugins[0]!.definition.name, def.name);
-    assert.strictEqual(plugins[0]!.definition.version, def.version);
-    assert.strictEqual(plugins[0]!.definition.description, def.description);
-    assert.strictEqual(plugins[0]!.definition.tools.length, 1);
-    assert.strictEqual(plugins[0]!.definition.tools[0]!.name, 'test_tool');
-    assert.deepStrictEqual(plugins[0]!.definition.resources, []);
-    assert.deepStrictEqual(plugins[0]!.definition.prompts, []);
+    assert.strictEqual(result.loaded.length, 1);
+    assert.strictEqual(result.loaded[0]!.name, 'alpha');
+    assert.strictEqual(result.loaded[0]!.definition.name, def.name);
+    assert.strictEqual(result.loaded[0]!.definition.version, def.version);
+    assert.strictEqual(result.loaded[0]!.definition.description, def.description);
+    assert.strictEqual(result.loaded[0]!.definition.tools.length, 1);
+    assert.strictEqual(result.loaded[0]!.definition.tools[0]!.name, 'test_tool');
+    assert.deepStrictEqual(result.loaded[0]!.definition.resources, []);
+    assert.deepStrictEqual(result.loaded[0]!.definition.prompts, []);
+    assert.deepStrictEqual(result.skipped, []);
+    assert.deepStrictEqual(result.errors, []);
   });
 
   it('loads plugins from the default relative ./mcp-servers directory', async () => {
@@ -81,24 +83,24 @@ describe('loadPlugins', () => {
     try {
       process.chdir(appRoot);
 
-      const plugins = await loadPlugins('./mcp-servers');
+        const result = await loadPlugins('./mcp-servers');
 
-      assert.strictEqual(plugins.length, 1);
-      assert.strictEqual(plugins[0]!.name, 'relative');
-      assert.strictEqual(plugins[0]!.definition.name, 'relative');
-    } finally {
-      process.chdir(originalCwd);
-    }
-  });
+        assert.strictEqual(result.loaded.length, 1);
+        assert.strictEqual(result.loaded[0]!.name, 'relative');
+        assert.strictEqual(result.loaded[0]!.definition.name, 'relative');
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
 
   it('handles empty directory (returns empty array)', async () => {
-    const plugins = await loadPlugins(tempDir);
-    assert.deepStrictEqual(plugins, []);
+    const result = await loadPlugins(tempDir);
+    assert.deepStrictEqual(result, { loaded: [], skipped: [], errors: [] });
   });
 
   it('handles missing directory (returns empty array)', async () => {
-    const plugins = await loadPlugins(join(tempDir, 'nonexistent'));
-    assert.deepStrictEqual(plugins, []);
+    const result = await loadPlugins(join(tempDir, 'nonexistent'));
+    assert.deepStrictEqual(result, { loaded: [], skipped: [], errors: [] });
   });
 
   it('loads plugins from an absolute directory path', async () => {
@@ -108,42 +110,33 @@ describe('loadPlugins', () => {
       `export default ${JSON.stringify(def)};`,
     );
 
-    const plugins = await loadPlugins(resolve(tempDir));
+    const result = await loadPlugins(resolve(tempDir));
 
-    assert.strictEqual(plugins.length, 1);
-    assert.strictEqual(plugins[0]!.name, 'absolute');
-    assert.strictEqual(plugins[0]!.definition.name, def.name);
+    assert.strictEqual(result.loaded.length, 1);
+    assert.strictEqual(result.loaded[0]!.name, 'absolute');
+    assert.strictEqual(result.loaded[0]!.definition.name, def.name);
   });
 
-  it('skips invalid export shape with warning', async () => {
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: any[]) => warnings.push(args.join(' '));
+  it('skips invalid export shape with structured summary', async () => {
+    await writePluginFile('bad', `export const notAPlugin = {};`);
 
-    try {
-      await writePluginFile('bad', `export const notAPlugin = {};`);
-      const plugins = await loadPlugins(tempDir);
-      assert.deepStrictEqual(plugins, []);
-      assert.ok(warnings.some((w) => w.includes('bad') && w.includes('invalid export shape')));
-    } finally {
-      console.warn = originalWarn;
-    }
+    const result = await loadPlugins(tempDir);
+
+    assert.deepStrictEqual(result.loaded, []);
+    assert.strictEqual(result.skipped.length, 1);
+    assert.strictEqual(result.skipped[0]!.plugin, 'bad');
+    assert.strictEqual(result.skipped[0]!.code, 'invalid-top-level-shape');
   });
 
-  it('skips load failure with warning', async () => {
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: any[]) => warnings.push(args.join(' '));
+  it('captures load failures in structured summary', async () => {
+    await writePluginFile('broken', `this is not valid javascript {`);
 
-    try {
-      // Write a file with a syntax error to cause import failure
-      await writePluginFile('broken', `this is not valid javascript {`);
-      const plugins = await loadPlugins(tempDir);
-      assert.deepStrictEqual(plugins, []);
-      assert.ok(warnings.some((w) => w.includes('broken') && w.includes('load failed')));
-    } finally {
-      console.warn = originalWarn;
-    }
+    const result = await loadPlugins(tempDir);
+
+    assert.deepStrictEqual(result.loaded, []);
+    assert.strictEqual(result.errors.length, 1);
+    assert.strictEqual(result.errors[0]!.plugin, 'broken');
+    assert.strictEqual(result.errors[0]!.code, 'load-failed');
   });
 
   it('falls back to named export (module.server)', async () => {
@@ -153,13 +146,13 @@ describe('loadPlugins', () => {
       `export const server = ${JSON.stringify(def)};`,
     );
 
-    const plugins = await loadPlugins(tempDir);
+    const result = await loadPlugins(tempDir);
 
-    assert.strictEqual(plugins.length, 1);
-    assert.strictEqual(plugins[0]!.name, 'named');
-    assert.strictEqual(plugins[0]!.definition.name, def.name);
-    assert.strictEqual(plugins[0]!.definition.version, def.version);
-    assert.strictEqual(plugins[0]!.definition.tools.length, 1);
+    assert.strictEqual(result.loaded.length, 1);
+    assert.strictEqual(result.loaded[0]!.name, 'named');
+    assert.strictEqual(result.loaded[0]!.definition.name, def.name);
+    assert.strictEqual(result.loaded[0]!.definition.version, def.version);
+    assert.strictEqual(result.loaded[0]!.definition.tools.length, 1);
   });
 
   it('falls back to module.definition export', async () => {
@@ -169,13 +162,13 @@ describe('loadPlugins', () => {
       `export const definition = ${JSON.stringify(def)};`,
     );
 
-    const plugins = await loadPlugins(tempDir);
+    const result = await loadPlugins(tempDir);
 
-    assert.strictEqual(plugins.length, 1);
-    assert.strictEqual(plugins[0]!.name, 'def-export');
-    assert.strictEqual(plugins[0]!.definition.name, def.name);
-    assert.strictEqual(plugins[0]!.definition.version, def.version);
-    assert.strictEqual(plugins[0]!.definition.tools.length, 1);
+    assert.strictEqual(result.loaded.length, 1);
+    assert.strictEqual(result.loaded[0]!.name, 'def-export');
+    assert.strictEqual(result.loaded[0]!.definition.name, def.name);
+    assert.strictEqual(result.loaded[0]!.definition.version, def.version);
+    assert.strictEqual(result.loaded[0]!.definition.tools.length, 1);
   });
 
   it('ignores non-.mcp-server.js files', async () => {
@@ -183,20 +176,38 @@ describe('loadPlugins', () => {
     await writeFile(join(tempDir, 'readme.txt'), 'hello', 'utf-8');
     await writeFile(join(tempDir, 'other.js'), 'export default {};', 'utf-8');
 
-    const plugins = await loadPlugins(tempDir);
-    assert.strictEqual(plugins.length, 1);
-    assert.strictEqual(plugins[0]!.name, 'valid');
+    const result = await loadPlugins(tempDir);
+    assert.strictEqual(result.loaded.length, 1);
+    assert.strictEqual(result.loaded[0]!.name, 'valid');
   });
 
   it('loads multiple plugins in alphabetical order', async () => {
     await writePluginFile('zebra', `export default ${JSON.stringify(makeDefinition('zebra'))};`);
     await writePluginFile('alpha', `export default ${JSON.stringify(makeDefinition('alpha'))};`);
 
-    const plugins = await loadPlugins(tempDir);
+    const result = await loadPlugins(tempDir);
 
-    assert.strictEqual(plugins.length, 2);
-    assert.strictEqual(plugins[0]!.name, 'alpha');
-    assert.strictEqual(plugins[1]!.name, 'zebra');
+    assert.strictEqual(result.loaded.length, 2);
+    assert.strictEqual(result.loaded[0]!.name, 'alpha');
+    assert.strictEqual(result.loaded[1]!.name, 'zebra');
+  });
+
+  it('reloads the same plugin file with fresh module state on each call', async () => {
+    await writePluginFile(
+      'fresh',
+      `export default ${JSON.stringify(makeDefinition('first-version'))};`,
+    );
+
+    const first = await loadPlugins(tempDir);
+    assert.strictEqual(first.loaded[0]!.definition.name, 'first-version');
+
+    await writePluginFile(
+      'fresh',
+      `export default ${JSON.stringify(makeDefinition('second-version'))};`,
+    );
+
+    const second = await loadPlugins(tempDir);
+    assert.strictEqual(second.loaded[0]!.definition.name, 'second-version');
   });
 
   it('rethrows non-ENOENT errors from readdir', async () => {
