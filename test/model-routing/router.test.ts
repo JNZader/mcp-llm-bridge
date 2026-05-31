@@ -246,6 +246,51 @@ describe('ModelRouter', () => {
       assert.equal(sorted[0]!.id, 'groq-llama');
     });
   });
+
+  describe('stats snapshot', () => {
+    it('aggregates decisions by endpoint and task pattern', () => {
+      router.route({
+        task: 'commit-message',
+        confidence: 0.95,
+        shouldOffload: true,
+        reason: 'test',
+      });
+
+      router.setEndpointAvailability('local-llama', false);
+      router.route({
+        task: 'commit-message',
+        confidence: 0.95,
+        shouldOffload: true,
+        reason: 'test',
+      });
+
+      const snapshot = router.getStatsSnapshot();
+      assert.equal(snapshot.enabled, true);
+      assert.equal(snapshot.totalDecisions, 2);
+      assert.deepEqual(snapshot.byEndpointTask, [
+        {
+          endpointId: 'groq-llama',
+          taskPattern: 'commit-message',
+          totalDecisions: 1,
+          fallbackDecisions: 1,
+          lastMatchedRuleId: 'commit-rule',
+          lastReason: 'Fallback #1 for commit-message',
+          lastSelectedAt: snapshot.byEndpointTask[0]!.lastSelectedAt,
+        },
+        {
+          endpointId: 'local-llama',
+          taskPattern: 'commit-message',
+          totalDecisions: 1,
+          fallbackDecisions: 0,
+          lastMatchedRuleId: 'commit-rule',
+          lastReason: 'Primary model for commit-message',
+          lastSelectedAt: snapshot.byEndpointTask[1]!.lastSelectedAt,
+        },
+      ]);
+      assert.equal(typeof snapshot.byEndpointTask[0]?.lastSelectedAt, 'string');
+      assert.equal(typeof snapshot.byEndpointTask[1]?.lastSelectedAt, 'string');
+    });
+  });
 });
 
 // ── rankEndpointsByCost ──────────────────────────────────

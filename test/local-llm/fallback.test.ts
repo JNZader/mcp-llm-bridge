@@ -52,6 +52,19 @@ describe('Router local LLM fallback', () => {
     const result = await router.generate({ prompt: 'write a commit message' });
     assert.equal(result.text, 'cloud result');
     assert.equal(result.fallbackUsed, true); // local was tried first, fell back
+    assert.deepEqual(result.routing, {
+      strategy: 'local-offload',
+      classification: {
+        task: 'commit-message',
+        confidence: 0.97,
+        shouldOffload: true,
+        reason: 'Matched 2 keyword(s) for commit-message',
+      },
+      attemptedProviders: ['local-llm', 'cloud'],
+      fallbackFrom: 'local-llm',
+      fallbackTo: 'cloud',
+      decisionReason: 'Matched 2 keyword(s) for commit-message',
+    });
   });
 
   it('does not insert local-llm first when task is not offloadable', async () => {

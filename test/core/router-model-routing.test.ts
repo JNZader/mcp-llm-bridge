@@ -189,6 +189,19 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(result.fallbackUsed, false);
     assert.equal(preferredRequest?.provider, 'preferred');
     assert.equal(preferredRequest?.model, 'preferred-model');
+    assert.deepEqual(result.routing, {
+      strategy: 'model-router',
+      classification: {
+        task: 'summarization',
+        confidence: 0.75,
+        shouldOffload: true,
+        reason: 'Matched 1 keyword(s) for summarization',
+      },
+      matchedRuleId: 'rule-1',
+      selectedEndpointId: 'preferred-endpoint',
+      attemptedProviders: ['preferred'],
+      decisionReason: 'Primary model for summarization',
+    });
   });
 
   it('routes correctly when endpoint.id differs from provider.id', async () => {

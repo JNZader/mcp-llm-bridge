@@ -14,6 +14,8 @@ import type {
   QualityFeedback,
   QualityStats,
   CostTier,
+  ModelRouterEndpointTaskStats,
+  ModelRouterStatsSnapshot,
 } from './types.js';
 import { COST_TIER_ORDER, compareCostTiers, DEFAULT_MODEL_ROUTING_CONFIG } from './types.js';
 import type { TaskClassification } from '../classification/index.js';
@@ -32,6 +34,7 @@ export class ModelRouter {
   private readonly config: ModelRoutingConfig;
   private readonly endpointMap: Map<string, ModelEndpoint>;
   private readonly feedbackLog: QualityFeedback[] = [];
+  private readonly decisionStats: Map<string, ModelRouterEndpointTaskStats> = new Map();
 
   constructor(config?: Partial<ModelRoutingConfig>) {
     this.config = { ...DEFAULT_MODEL_ROUTING_CONFIG, ...config };
@@ -55,7 +58,11 @@ export class ModelRouter {
     // 1. Find matching rule
     const rule = this.findMatchingRule(classification);
     if (!rule) {
-      return this.routeToDefault(classification);
+      const decision = this.routeToDefault(classification);
+      if (decision) {
+        this.recordDecisionStats(classification, decision);
+      }
+      return decision;
     }
 
     // 2. Resolve preferred models in order
@@ -72,7 +79,7 @@ export class ModelRouter {
         continue; // Quality too low, try next
       }
 
-      return {
+      const decision: RoutingDecision = {
         endpoint,
         matchedRule: rule,
         reason: index === 0
@@ -81,11 +88,17 @@ export class ModelRouter {
         isFallback: index > 0,
         costTier: endpoint.costTier,
       };
+      this.recordDecisionStats(classification, decision);
+      return decision;
     }
 
     // 5. All preferred models failed — fallback to default if allowed
     if (rule.allowFallback) {
-      return this.routeToDefault(classification, rule);
+      const decision = this.routeToDefault(classification, rule);
+      if (decision) {
+        this.recordDecisionStats(classification, decision);
+      }
+      return decision;
     }
 
     return null;
@@ -165,6 +178,24 @@ export class ModelRouter {
     return this.config.endpoints.find((endpoint) => endpoint.provider === providerId) ?? null;
   }
 
+  getStatsSnapshot(): ModelRouterStatsSnapshot {
+    return {
+      enabled: this.enabled,
+      totalDecisions: Array.from(this.decisionStats.values()).reduce(
+        (sum, stats) => sum + stats.totalDecisions,
+        0,
+      ),
+      byEndpointTask: Array.from(this.decisionStats.values())
+        .sort((a, b) => {
+          if (a.endpointId === b.endpointId) {
+            return a.taskPattern.localeCompare(b.taskPattern);
+          }
+          return a.endpointId.localeCompare(b.endpointId);
+        })
+        .map((stats) => ({ ...stats })),
+    };
+  }
+
   /**
    * Find the first matching rule for a task classification.
    */
@@ -205,6 +236,24 @@ export class ModelRouter {
       isFallback: true,
       costTier: endpoint.costTier,
     };
+  }
+
+  private recordDecisionStats(
+    classification: TaskClassification,
+    decision: RoutingDecision,
+  ): void {
+    const key = `${decision.endpoint.id}::${classification.task}`;
+    const existing = this.decisionStats.get(key);
+
+    this.decisionStats.set(key, {
+      endpointId: decision.endpoint.id,
+      taskPattern: classification.task,
+      totalDecisions: (existing?.totalDecisions ?? 0) + 1,
+      fallbackDecisions: (existing?.fallbackDecisions ?? 0) + (decision.isFallback ? 1 : 0),
+      lastMatchedRuleId: decision.matchedRule.id,
+      lastReason: decision.reason,
+      lastSelectedAt: new Date().toISOString(),
+    });
   }
 }
 

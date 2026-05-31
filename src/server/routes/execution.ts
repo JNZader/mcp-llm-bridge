@@ -41,6 +41,7 @@ function buildGatewayMetadata(result: {
 	resolvedModel?: string;
 	fallbackUsed?: boolean;
 	tokensUsed?: number;
+	routing?: unknown;
 }) {
 	return {
 		requestedProvider: result.requestedProvider,
@@ -49,6 +50,7 @@ function buildGatewayMetadata(result: {
 		resolvedModel: result.resolvedModel,
 		fallbackUsed: result.fallbackUsed,
 		tokensUsed: result.tokensUsed,
+		routing: result.routing,
 	};
 }
 

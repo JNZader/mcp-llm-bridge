@@ -35,7 +35,7 @@ import { LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload } from '../local-llm/router.js';
 import { classify } from '../classification/index.js';
 import type { TaskClassification } from '../classification/index.js';
-import type { RoutingDecision } from '../model-routing/types.js';
+import type { ModelRouterStatsSnapshot, RoutingDecision } from '../model-routing/types.js';
 import {
   prioritizeEndpointCandidate,
   reorderByLatency,
@@ -50,6 +50,7 @@ import {
 import { executeGenerateAttempt, tryProvider } from './router-executor.js';
 import { buildInternalRoutingPlan } from './router-internal-plan.js';
 import {
+  buildRoutingMetadata,
   buildGenerateRequest,
   buildInternalRequest,
   withResolutionMetadata,
@@ -242,6 +243,7 @@ export class Router {
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const startTime = Date.now();
     const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
+    const attemptedProviders: string[] = [];
     let candidates = await resolveCandidates(
       this._providers,
       request,
@@ -258,6 +260,7 @@ export class Router {
     // ── Model Routing: classify and route to optimal endpoint ──
     let modelRouterDecision: RoutingDecision | null = null;
     let classification: TaskClassification | null = null;
+    let offloadClassification: TaskClassification | null = null;
     if (this._modelRouter && this._modelRouter.enabled && !request.provider && !request.strict) {
       classification = classify(request.prompt);
       modelRouterDecision = this._modelRouter.route(classification);
@@ -277,7 +280,7 @@ export class Router {
     // ── Sprint 3: Insert local-llm as first candidate when offloadable ──
     // Only when ModelRouter is disabled or returned null (superseded by ModelRouter)
     if (!request.provider && !request.strict && !modelRouterDecision) {
-      const offloadClassification = classifyForOffload(request.prompt);
+      offloadClassification = classifyForOffload(request.prompt);
       if (offloadClassification.shouldOffload) {
         const localIndex = candidates.findIndex((p) => p.id === 'local-llm');
         if (localIndex > 0) {
@@ -311,6 +314,7 @@ export class Router {
         );
       }
 
+      attemptedProviders.push(provider.id);
       const result = await executeGenerateAttempt({
         provider,
         request: buildGenerateRequest(
@@ -329,12 +333,25 @@ export class Router {
         },
       });
       const latencyMs = Date.now() - startTime;
-      return withResolutionMetadata(request, result, false, latencyMs);
+      return withResolutionMetadata(
+        request,
+        result,
+        false,
+        latencyMs,
+        buildRoutingMetadata(result, false, {
+          strategy: determineRoutingStrategy(request, modelRouterDecision, offloadClassification),
+          attemptedProviders,
+          classification: classification ?? offloadClassification,
+          modelRouterDecision,
+          decisionReason: determineDecisionReason(request, modelRouterDecision, offloadClassification),
+        }),
+      );
     }
 
     const providerErrors = createProviderErrorAccumulator();
-    const attemptedResult = await tryCandidates(availableCandidates, (provider) =>
-      executeGenerateAttempt({
+    const attemptedResult = await tryCandidates(availableCandidates, (provider) => {
+      attemptedProviders.push(provider.id);
+      return executeGenerateAttempt({
         provider,
         request: buildGenerateRequest(
           request,
@@ -369,7 +386,8 @@ export class Router {
 
           logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
         },
-      }),
+      });
+    },
       (provider, error) => {
         providerErrors.add(provider, error);
       },
@@ -377,7 +395,19 @@ export class Router {
 
     if (attemptedResult) {
       const latencyMs = Date.now() - startTime;
-      return withResolutionMetadata(request, attemptedResult.result, attemptedResult.index > 0, latencyMs);
+      return withResolutionMetadata(
+        request,
+        attemptedResult.result,
+        attemptedResult.index > 0,
+        latencyMs,
+        buildRoutingMetadata(attemptedResult.result, attemptedResult.index > 0, {
+          strategy: determineRoutingStrategy(request, modelRouterDecision, offloadClassification),
+          attemptedProviders,
+          classification: classification ?? offloadClassification,
+          modelRouterDecision,
+          decisionReason: determineDecisionReason(request, modelRouterDecision, offloadClassification),
+        }),
+      );
     }
 
     // Try free model fallback before giving up
@@ -385,8 +415,21 @@ export class Router {
       try {
         logger.info('All paid providers failed, attempting free model fallback');
         const freeResult = await this._freeModelRouter.generate(request);
+        attemptedProviders.push('free-models');
         const latencyMs = Date.now() - startTime;
-        return withResolutionMetadata(request, freeResult, true, latencyMs);
+        return withResolutionMetadata(
+          request,
+          freeResult,
+          true,
+          latencyMs,
+          buildRoutingMetadata(freeResult, true, {
+            strategy: determineRoutingStrategy(request, modelRouterDecision, offloadClassification),
+            attemptedProviders,
+            classification: classification ?? offloadClassification,
+            modelRouterDecision,
+            decisionReason: 'All paid providers failed; free model fallback succeeded',
+          }),
+        );
       } catch (freeError) {
         providerErrors.errors.push(
           `free-models: ${freeError instanceof Error ? freeError.message : String(freeError)}`,
@@ -628,4 +671,56 @@ export class Router {
     return results;
   }
 
+  getModelRouterStats(): ModelRouterStatsSnapshot | null {
+    return this._modelRouter?.getStatsSnapshot() ?? null;
+  }
+
+}
+
+function determineRoutingStrategy(
+  request: GenerateRequest,
+  modelRouterDecision: RoutingDecision | null,
+  offloadClassification: TaskClassification | null,
+): string {
+  if (request.provider) {
+    return 'explicit-provider';
+  }
+
+  if (modelRouterDecision) {
+    return 'model-router';
+  }
+
+  if (offloadClassification?.shouldOffload) {
+    return 'local-offload';
+  }
+
+  if (request.model) {
+    return 'requested-model';
+  }
+
+  return 'standard';
+}
+
+function determineDecisionReason(
+  request: GenerateRequest,
+  modelRouterDecision: RoutingDecision | null,
+  offloadClassification: TaskClassification | null,
+): string {
+  if (modelRouterDecision) {
+    return modelRouterDecision.reason;
+  }
+
+  if (offloadClassification?.reason) {
+    return offloadClassification.reason;
+  }
+
+  if (request.provider) {
+    return `Provider ${request.provider} requested explicitly`;
+  }
+
+  if (request.model) {
+    return `Model ${request.model} requested explicitly`;
+  }
+
+  return 'Resolved by standard provider ordering';
 }

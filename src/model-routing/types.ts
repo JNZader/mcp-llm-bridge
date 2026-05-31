@@ -122,6 +122,22 @@ export interface QualityStats {
   avgLatencyMs: number;
 }
 
+export interface ModelRouterEndpointTaskStats {
+  endpointId: string;
+  taskPattern: TaskType | '*';
+  totalDecisions: number;
+  fallbackDecisions: number;
+  lastMatchedRuleId: string;
+  lastReason: string;
+  lastSelectedAt: string;
+}
+
+export interface ModelRouterStatsSnapshot {
+  enabled: boolean;
+  totalDecisions: number;
+  byEndpointTask: ModelRouterEndpointTaskStats[];
+}
+
 /**
  * Configuration for the model routing system.
  */

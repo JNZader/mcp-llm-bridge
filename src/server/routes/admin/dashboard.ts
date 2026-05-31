@@ -207,4 +207,19 @@ export function registerAdminDashboardRoutes(
       return c.json({ error: message }, 500);
     }
   });
+
+  app.get('/v1/admin/model-router/stats', (c) => {
+    try {
+      return c.json(
+        router.getModelRouterStats() ?? {
+          enabled: false,
+          totalDecisions: 0,
+          byEndpointTask: [],
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, 500);
+    }
+  });
 }

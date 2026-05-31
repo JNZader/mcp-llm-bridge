@@ -34,6 +34,8 @@ import { createDashboardJwt } from '../src/auth/github-oauth.js';
 import { migrate } from '../src/db/migrate.js';
 import { ModelSyncManager } from '../src/model-sync/index.js';
 import { PriceManager } from '../src/price-sync/index.js';
+import { ModelRouter } from '../src/model-routing/router.js';
+import { COST_TIER } from '../src/model-routing/types.js';
 
 // ── Test infrastructure ──────────────────────────────────
 
@@ -306,6 +308,83 @@ describe('GET /v1/admin/health', () => {
     assert.ok(typeof data.memory.heapTotal === 'number');
     assert.ok(typeof data.memory.heapUsed === 'number');
     assert.ok(typeof data.memory.external === 'number');
+  });
+});
+
+describe('GET /v1/admin/model-router/stats', () => {
+  it('returns the current model router decision aggregates', async () => {
+    router.setModelRouter(new ModelRouter({
+      enabled: true,
+      endpoints: [
+        {
+          id: 'local-llama',
+          name: 'Local Llama',
+          provider: 'openai',
+          modelId: 'gpt-4o-mini',
+          costTier: COST_TIER.CHEAP,
+          capabilities: ['chat'],
+          isLocal: false,
+          maxTokens: 4096,
+          available: true,
+        },
+      ],
+      rules: [
+        {
+          id: 'summary-rule',
+          taskPattern: 'summarization',
+          preferredModels: ['local-llama'],
+          maxCostTier: COST_TIER.CHEAP,
+          minQuality: 'low',
+          allowFallback: true,
+        },
+      ],
+      defaultEndpoint: 'local-llama',
+      qualityThreshold: 0.7,
+      qualityWindowSize: 50,
+    }));
+
+    router.getModelRouterStats();
+    router.modelRouter?.route({
+      task: 'summarization',
+      confidence: 0.75,
+      shouldOffload: true,
+      reason: 'test',
+    });
+
+    const res = await request('GET', '/v1/admin/model-router/stats');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      enabled: boolean;
+      totalDecisions: number;
+      byEndpointTask: Array<{
+        endpointId: string;
+        taskPattern: string;
+        totalDecisions: number;
+        fallbackDecisions: number;
+        lastMatchedRuleId: string;
+      }>;
+    };
+
+    assert.equal(data.enabled, true);
+    assert.equal(data.totalDecisions, 1);
+    assert.deepEqual(data.byEndpointTask.map((entry) => ({
+      endpointId: entry.endpointId,
+      taskPattern: entry.taskPattern,
+      totalDecisions: entry.totalDecisions,
+      fallbackDecisions: entry.fallbackDecisions,
+      lastMatchedRuleId: entry.lastMatchedRuleId,
+    })), [
+      {
+        endpointId: 'local-llama',
+        taskPattern: 'summarization',
+        totalDecisions: 1,
+        fallbackDecisions: 0,
+        lastMatchedRuleId: 'summary-rule',
+      },
+    ]);
+
+    router.setModelRouter(new ModelRouter({ enabled: false }));
   });
 });
 

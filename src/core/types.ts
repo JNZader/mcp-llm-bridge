@@ -5,6 +5,8 @@
  * credential storage, and gateway configuration.
  */
 
+import type { TaskClassification } from '../classification/index.js';
+
 export type ProviderType = 'api' | 'cli';
 
 export interface ModelInfo {
@@ -45,6 +47,18 @@ export interface GenerateResponse {
   fallbackUsed: boolean;
   latencyMs?: number;
   sessionId?: string;
+  routing?: RoutingMetadata;
+}
+
+export interface RoutingMetadata {
+  strategy: string;
+  classification?: TaskClassification;
+  matchedRuleId?: string;
+  selectedEndpointId?: string;
+  attemptedProviders: string[];
+  fallbackFrom?: string;
+  fallbackTo?: string;
+  decisionReason?: string;
 }
 
 export interface StoredCredential {
