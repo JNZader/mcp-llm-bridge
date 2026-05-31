@@ -9,6 +9,11 @@ import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { HFClient } from '../../src/model-discovery/hf-client.js';
+import {
+  createFakeTimeoutHandle,
+  createMockClearTimeout,
+  createMockSetTimeout,
+} from '../helpers/timeout-mocks.js';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -52,9 +57,9 @@ describe('HFClient', () => {
   });
 
   it('clears the abort timer after a successful metadata fetch', async () => {
-    const timerToken = { id: 'hf-success-timer' };
-    const setTimeoutMock = mock.fn(() => timerToken as ReturnType<typeof setTimeout>);
-    const clearTimeoutMock = mock.fn();
+    const timerToken = createFakeTimeoutHandle('hf-success-timer');
+    const setTimeoutMock = createMockSetTimeout(() => timerToken);
+    const clearTimeoutMock = createMockClearTimeout();
     const fetchMock = mock.fn(async () => jsonResponse({
       id: 'Qwen/Qwen2.5-Coder-7B-Instruct',
       author: 'Qwen',
@@ -63,8 +68,8 @@ describe('HFClient', () => {
       pipeline_tag: 'text-generation',
     }));
 
-    mock.method(globalThis, 'setTimeout', setTimeoutMock as typeof setTimeout);
-    mock.method(globalThis, 'clearTimeout', clearTimeoutMock as typeof clearTimeout);
+    mock.method(globalThis, 'setTimeout', setTimeoutMock);
+    mock.method(globalThis, 'clearTimeout', clearTimeoutMock);
     mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
 
     const client = new HFClient();
@@ -78,13 +83,13 @@ describe('HFClient', () => {
   });
 
   it('clears the abort timer when HF returns a non-OK response', async () => {
-    const timerToken = { id: 'hf-error-timer' };
-    const setTimeoutMock = mock.fn(() => timerToken as ReturnType<typeof setTimeout>);
-    const clearTimeoutMock = mock.fn();
+    const timerToken = createFakeTimeoutHandle('hf-error-timer');
+    const setTimeoutMock = createMockSetTimeout(() => timerToken);
+    const clearTimeoutMock = createMockClearTimeout();
     const fetchMock = mock.fn(async () => jsonResponse({ error: 'nope' }, 503));
 
-    mock.method(globalThis, 'setTimeout', setTimeoutMock as typeof setTimeout);
-    mock.method(globalThis, 'clearTimeout', clearTimeoutMock as typeof clearTimeout);
+    mock.method(globalThis, 'setTimeout', setTimeoutMock);
+    mock.method(globalThis, 'clearTimeout', clearTimeoutMock);
     mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
 
     const client = new HFClient();
