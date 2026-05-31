@@ -31,6 +31,18 @@ export class LocalLLMProvider implements LLMProvider {
   private config: LocalLLMConfig;
   private detectionResults = new Map<string, LocalModel[]>();
 
+  private getDetectionSnapshot(): Array<{
+    backend: string;
+    modelCount: number;
+    modelIds: string[];
+  }> {
+    return Array.from(this.detectionResults.entries()).map(([backend, models]) => ({
+      backend,
+      modelCount: models.length,
+      modelIds: models.map((model) => model.id),
+    }));
+  }
+
   constructor(config?: Partial<LocalLLMConfig>) {
     this.config = { ...DEFAULT_LOCAL_LLM_CONFIG, ...config };
   }
@@ -65,8 +77,13 @@ export class LocalLLMProvider implements LLMProvider {
     }
 
     this.models = infos;
+    const connectedBackends = this.getDetectionSnapshot();
     logger.info(
-      { backend: this.detectionResults.keys(), modelCount: infos.length },
+      {
+        connectedBackendCount: connectedBackends.length,
+        connectedBackends,
+        modelCount: infos.length,
+      },
       'Local LLM models refreshed',
     );
   }

@@ -98,6 +98,8 @@ export async function handleLocalLlmGenerateTool(
     return jsonResult({
       ...result,
       backend: 'local',
+      localBackend: localModel.backend,
+      localModelId: localModel.id,
     });
   }
 
@@ -115,6 +117,8 @@ export async function handleLocalLlmGenerateTool(
     ...result,
     backend: 'cloud',
     fallbackReason: 'Local LLM provider failed and router fell back to a cloud provider',
+    attemptedLocalBackend: localModel.backend,
+    attemptedLocalModelId: localModel.id,
     localLLMStatus: slimLocalLLMStatus,
   });
 }

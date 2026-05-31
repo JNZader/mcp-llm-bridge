@@ -100,6 +100,7 @@ describe('local_llm_generate MCP tool', () => {
     assert.equal(text.backend, 'cloud');
     assert.equal(text.localLLMStatus.enabled, false);
     assert.equal(text.localLLMStatus.source, 'disabled');
+    assert.equal(text.localLLMStatus.readyReason, 'Local LLM is disabled by runtime flag');
   });
 
   it('returns cloud fallback when no local models available', async () => {
@@ -111,6 +112,7 @@ describe('local_llm_generate MCP tool', () => {
     assert.ok(text.reason?.includes('No local models available'));
     assert.equal(typeof text.localLLMStatus.checkedAt, 'string');
     assert.equal(typeof text.localLLMStatus.backendCount, 'number');
+    assert.equal(typeof text.localLLMStatus.disconnectedBackendCount, 'number');
   });
 
   it('returns cloud fallback for non-offloadable task', async () => {
@@ -175,6 +177,8 @@ describe('local_llm_generate MCP tool', () => {
     assert.equal(text.backend, 'local');
     assert.equal(text.provider, 'local-llm');
     assert.equal(text.resolvedProvider, 'local-llm');
+    assert.equal(text.localBackend, 'ollama');
+    assert.equal(text.localModelId, 'llama3.2:3b');
   });
 
   it('honors custom local backend URLs through the shared provider path', async () => {
@@ -225,6 +229,8 @@ describe('local_llm_generate MCP tool', () => {
     const text = JSON.parse(result.content[0]!.text);
     assert.equal(text.backend, 'local');
     assert.equal(text.provider, 'local-llm');
+    assert.equal(text.localBackend, 'ollama');
+    assert.equal(text.localModelId, 'llama3.2:3b');
     assert.ok(
       fetchMock.mock.calls.some(
         (call) => String(call.arguments[0]) === 'http://127.0.0.1:11434/v1/chat/completions',
@@ -275,7 +281,10 @@ describe('local_llm_generate MCP tool', () => {
     assert.equal(text.provider, 'mock-cloud');
     assert.equal(text.fallbackUsed, true);
     assert.match(text.fallbackReason, /Local LLM provider failed/i);
+    assert.equal(text.attemptedLocalBackend, 'ollama');
+    assert.equal(text.attemptedLocalModelId, 'llama3.2:3b');
     assert.equal(typeof text.localLLMStatus.connectedBackendCount, 'number');
+    assert.ok(Array.isArray(text.localLLMStatus.backends[0]?.models));
   });
 });
 
@@ -296,8 +305,10 @@ describe('discover_models MCP tool', () => {
     assert.ok(text.backendsScanned.includes('lm-studio'));
     assert.equal(typeof text.localLLMStatus.enabled, 'boolean');
     assert.equal(typeof text.localLLMStatus.checkedAt, 'string');
+    assert.equal(typeof text.localLLMStatus.readyReason, 'string');
     assert.ok(Array.isArray(text.localLLMStatus.backends));
     assert.equal(typeof text.localLLMStatus.backends[0]?.modelCount, 'number');
+    assert.ok(Array.isArray(text.localLLMStatus.backends[0]?.models));
   });
 
   it('accepts optional hfToken', async () => {

@@ -121,16 +121,35 @@ function buildLocalLLMStatus(
     modelCount: result.models.length,
   }));
   const connectedBackendCount = backends.filter((backend) => backend.status === 'connected').length;
+  const disconnectedBackendCount = backends.filter((backend) => backend.status === 'disconnected').length;
+  const errorBackendCount = backends.filter((backend) => backend.status === 'error').length;
   const modelCount = backends.reduce((total, backend) => total + backend.modelCount, 0);
+  const ready = config.enabled && modelCount > 0;
+
+  let readyReason = 'At least one local model is available';
+  if (!config.enabled) {
+    readyReason = source === LOCAL_LLM_STATUS_SOURCE.DISABLED
+      ? 'Local LLM is disabled by runtime flag'
+      : 'Local LLM is disabled by configuration';
+  } else if (modelCount === 0) {
+    if (connectedBackendCount === 0) {
+      readyReason = 'No local LLM backends are connected';
+    } else {
+      readyReason = 'Backends are reachable but no local models were reported';
+    }
+  }
 
   return {
     enabled: config.enabled,
-    ready: config.enabled && modelCount > 0,
+    ready,
+    readyReason,
     checkedAt: new Date().toISOString(),
     source,
     cacheHit: source === LOCAL_LLM_STATUS_SOURCE.CACHE,
     backendCount: backends.length,
     connectedBackendCount,
+    disconnectedBackendCount,
+    errorBackendCount,
     modelCount,
     backends,
   };

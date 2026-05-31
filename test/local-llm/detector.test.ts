@@ -288,10 +288,13 @@ describe('getLocalLLMStatus', () => {
 
     assert.equal(first.enabled, true);
     assert.equal(first.ready, true);
+    assert.equal(first.readyReason, 'At least one local model is available');
     assert.equal(first.source, 'probe');
     assert.equal(first.cacheHit, false);
     assert.equal(first.backendCount, 2);
     assert.equal(first.connectedBackendCount, 2);
+    assert.equal(first.disconnectedBackendCount, 0);
+    assert.equal(first.errorBackendCount, 0);
     assert.equal(first.modelCount, 2);
     assert.equal(typeof first.checkedAt, 'string');
     assert.equal(first.backends[0]?.modelCount, 1);
@@ -312,12 +315,39 @@ describe('getLocalLLMStatus', () => {
 
     assert.equal(status.enabled, false);
     assert.equal(status.ready, false);
+    assert.equal(status.readyReason, 'Local LLM is disabled by runtime flag');
     assert.equal(status.source, 'disabled');
     assert.equal(status.cacheHit, false);
     assert.equal(status.backendCount, 2);
     assert.equal(status.connectedBackendCount, 0);
+    assert.equal(status.disconnectedBackendCount, 2);
+    assert.equal(status.errorBackendCount, 0);
     assert.equal(status.modelCount, 0);
     assert.equal(fetchMock.mock.callCount(), 0);
+  });
+
+  it('explains when backends are reachable but expose no models', async () => {
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [] });
+      }
+
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [] });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    const status = await getLocalLLMStatus(undefined, { forceRefresh: true });
+
+    assert.equal(status.ready, false);
+    assert.equal(status.connectedBackendCount, 2);
+    assert.equal(status.modelCount, 0);
+    assert.equal(status.readyReason, 'Backends are reachable but no local models were reported');
   });
 });
 
@@ -326,25 +356,50 @@ describe('local LLM slim status helpers', () => {
     const slim = toSlimLocalLLMStatus({
       enabled: true,
       ready: false,
+      readyReason: 'No local LLM backends are connected',
       checkedAt: '2026-05-31T00:00:00.000Z',
       source: 'probe',
       cacheHit: false,
       backendCount: 2,
       connectedBackendCount: 1,
+      disconnectedBackendCount: 1,
+      errorBackendCount: 0,
       modelCount: 3,
       backends: [
         {
           backend: 'ollama',
           status: 'connected',
           baseUrl: 'http://localhost:11434',
-          models: [],
+          models: [
+            {
+              id: 'qwen2.5-coder:7b',
+              name: 'qwen2.5-coder:7b',
+              backend: 'ollama',
+              parameterSize: 7,
+              loaded: true,
+            },
+            {
+              id: 'llama3.2:3b',
+              name: 'llama3.2:3b',
+              backend: 'ollama',
+              parameterSize: 3.2,
+              loaded: false,
+            },
+          ],
           modelCount: 2,
         },
         {
           backend: 'lm-studio',
           status: 'disconnected',
           baseUrl: 'http://localhost:1234',
-          models: [],
+          models: [
+            {
+              id: 'deepseek-coder-6.7b',
+              name: 'deepseek-coder-6.7b',
+              backend: 'lm-studio',
+              loaded: true,
+            },
+          ],
           error: 'ECONNREFUSED',
           modelCount: 1,
         },
@@ -354,11 +409,14 @@ describe('local LLM slim status helpers', () => {
     assert.deepEqual(slim, {
       enabled: true,
       ready: false,
+      readyReason: 'No local LLM backends are connected',
       checkedAt: '2026-05-31T00:00:00.000Z',
       source: 'probe',
       cacheHit: false,
       backendCount: 2,
       connectedBackendCount: 1,
+      disconnectedBackendCount: 1,
+      errorBackendCount: 0,
       modelCount: 3,
       backends: [
         {
@@ -367,6 +425,22 @@ describe('local LLM slim status helpers', () => {
           baseUrl: 'http://localhost:11434',
           error: undefined,
           modelCount: 2,
+          models: [
+            {
+              id: 'qwen2.5-coder:7b',
+              name: 'qwen2.5-coder:7b',
+              loaded: true,
+              parameterSize: 7,
+              contextWindow: undefined,
+            },
+            {
+              id: 'llama3.2:3b',
+              name: 'llama3.2:3b',
+              loaded: false,
+              parameterSize: 3.2,
+              contextWindow: undefined,
+            },
+          ],
         },
         {
           backend: 'lm-studio',
@@ -374,6 +448,15 @@ describe('local LLM slim status helpers', () => {
           baseUrl: 'http://localhost:1234',
           error: 'ECONNREFUSED',
           modelCount: 1,
+          models: [
+            {
+              id: 'deepseek-coder-6.7b',
+              name: 'deepseek-coder-6.7b',
+              loaded: true,
+              parameterSize: undefined,
+              contextWindow: undefined,
+            },
+          ],
         },
       ],
     });
@@ -390,10 +473,13 @@ describe('local LLM slim status helpers', () => {
 
     assert.equal(status.enabled, false);
     assert.equal(status.ready, false);
+    assert.equal(status.readyReason, 'Local LLM is disabled by runtime flag');
     assert.equal(status.source, 'disabled');
     assert.equal(status.cacheHit, false);
     assert.equal(status.backendCount, 2);
     assert.equal(status.connectedBackendCount, 0);
+    assert.equal(status.disconnectedBackendCount, 2);
+    assert.equal(status.errorBackendCount, 0);
     assert.equal(status.modelCount, 0);
     assert.equal(fetchMock.mock.callCount(), 0);
   });

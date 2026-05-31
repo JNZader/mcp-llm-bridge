@@ -117,18 +117,24 @@ describe('GET /v1/local/models', () => {
     const body = res.body as {
       enabled: boolean;
       ready: boolean;
+      readyReason: string;
       checkedAt: string;
       backendCount: number;
       connectedBackendCount: number;
+      disconnectedBackendCount: number;
+      errorBackendCount: number;
       modelCount: number;
       backends: Array<{ backend: string; status: string; baseUrl: string; modelCount: number; models: unknown[] }>;
     };
 
     assert.equal(typeof body.enabled, 'boolean');
     assert.equal(typeof body.ready, 'boolean');
+    assert.equal(typeof body.readyReason, 'string');
     assert.equal(typeof body.checkedAt, 'string');
     assert.equal(typeof body.backendCount, 'number');
     assert.equal(typeof body.connectedBackendCount, 'number');
+    assert.equal(typeof body.disconnectedBackendCount, 'number');
+    assert.equal(typeof body.errorBackendCount, 'number');
     assert.equal(typeof body.modelCount, 'number');
     assert.ok(Array.isArray(body.backends));
     assert.equal(body.backends.length, 2);
@@ -162,6 +168,7 @@ describe('GET /v1/local/models', () => {
       enabled: boolean;
       ready: boolean;
       source: string;
+      readyReason: string;
       modelCount: number;
       backends: Array<{ status: string; error?: string }>;
     };
@@ -169,6 +176,7 @@ describe('GET /v1/local/models', () => {
     assert.equal(body.enabled, false);
     assert.equal(body.ready, false);
     assert.equal(body.source, 'disabled');
+    assert.equal(body.readyReason, 'Local LLM is disabled by runtime flag');
     assert.equal(body.modelCount, 0);
     assert.ok(body.backends.every((backend) => backend.status === 'disconnected'));
     assert.ok(body.backends.every((backend) => backend.error?.includes('disabled')));

@@ -74,6 +74,8 @@ export interface LocalLLMStatus {
   enabled: boolean;
   /** True when local LLM is enabled and at least one model is ready. */
   ready: boolean;
+  /** Operator-facing explanation for the current ready state. */
+  readyReason: string;
   /** ISO timestamp for when this snapshot was created. */
   checkedAt: string;
   /** Where the snapshot data came from. */
@@ -84,6 +86,10 @@ export interface LocalLLMStatus {
   backendCount: number;
   /** Number of connected backends. */
   connectedBackendCount: number;
+  /** Number of disconnected backends. */
+  disconnectedBackendCount: number;
+  /** Number of backends that returned an error. */
+  errorBackendCount: number;
   /** Total models discovered across all backends. */
   modelCount: number;
   /** Per-backend details. */

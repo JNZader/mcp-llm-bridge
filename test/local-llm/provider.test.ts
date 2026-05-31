@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { LocalLLMProvider, LocalLLMError } from '../../src/local-llm/provider.js';
 import { resetLocalLLMDetectionCache } from '../../src/local-llm/detector.js';
+import { logger } from '../../src/core/logger.js';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -81,5 +82,45 @@ describe('LocalLLMProvider', () => {
     assert.equal(await provider.isAvailable(), true);
     assert.equal(await provider.isAvailable(), true);
     assert.equal(fetchMock.mock.callCount(), 2);
+  });
+
+  it('logs concrete backend summaries after refresh', async () => {
+    provider = new LocalLLMProvider({ enabled: true });
+
+    mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'llama3.2:3b', details: { parameter_size: '3.2B' } }] });
+      }
+
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [{ id: 'deepseek-coder-6.7b' }] });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+
+    const infoMock = mock.method(logger, 'info', () => logger);
+
+    await provider.refreshModels();
+
+    assert.equal(infoMock.mock.callCount(), 1);
+    assert.deepEqual(infoMock.mock.calls[0]?.arguments[0], {
+      connectedBackendCount: 2,
+      connectedBackends: [
+        {
+          backend: 'ollama',
+          modelCount: 1,
+          modelIds: ['llama3.2:3b'],
+        },
+        {
+          backend: 'lm-studio',
+          modelCount: 1,
+          modelIds: ['deepseek-coder-6.7b'],
+        },
+      ],
+      modelCount: 2,
+    });
   });
 });
