@@ -452,6 +452,11 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 }
 
 export function startHttpServer(deps: StartHttpServerDeps): ServerType;
+/**
+ * @deprecated Use `startHttpServer({ ...deps })` object-style startup instead.
+ * This positional overload is kept only as a temporary compatibility bridge
+ * for stale build artifacts and possible external callers.
+ */
 export function startHttpServer(
 	router: Router,
 	vault: Vault,
