@@ -67,21 +67,15 @@ before(async () => {
   // Run migrations so model-sync tables exist
   await migrate({ dbPath });
 
-  server = startHttpServer(
+  server = startHttpServer({
     router,
     vault,
     config,
     groupStore,
     costTracker,
-    undefined,
-    undefined,
-    vault.getDb(),
-    undefined,
-    undefined,
-    undefined,
-    undefined,
+    db: vault.getDb(),
     sessionManager,
-  ) as unknown as http.Server;
+  }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();

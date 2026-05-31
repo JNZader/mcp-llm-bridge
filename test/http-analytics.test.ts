@@ -187,17 +187,12 @@ describe('GET /v1/analytics', () => {
     // Seed with test data
     seedTestAnalytics();
 
-    server = startHttpServer(
+    server = startHttpServer({
       router,
       vault,
       config,
-      undefined, // groupStore
-      undefined, // costTracker
-      undefined, // latencyMeasurer
-      undefined, // freeModelRouter
-      undefined, // db
-      analyticsAggregator
-    ) as unknown as http.Server;
+      analyticsAggregator,
+    }) as unknown as http.Server;
 
     await new Promise<void>((resolve) => {
       server.on('listening', () => {
@@ -474,17 +469,12 @@ describe('GET /v1/analytics', () => {
         },
       });
 
-      const testServer = startHttpServer(
-        freshRouter,
+      const testServer = startHttpServer({
+        router: freshRouter,
         vault,
-        { ...config, httpPort: 0 },
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        freshAggregator,
-      ) as unknown as http.Server;
+        config: { ...config, httpPort: 0 },
+        analyticsAggregator: freshAggregator,
+      }) as unknown as http.Server;
 
       let testPort = 0;
       await new Promise<void>((resolve) => {
@@ -540,17 +530,12 @@ describe('GET /v1/analytics', () => {
         },
       });
 
-      const testServer = startHttpServer(
-        freshRouter,
+      const testServer = startHttpServer({
+        router: freshRouter,
         vault,
-        { ...config, httpPort: 0 },
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        freshAggregator,
-      ) as unknown as http.Server;
+        config: { ...config, httpPort: 0 },
+        analyticsAggregator: freshAggregator,
+      }) as unknown as http.Server;
 
       let testPort = 0;
       await new Promise<void>((resolve) => {
@@ -693,17 +678,12 @@ describe('GET /v1/analytics', () => {
       // Create fresh aggregator with no data
       const freshAggregator = new AnalyticsAggregator();
 
-      const testServer = startHttpServer(
+      const testServer = startHttpServer({
         router,
         vault,
-        { ...config, httpPort: 0 },
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined, // db
-        freshAggregator
-      ) as unknown as http.Server;
+        config: { ...config, httpPort: 0 },
+        analyticsAggregator: freshAggregator,
+      }) as unknown as http.Server;
 
       let testPort = 0;
       await new Promise<void>((resolve) => {

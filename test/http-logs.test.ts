@@ -189,7 +189,12 @@ describe('GET /v1/logs', () => {
     // Create RequestLogger with the separate database
     requestLogger = new RequestLogger(logsDb);
 
-    server = startHttpServer(router, vault, config, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, requestLogger) as unknown as http.Server;
+    server = startHttpServer({
+      router,
+      vault,
+      config,
+      requestLogger,
+    }) as unknown as http.Server;
     await new Promise<void>((resolve) => {
       server.on('listening', () => {
         const address = server.address();

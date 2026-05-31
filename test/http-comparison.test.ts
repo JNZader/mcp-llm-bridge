@@ -71,18 +71,13 @@ let server: http.Server;
 let port = 0;
 
 before(async () => {
-	server = startHttpServer(
+	server = startHttpServer({
 		router,
 		vault,
 		config,
-		undefined, // groupStore
-		undefined, // costTracker
-		undefined, // latencyMeasurer
-		undefined, // freeModelRouter
 		db,
-		undefined, // analyticsAggregator
 		comparisonService,
-	) as unknown as http.Server;
+	}) as unknown as http.Server;
 
 	await new Promise<void>((resolve) => {
 		server.on("listening", () => {

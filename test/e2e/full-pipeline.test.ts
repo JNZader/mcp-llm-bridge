@@ -47,20 +47,13 @@ let server: http.Server;
 let port = 0;
 
 before(async () => {
-  server = startHttpServer(
+  server = startHttpServer({
     router,
     vault,
     config,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined, // analyticsAggregator
-    config.securityProfile,
+    securityProfile: config.securityProfile,
     approvalStore,
-  ) as unknown as http.Server;
+  }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();
