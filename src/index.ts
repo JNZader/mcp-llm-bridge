@@ -16,15 +16,14 @@ initTracing();
 
 import { cleanupAllProviderHomes } from "./adapters/cli-home.js";
 import { createAllAdapters, LocalLLMProvider } from "./adapters/index.js";
-import { ApprovalStore } from "./approval/index.js";
 import { BridgeOrchestrator, loadBridgeConfig } from "./bridge/index.js";
-import { CodeSearchService } from "./code-search/index.js";
-import { ComparisonStore } from "./comparison/persistence.js";
 import { ComparisonService } from "./comparison/service.js";
-import { CompressorService } from "./context-compression/index.js";
+import {
+	createComparisonServices,
+	createCoreServices,
+	createToolingServices,
+} from "./bootstrap/core-services.js";
 import { loadConfig } from "./core/config.js";
-import { CostTracker } from "./core/cost-tracker.js";
-import { GroupStore } from "./core/groups.js";
 import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
 import {
@@ -54,11 +53,7 @@ import {
 } from "./server/mcp.js";
 import { Vault } from "./vault/index.js";
 import { migrate } from "./db/migrate.js";
-import { createPageIndex } from "./pageindex/index.js";
-import { PageIndexTools } from "./pageindex/tools.js";
 import { discoverModels } from "./model-discovery/index.js";
-import { AnalyticsAggregator } from "./analytics/index.js";
-import { RequestLogger } from "./logging/index.js";
 
 // Populate the transformer registry with all inbound/outbound transformers
 import "./transformers/index.js";
@@ -80,42 +75,36 @@ const db = vault.getDb();
 // Run pending migrations on the vault database
 await migrate({ dbPath: config.dbPath });
 
-// Initialize request logger
-const requestLogger = new RequestLogger(db);
+const {
+	requestLogger,
+	costTracker,
+	analyticsAggregator,
+	groupStore,
+	sessionManager,
+	compressor,
+	codeSearch,
+	stateManager,
+} = createCoreServices({
+	db,
+	dbPath: config.dbPath,
+});
 
 // Register all adapters
 for (const adapter of createAllAdapters(vault)) {
 	router.register(adapter);
 }
 
-// Initialize cost tracker (uses same DB path as vault)
-const costTracker = new CostTracker({ dbPath: config.dbPath });
 router.setCostTracker(costTracker);
 
-// Initialize analytics aggregator
-const analyticsAggregator = new AnalyticsAggregator();
 router.setAnalyticsAggregator(analyticsAggregator);
 
 // Wire up transformer registry for the new pipeline
 router.setTransformerRegistry(registry);
 
-// Initialize group store (uses same DB path as vault)
-const groupStore = new GroupStore(config.dbPath);
 router.setGroupStore(groupStore);
 
-// Initialize session manager (session affinity for sticky routing)
-const sessionManager = new SessionManager();
 sessionManager.startCleanup();
 router.setSessionManager(sessionManager);
-
-// Initialize context compression service (background pre-computation)
-const compressor = new CompressorService();
-
-// Initialize semantic code search service (in-memory index)
-const codeSearch = new CodeSearchService();
-
-// Initialize CRDT state manager for multi-agent collaboration
-const stateManager = new StateManager();
 
 // Initialize free model router (opt-in via FALLBACK_STRATEGY=free-models)
 const freeModelEnabled = process.env["FALLBACK_STRATEGY"] === "free-models";
@@ -166,12 +155,10 @@ if (bridge) {
 	logger.info("Bridge orchestrator enabled — task-aware routing active");
 }
 
-// ── Approval Store ──────────────────────────────────────
-const approvalStore = new ApprovalStore();
-
-// ── PageIndex ───────────────────────────────────────────
-const pageIndex = createPageIndex(config.dbPath);
-const pageIndexTools = new PageIndexTools(pageIndex.service);
+const { approvalStore, pageIndexTools } = createToolingServices({
+	db,
+	dbPath: config.dbPath,
+});
 
 // ── Local LLM Provider ────────────────────────────────────
 const localLLMRuntimeEnabled = localLLMEnabled();
@@ -258,7 +245,10 @@ await setupGracefulShutdown(vault);
 const maxComparisonCostUsd = parseFloat(
 	process.env["MAX_COMPARISON_COST_USD"] ?? "1.0",
 );
-const comparisonStore = new ComparisonStore(db);
+const { comparisonStore } = createComparisonServices({
+	db,
+	dbPath: config.dbPath,
+});
 const comparisonService = new ComparisonService(router, {
 	freeModelRegistry: freeModelEnabled
 		? freeModelRouter.getRegistry()
