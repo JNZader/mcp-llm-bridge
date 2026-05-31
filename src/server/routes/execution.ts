@@ -3,7 +3,6 @@ import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
-import type { InternalLLMRequest } from "../../core/internal-model.js";
 import type { Router } from "../../core/router.js";
 import { validateChatCompletions, validateGenerateRequest } from "../../core/schemas.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
@@ -26,13 +25,7 @@ import {
 	prepareChatGenerateRequest,
 } from "../http-helpers/chat-request.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
-import { buildProviderStreamCall } from "../streaming/provider-stream-client.js";
-import {
-	createStreamingRequestLogFinalizer,
-	finalizeStreamingAttemptFailure,
-	finalizeStreamingAttemptSuccess,
-	normalizeStreamingError,
-} from "../streaming/stream-finalizer.js";
+import { createStreamExecutor } from "../streaming/stream-executor.js";
 
 export interface ExecutionRouteDeps {
 	router: Router;
@@ -99,9 +92,8 @@ function buildStreamingChunkPayload(
 /**
  * Handle a streaming chat completion request via SSE.
  *
- * Resolves the best provider with a streaming transformer, opens an SSE
- * stream, and forwards transformed chunks in OpenAI-compatible SSE format.
- * Records cost after the stream completes.
+	 * Opens an SSE stream and delegates streaming execution while keeping
+	 * Hono-specific stream writes and abort wiring in the route layer.
  */
 function handleStreamingRequest(
 	c: Context,
@@ -115,228 +107,68 @@ function handleStreamingRequest(
 	const model = canonical.model ?? "";
 	const project = c.req.header("X-Project") ?? undefined;
 
-	const internalMessages = canonical.messages.map((m) => ({
-		role: m.role as "system" | "user" | "assistant",
-		content: m.content,
-	}));
-
-	const internalRequest: InternalLLMRequest = {
-		messages: internalMessages,
-		model: canonical.model,
-		maxTokens: canonical.max_tokens,
-	};
-
 	return streamSSE(c, async (stream) => {
-		const streamStartTime = Date.now();
-		const { logCtx, finalizeRequestLog } = createStreamingRequestLogFinalizer(
+		const executor = createStreamExecutor({
+			canonical,
+			router,
+			costTracker,
+			vault,
 			requestLogger,
-			canonical.model,
-		);
-		let inputTokens: number | undefined;
-		let outputTokens: number | undefined;
+			project,
+		});
 
 		const abortHandler = () => {
-			void finalizeRequestLog({
-				inputTokens,
-				outputTokens,
-				error: new Error("Stream aborted by client"),
-			});
+			void executor.abort();
 		};
 
 		c.req.raw.signal.addEventListener("abort", abortHandler, { once: true });
 
 		try {
-			const resolvedCandidates = await router.resolveStreamingProviders(
-				internalRequest,
-			);
-
-			if (resolvedCandidates.length === 0) {
-				let result;
-				try {
-					result = await router.generate({
-						prompt: canonical.messages
-							.filter((m) => m.role !== "system")
-							.map((m) => m.content)
-							.join("\n"),
-						system:
-							canonical.messages
-								.filter((m) => m.role === "system")
-								.map((m) => m.content)
-								.join("\n") || undefined,
-						model: canonical.model,
-						maxTokens: canonical.max_tokens,
-						project,
+			await executor.execute({
+				writeChunk: async (chunk) => {
+					await stream.writeSSE({
+						data: buildStreamingChunkPayload(chatId, model, chunk),
 					});
-				} catch (error) {
-					await finalizeRequestLog({
-						error: normalizeStreamingError(error),
-					});
-					throw error;
-				}
-
-				outputTokens = result.tokensUsed || 0;
-				await finalizeRequestLog({
-					outputTokens,
-					responseData: result,
-				});
-
-				const canonicalResponse = createCanonicalResponse(
-					chatId,
-					result.model,
-					result.text,
-					{ prompt: 0, completion: result.tokensUsed ?? 0 },
-				);
-
-				await stream.writeSSE({
-					data: JSON.stringify({
-						...canonicalResponse,
-						object: "chat.completion.chunk",
-						created: Math.floor(Date.now() / 1000),
-						choices: [
-							{
-								index: 0,
-								delta: { content: result.text },
-								finish_reason: "stop",
-							},
-						],
-					}),
-				});
-
-				await stream.writeSSE({ data: "[DONE]" });
-				return;
-			}
-
-			let lastStreamingError: Error | undefined;
-
-			for (const resolved of resolvedCandidates) {
-				const { provider, request: resolvedRequest, streamTransformer, recordResult } =
-					resolved;
-				let breakerModel = resolvedRequest.model || model || "unknown";
-				let attemptInputTokens: number | undefined;
-				let attemptOutputTokens: number | undefined;
-				let emittedMeaningfulContent = false;
-				const pendingChunks: string[] = [];
-				if (logCtx) {
-					logCtx.provider = provider.id;
-					logCtx.model = breakerModel;
-				}
-				const streamRecorder = costTracker?.recordStream(
-					provider.id,
-					breakerModel,
-					project,
-				);
-
-				try {
-					const providerCall = buildProviderStreamCall(provider.id, vault, project);
-					const chunks = streamTransformer.transformStream(
-						resolvedRequest,
-						providerCall,
+				},
+				writeFallbackResult: async (result) => {
+					const canonicalResponse = createCanonicalResponse(
+						chatId,
+						result.model,
+						result.text,
+						{ prompt: 0, completion: result.tokensUsed ?? 0 },
 					);
 
-					for await (const chunk of chunks) {
-						streamRecorder?.addChunk(
-							{ tokensIn: chunk.tokensIn, tokensOut: chunk.tokensOut },
-							chunk.content.length,
-						);
-
-						if (chunk.tokensIn !== undefined) {
-							attemptInputTokens = chunk.tokensIn;
-						}
-						if (chunk.tokensOut !== undefined) {
-							attemptOutputTokens = chunk.tokensOut;
-						}
-						if (chunk.model && logCtx) {
-							logCtx.model = chunk.model;
-							breakerModel = chunk.model;
-						} else if (chunk.model) {
-							breakerModel = chunk.model;
-						}
-
-						const payload = buildStreamingChunkPayload(chatId, model, chunk);
-						const chunkHasContent = chunk.content.length > 0;
-
-						if (!emittedMeaningfulContent && !chunkHasContent && !chunk.done) {
-							pendingChunks.push(payload);
-							continue;
-						}
-
-						if (!emittedMeaningfulContent && (chunkHasContent || chunk.done)) {
-							emittedMeaningfulContent = chunkHasContent;
-							for (const pendingChunk of pendingChunks) {
-								await stream.writeSSE({ data: pendingChunk });
-							}
-						}
-
-						await stream.writeSSE({ data: payload });
-					}
-
-					inputTokens = attemptInputTokens;
-					outputTokens = attemptOutputTokens;
-					await stream.writeSSE({ data: "[DONE]" });
-					await finalizeStreamingAttemptSuccess({
-						providerId: provider.id,
-						resolvedModel: breakerModel,
-						streamStartTime,
-						project,
-						inputTokens,
-						outputTokens,
-						streamRecorder,
-						recordResult,
-						finalizeRequestLog,
-						responseModel: logCtx?.model,
+					await stream.writeSSE({
+						data: JSON.stringify({
+							...canonicalResponse,
+							object: "chat.completion.chunk",
+							created: Math.floor(Date.now() / 1000),
+							choices: [
+								{
+									index: 0,
+									delta: { content: result.text },
+									finish_reason: "stop",
+								},
+							],
+						}),
 					});
-					return;
-				} catch (error) {
-					const resolvedError = await finalizeStreamingAttemptFailure({
-						providerId: provider.id,
-						resolvedModel: breakerModel,
-						streamStartTime,
-						project,
-						inputTokens: attemptInputTokens,
-						outputTokens: attemptOutputTokens,
-						streamRecorder,
-						recordResult,
-						error,
-						emittedMeaningfulContent,
-						finalizeRequestLog,
-					});
-					const message = resolvedError.message;
-
-					if (!emittedMeaningfulContent) {
-						lastStreamingError = resolvedError;
-						continue;
-					}
-
-					inputTokens = attemptInputTokens;
-					outputTokens = attemptOutputTokens;
-
+				},
+				writeTerminalError: async (error) => {
 					try {
 						await stream.writeSSE({
 							data: JSON.stringify({
-								error: { message, type: "server_error", code: null },
+								error: { message: error.message, type: "server_error", code: null },
 							}),
 						});
 						await stream.writeSSE({ data: "[DONE]" });
 					} catch {
 						// Stream may already be closed
 					}
-					return;
-				}
-			}
-
-			const resolvedError = lastStreamingError ?? new Error("No streaming providers available");
-			await finalizeRequestLog({ error: resolvedError });
-
-			try {
-				await stream.writeSSE({
-					data: JSON.stringify({
-						error: { message: resolvedError.message, type: "server_error", code: null },
-					}),
-				});
-				await stream.writeSSE({ data: "[DONE]" });
-			} catch {
-				// Stream may already be closed
-			}
+				},
+				writeDone: async () => {
+					await stream.writeSSE({ data: "[DONE]" });
+				},
+			});
 		} finally {
 			c.req.raw.signal.removeEventListener("abort", abortHandler);
 		}
