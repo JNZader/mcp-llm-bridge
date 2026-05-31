@@ -515,8 +515,8 @@ describe('Router + ModelRouter integration', () => {
     const mockRouter = createMockModelRouter({ enabled: true, decision });
     router.setModelRouter(mockRouter);
 
-    // Short prompt "hi" triggers fast-completion which is offloadable,
-    // but ModelRouter should take precedence and route to cloud
+    // Short prompt "hi" stays on the unified classifier's fast-completion path,
+    // so routing should remain with the cloud provider.
     const result = await router.generate({ prompt: 'hi' });
 
     assert.equal(result.text, 'from-cloud');
@@ -583,6 +583,34 @@ describe('Router + ModelRouter integration', () => {
 
     assert.equal(result.text, 'from-local');
     assert.equal(result.provider, 'local-llm');
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  it('does not give local-llm precedence to short generic prompts', async () => {
+    const router = new Router();
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: { text: 'from-cloud', provider: 'cloud', model: 'cloud-model', resolvedProvider: 'cloud', resolvedModel: 'cloud-model', fallbackUsed: false },
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'cli',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: { text: 'from-local', provider: 'local-llm', model: 'local-model', resolvedProvider: 'local-llm', resolvedModel: 'local-model', fallbackUsed: false },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+    router.setModelRouter(createMockModelRouter({ enabled: false, decision: null }));
+
+    const result = await router.generate({ prompt: 'hi' });
+
+    assert.equal(result.text, 'from-cloud');
+    assert.equal(result.provider, 'cloud');
     assert.equal(result.fallbackUsed, false);
   });
 

@@ -286,6 +286,56 @@ describe('local_llm_generate MCP tool', () => {
     assert.equal(typeof text.localLLMStatus.connectedBackendCount, 'number');
     assert.ok(Array.isArray(text.localLLMStatus.backends[0]?.models));
   });
+
+  it('keeps short generic prompts on cloud even when a local model is available', async () => {
+    process.env['LOCAL_LLM_ENABLED'] = 'true';
+
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.includes('/api/tags')) {
+        return jsonResponse({
+          models: [{ name: 'llama3.2:3b', details: { parameter_size: '3.2B' } }],
+        });
+      }
+
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [] });
+      }
+
+      if (url.includes('/v1/chat/completions')) {
+        throw new Error('Short generic prompts should not hit the local generation endpoint');
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    const localRouter = new Router();
+    localRouter.register(
+      new LocalLLMProvider({
+        enabled: true,
+        ollamaUrl: 'http://localhost:11434',
+        lmStudioUrl: 'http://localhost:1234',
+      }),
+    );
+    localRouter.register(mockCloudProvider);
+
+    const result = await handleLocalLlmGenerateTool(
+      { prompt: 'hi' },
+      localRouter,
+    );
+
+    const text = JSON.parse(result.content[0]!.text);
+    assert.equal(text.backend, 'cloud');
+    assert.equal(text.provider, 'mock-cloud');
+    assert.match(text.reason, /Task not offloadable/i);
+    assert.ok(
+      fetchMock.mock.calls.every(
+        (call) => !String(call.arguments[0]).includes('/v1/chat/completions'),
+      ),
+    );
+  });
 });
 
 // ── discover_models ──────────────────────────────────────

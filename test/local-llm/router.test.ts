@@ -6,109 +6,79 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { classifyForOffload, meetsOffloadThreshold } from '../../src/local-llm/router.js';
+import { classify } from '../../src/classification/index.js';
 
 // ── classifyForOffload ──────────────────────────────────────
 
 describe('classifyForOffload', () => {
-  // Commit message tasks
-  it('classifies commit message requests', () => {
-    const result = classifyForOffload('Write a commit message for these changes');
-    assert.equal(result.task, 'commit-message');
-    assert.equal(result.shouldOffload, true);
-    assert.ok(result.confidence >= 0.9);
+  it('keeps parity with unified classify for local-safe tasks', () => {
+    const prompts = [
+      'Write a commit message for these changes',
+      'Generate boilerplate for a new React component',
+      'Convert this YAML to JSON format',
+      'Check this code for lint errors',
+      'Summarize this README for me',
+      'Translate to Spanish: Hello, world',
+    ];
+
+    for (const prompt of prompts) {
+      const unified = classify(prompt);
+      const local = classifyForOffload(prompt);
+
+      assert.equal(local.task, unified.task);
+      assert.equal(local.confidence, unified.confidence);
+      assert.equal(local.reason, unified.reason);
+      assert.equal(local.shouldOffload, true);
+    }
   });
 
-  it('classifies conventional commit requests', () => {
-    const result = classifyForOffload('Generate a conventional commit for this diff');
-    assert.equal(result.task, 'commit-message');
-    assert.equal(result.shouldOffload, true);
-  });
+  it('keeps large-context explicitly blocked for local offload', () => {
+    const prompt = 'x'.repeat(400_001);
+    const result = classifyForOffload(prompt);
 
-  // Boilerplate tasks
-  it('classifies boilerplate generation', () => {
-    const result = classifyForOffload('Generate boilerplate for a new React component');
-    assert.equal(result.task, 'boilerplate');
-    assert.equal(result.shouldOffload, true);
-  });
-
-  it('classifies scaffold requests', () => {
-    const result = classifyForOffload('Scaffold a new Express router');
-    assert.equal(result.task, 'boilerplate');
-    assert.equal(result.shouldOffload, true);
-  });
-
-  // Format conversion tasks
-  it('classifies JSON conversion', () => {
-    const result = classifyForOffload('Convert to JSON: name=foo, age=42');
-    assert.equal(result.task, 'format-conversion');
-    assert.equal(result.shouldOffload, true);
-  });
-
-  it('classifies YAML to JSON conversion', () => {
-    const result = classifyForOffload('Convert this YAML to JSON format');
-    assert.equal(result.task, 'format-conversion');
-    assert.equal(result.shouldOffload, true);
-  });
-
-  // Style check tasks
-  it('classifies lint requests', () => {
-    const result = classifyForOffload('Check this code for lint errors');
-    assert.equal(result.task, 'style-check');
-    assert.equal(result.shouldOffload, true);
-  });
-
-  // Summarization tasks
-  it('classifies summarization requests', () => {
-    const result = classifyForOffload('Summarize this README for me');
-    assert.equal(result.task, 'summarization');
-    assert.equal(result.shouldOffload, true);
-  });
-
-  // Translation tasks
-  it('classifies translation requests', () => {
-    const result = classifyForOffload('Translate to Spanish: Hello, world');
-    assert.equal(result.task, 'translation');
-    assert.equal(result.shouldOffload, true);
-  });
-
-  // Complex tasks — should NOT offload
-  it('rejects architecture discussions', () => {
-    const result = classifyForOffload('Help me architect a microservices system');
-    assert.equal(result.task, 'not-offloadable');
+    assert.equal(result.task, 'large-context');
     assert.equal(result.shouldOffload, false);
   });
 
-  it('rejects security audits', () => {
+  it('keeps code-review explicitly blocked for local offload', () => {
+    const result = classifyForOffload('Please review this code for potential bugs');
+
+    assert.equal(result.task, 'code-review');
+    assert.equal(result.shouldOffload, false);
+  });
+
+  it('keeps fast-completion explicitly blocked for local offload', () => {
+    const result = classifyForOffload('hi');
+
+    assert.equal(result.task, 'fast-completion');
+    assert.equal(result.shouldOffload, false);
+  });
+
+  it('keeps default explicitly blocked for local offload', () => {
+    const prompt = 'Please help me write a function that processes user input and validates each field against the schema. The function should handle edge cases like empty strings, null values, and numbers outside the expected range. I need this to work with our existing validation library and return appropriate error messages for each failure case. '.repeat(2);
+    const result = classifyForOffload(prompt);
+
+    assert.equal(result.task, 'default');
+    assert.equal(result.shouldOffload, false);
+  });
+
+  it('keeps not-offloadable explicitly blocked for local offload', () => {
     const result = classifyForOffload('Perform a security audit of this auth module');
+
     assert.equal(result.task, 'not-offloadable');
     assert.equal(result.shouldOffload, false);
   });
 
-  it('rejects debugging requests', () => {
-    const result = classifyForOffload('Debug this failing test case');
-    assert.equal(result.task, 'not-offloadable');
-    assert.equal(result.shouldOffload, false);
-  });
+  it('stays deterministic for mixed prompts', () => {
+    const prompt = 'Convert to JSON and summarize this data';
+    const first = classifyForOffload(prompt);
+    const second = classifyForOffload(prompt);
+    const unified = classify(prompt);
 
-  it('rejects code review requests', () => {
-    const result = classifyForOffload('Do a code review of this PR');
-    assert.equal(result.task, 'not-offloadable');
-    assert.equal(result.shouldOffload, false);
-  });
-
-  // Unrecognized prompts
-  it('returns not-offloadable for generic prompts', () => {
-    const result = classifyForOffload('How does JavaScript handle closures?');
-    assert.equal(result.task, 'not-offloadable');
-    assert.equal(result.shouldOffload, false);
-  });
-
-  // Length guard — very long prompts for commit messages should not offload
-  it('rejects commit message for very long prompts', () => {
-    const longPrompt = 'Write a commit message for: ' + 'x'.repeat(6000);
-    const result = classifyForOffload(longPrompt);
-    // Should not match commit-message due to maxPromptLength guard
-    assert.notEqual(result.task, 'commit-message');
+    assert.deepEqual(first, second);
+    assert.equal(first.task, unified.task);
+    assert.equal(first.confidence, unified.confidence);
+    assert.equal(first.reason, unified.reason);
   });
 });
 
