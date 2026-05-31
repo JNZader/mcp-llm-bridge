@@ -26,6 +26,11 @@ import type { ComparisonService } from "../comparison/service.js";
 import { MAX_BODY_SIZE } from "../core/constants.js";
 import type { CostTracker } from "../core/cost-tracker.js";
 import type { GroupStore } from "../core/groups.js";
+import {
+	getCorsOrigins,
+	getTrustedProxyIps,
+	isMultiTenantEnabled,
+} from "../core/http-runtime-config.js";
 import { logger } from "../core/logger.js";
 import type { Router } from "../core/router.js";
 import type { GatewayConfig, TrustLevel } from "../core/types.js";
@@ -137,25 +142,6 @@ function bearerAuth(config: GatewayConfig) {
 }
 
 /**
- * Extract allowed CORS origins from environment variable.
- *
- * Format: comma-separated list of origins, or '*' for allow all.
- * Example: 'https://example.com,https://app.example.com'
- */
-function getCorsOrigins(): string | string[] {
-	const envOrigins = process.env["LLM_GATEWAY_CORS_ORIGINS"];
-	if (!envOrigins) {
-		// Default: allow only Cloudflare hosted dashboard
-		return ["https://gateway.javierzader.com"];
-	}
-	if (envOrigins === "*") {
-		// CORS '*' is allowed but we return it as-is
-		return "*";
-	}
-	return envOrigins.split(",").map((o) => o.trim());
-}
-
-/**
  * Request body size limit middleware.
  * Rejects requests with bodies larger than MAX_BODY_SIZE.
  */
@@ -178,20 +164,18 @@ async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
  * back to direct connection IP to prevent IP spoofing attacks.
  */
 function getClientIp(c: Context): string {
-	const trustedProxies = process.env["TRUSTED_PROXY_IPS"];
+	const trustedProxies = getTrustedProxyIps();
 
 	// If no trusted proxies configured, don't trust forwarded headers
 	if (!trustedProxies) {
 		return c.req.header("x-real-ip") ?? "unknown";
 	}
 
-	const trustedSet = new Set(trustedProxies.split(",").map((ip) => ip.trim()));
-
 	// Get the direct connection IP
 	const directIp = c.req.header("x-real-ip") ?? "unknown";
 
 	// Only trust X-Forwarded-For if direct connection is from trusted proxy
-	if (trustedSet.has(directIp)) {
+	if (trustedProxies.has(directIp)) {
 		const forwarded = c.req.header("x-forwarded-for");
 		if (forwarded) {
 			const firstIp = forwarded.split(",")[0];
@@ -359,8 +343,7 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 	// use per-key auth via apiKeyAuth middleware. The existing bearerAuth still
 	// runs for non-v1 routes (dashboard, metrics, etc.) and as a fallback.
 	//
-	const multiTenantEnabled =
-		process.env["ENABLE_MULTI_TENANT"] === "true" && db;
+	const multiTenantEnabled = isMultiTenantEnabled() && Boolean(db);
 
 	if (multiTenantEnabled) {
 		// Multi-tenant mode: API key auth for /v1/* routes (except admin — has its own auth)
