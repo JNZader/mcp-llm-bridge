@@ -6,6 +6,7 @@ import {
   autoDiscoverModelsEnabled,
   circuitBreakerEnabled,
   freeModelCatalogEnabled,
+  freeModelFallbackEnabled,
   latencyRoutingEnabled,
   localLLMEnabled,
   modelRoutingEnabled,
@@ -18,6 +19,7 @@ const FLAG_KEYS = [
   'APPROVAL_FLOWS_ENABLED',
   'AUTO_DISCOVER_MODELS',
   'ENABLE_OUTPUT_COMPRESSION',
+  'FALLBACK_STRATEGY',
   'FREE_MODEL_CATALOG',
   'LATENCY_ROUTING',
   'LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED',
@@ -56,6 +58,7 @@ describe('runtime feature flags', () => {
     assert.equal(circuitBreakerEnabled(), true);
     assert.equal(modelRoutingEnabled(), false);
     assert.equal(latencyRoutingEnabled(), false);
+    assert.equal(freeModelFallbackEnabled(), false);
     assert.equal(freeModelCatalogEnabled(), false);
     assert.equal(localLLMEnabled(), false);
     assert.equal(autoDiscoverModelsEnabled(), false);
@@ -69,6 +72,7 @@ describe('runtime feature flags', () => {
     delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
     delete process.env['MODEL_ROUTING_ENABLED'];
     delete process.env['LATENCY_ROUTING'];
+    delete process.env['FALLBACK_STRATEGY'];
     delete process.env['FREE_MODEL_CATALOG'];
     delete process.env['LOCAL_LLM_ENABLED'];
     delete process.env['AUTO_DISCOVER_MODELS'];
@@ -80,6 +84,7 @@ describe('runtime feature flags', () => {
     assert.equal(circuitBreakerEnabled(), true);
     assert.equal(modelRoutingEnabled(), false);
     assert.equal(latencyRoutingEnabled(), false);
+    assert.equal(freeModelFallbackEnabled(), false);
     assert.equal(freeModelCatalogEnabled(), false);
     assert.equal(localLLMEnabled(), false);
     assert.equal(autoDiscoverModelsEnabled(), false);
@@ -91,6 +96,7 @@ describe('runtime feature flags', () => {
     process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'false';
     process.env['MODEL_ROUTING_ENABLED'] = 'true';
     process.env['LATENCY_ROUTING'] = 'true';
+    process.env['FALLBACK_STRATEGY'] = 'free-models';
     process.env['FREE_MODEL_CATALOG'] = 'true';
     process.env['LOCAL_LLM_ENABLED'] = 'true';
     process.env['AUTO_DISCOVER_MODELS'] = 'true';
@@ -102,8 +108,20 @@ describe('runtime feature flags', () => {
     assert.equal(circuitBreakerEnabled(), false);
     assert.equal(modelRoutingEnabled(), true);
     assert.equal(latencyRoutingEnabled(), true);
+    assert.equal(freeModelFallbackEnabled(), true);
     assert.equal(freeModelCatalogEnabled(), true);
     assert.equal(localLLMEnabled(), true);
     assert.equal(autoDiscoverModelsEnabled(), true);
+  });
+
+  it('only enables free model fallback for the exact strategy value', () => {
+    process.env['FALLBACK_STRATEGY'] = 'free-models';
+    assert.equal(freeModelFallbackEnabled(), true);
+
+    process.env['FALLBACK_STRATEGY'] = 'latency';
+    assert.equal(freeModelFallbackEnabled(), false);
+
+    process.env['FALLBACK_STRATEGY'] = 'FREE-MODELS';
+    assert.equal(freeModelFallbackEnabled(), false);
   });
 });

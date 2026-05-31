@@ -37,6 +37,10 @@ export function freeModelCatalogEnabled(): boolean {
   return process.env['FREE_MODEL_CATALOG'] === 'true';
 }
 
+export function freeModelFallbackEnabled(): boolean {
+  return process.env['FALLBACK_STRATEGY'] === 'free-models';
+}
+
 export function localLLMEnabled(): boolean {
   return process.env['LOCAL_LLM_ENABLED'] === 'true';
 }

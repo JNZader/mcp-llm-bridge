@@ -1,5 +1,8 @@
 import { logger } from "../core/logger.js";
-import { freeModelCatalogEnabled } from "../core/runtime-flags.js";
+import {
+	freeModelCatalogEnabled,
+	freeModelFallbackEnabled,
+} from "../core/runtime-flags.js";
 import type { Router } from "../core/router.js";
 import {
 	FreeModelRouter,
@@ -15,7 +18,7 @@ interface FreeModelsBootstrapResult {
 export function bootstrapFreeModels(
 	router: Router,
 ): FreeModelsBootstrapResult {
-	const freeModelEnabled = process.env["FALLBACK_STRATEGY"] === "free-models";
+	const freeModelEnabled = freeModelFallbackEnabled();
 	const freeModelRouter = new FreeModelRouter({ enabled: freeModelEnabled });
 
 	if (freeModelEnabled) {
