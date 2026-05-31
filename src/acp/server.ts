@@ -29,6 +29,7 @@ import type {
   AcpListTasksResult,
   AcpTask,
   AcpTaskStatus,
+  AcpContext,
   AcpServerCapabilities,
   AcpProgressNotification,
   AcpTaskUpdateNotification,
@@ -74,6 +75,37 @@ const DEFAULT_CONFIG: Required<AcpServerConfig> = {
   maxConcurrentTasks: 10,
   maxStoredTasks: 100,
 };
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isContextType(value: unknown): value is 'file' | 'snippet' | 'selection' {
+  return value === 'file' || value === 'snippet' || value === 'selection';
+}
+
+function isContextRange(value: unknown): value is { start: number; end: number } {
+  return (
+    isObject(value) &&
+    typeof value.start === 'number' &&
+    typeof value.end === 'number'
+  );
+}
+
+function isAcpContext(value: unknown): value is AcpContext {
+  return (
+    isObject(value) &&
+    isContextType(value.type) &&
+    isString(value.content) &&
+    (value.path === undefined || isString(value.path)) &&
+    (value.language === undefined || isString(value.language)) &&
+    (value.range === undefined || isContextRange(value.range))
+  );
+}
 
 // ─── ACP Server ──────────────────────────────────────────────
 
@@ -136,15 +168,15 @@ export class AcpServer {
   private async dispatch(request: JsonRpcRequest): Promise<unknown> {
     switch (request.method) {
       case ACP_METHODS.INITIALIZE:
-        return this.handleInitialize(request.params as AcpInitializeParams);
+        return this.handleInitialize(this.parseInitializeParams(request.params));
       case ACP_METHODS.START_TASK:
-        return this.handleStartTask(request.params as AcpStartTaskParams);
+        return this.handleStartTask(this.parseStartTaskParams(request.params));
       case ACP_METHODS.SEND_MESSAGE:
-        return this.handleSendMessage(request.params as AcpSendMessageParams);
+        return this.handleSendMessage(this.parseSendMessageParams(request.params));
       case ACP_METHODS.CANCEL_TASK:
-        return this.handleCancelTask(request.params as AcpCancelTaskParams);
+        return this.handleCancelTask(this.parseCancelTaskParams(request.params));
       case ACP_METHODS.GET_TASK:
-        return this.handleGetTask(request.params as AcpGetTaskParams);
+        return this.handleGetTask(this.parseGetTaskParams(request.params));
       case ACP_METHODS.LIST_TASKS:
         return this.handleListTasks(request.params as AcpListTasksParams);
       default:
@@ -354,6 +386,85 @@ export class AcpServer {
         'Server not initialized. Call acp/initialize first.',
       );
     }
+  }
+
+  private parseInitializeParams(params: JsonRpcRequest['params']): AcpInitializeParams {
+    if (!isObject(params) || !isObject(params.clientCapabilities)) {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'clientCapabilities is required');
+    }
+
+    const { clientName, clientVersion } = params.clientCapabilities;
+    if (!isString(clientName) || !isString(clientVersion)) {
+      throw this.rpcError(
+        ACP_ERROR_CODES.INVALID_PARAMS,
+        'clientCapabilities.clientName and clientCapabilities.clientVersion are required',
+      );
+    }
+
+    return {
+      clientCapabilities: { clientName, clientVersion },
+    };
+  }
+
+  private parseStartTaskParams(params: JsonRpcRequest['params']): AcpStartTaskParams {
+    if (!isObject(params) || !isString(params.description)) {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'Task description is required');
+    }
+
+    if (params.context !== undefined) {
+      if (!Array.isArray(params.context) || !params.context.every((value) => isAcpContext(value))) {
+        throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'context must be a valid ACP context array');
+      }
+    }
+
+    if (params.config !== undefined && !isObject(params.config)) {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'config must be an object');
+    }
+
+    return {
+      description: params.description,
+      context: params.context,
+      config: params.config,
+    };
+  }
+
+  private parseSendMessageParams(params: JsonRpcRequest['params']): AcpSendMessageParams {
+    if (!isObject(params) || !isString(params.taskId) || !isString(params.content)) {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'taskId and content are required');
+    }
+
+    if (params.role !== undefined && params.role !== 'user' && params.role !== 'system') {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'role must be user or system');
+    }
+
+    return {
+      taskId: params.taskId,
+      content: params.content,
+      role: params.role,
+    };
+  }
+
+  private parseCancelTaskParams(params: JsonRpcRequest['params']): AcpCancelTaskParams {
+    if (!isObject(params) || !isString(params.taskId)) {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'taskId is required');
+    }
+
+    if (params.reason !== undefined && !isString(params.reason)) {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'reason must be a string');
+    }
+
+    return {
+      taskId: params.taskId,
+      reason: params.reason,
+    };
+  }
+
+  private parseGetTaskParams(params: JsonRpcRequest['params']): AcpGetTaskParams {
+    if (!isObject(params) || !isString(params.taskId)) {
+      throw this.rpcError(ACP_ERROR_CODES.INVALID_PARAMS, 'taskId is required');
+    }
+
+    return { taskId: params.taskId };
   }
 
   private getTaskOrThrow(taskId: string): AcpTask {
