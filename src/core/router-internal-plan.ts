@@ -12,6 +12,7 @@ import { optimizeMessages } from '../transformers/three-part-prompt.js';
 import {
   prioritizeEndpointCandidate,
   reorderByLatency,
+  resolveExecutableCandidates,
   resolveCandidates,
   resolveGroupCandidates,
 } from './router-candidate-planner.js';
@@ -35,9 +36,12 @@ export interface InternalRoutingPlan {
   matchedGroup: ProviderGroup | null;
   orderedCandidates: LLMProvider[];
   availableCandidates: LLMProvider[];
+  blockedStrictCandidate: LLMProvider | null;
   classification: TaskClassification | null;
   modelRouterDecision: RoutingDecision | null;
   routedModel: string;
+  requestedProvider?: string;
+  strict: boolean;
 }
 
 export async function buildInternalRoutingPlan(
@@ -48,10 +52,15 @@ export async function buildInternalRoutingPlan(
     : options.request;
 
   const model = optimizedRequest.model ?? '';
+  const requestedProvider =
+    typeof optimizedRequest.metadata?.['provider'] === 'string'
+      ? optimizedRequest.metadata['provider']
+      : undefined;
+  const strict = optimizedRequest.metadata?.['strict'] === true;
   let matchedGroup: ProviderGroup | null = null;
   let orderedCandidates: LLMProvider[] | null = null;
 
-  if (options.groupStore && model) {
+  if (!requestedProvider && options.groupStore && model) {
     matchedGroup = options.groupStore.findByModel(model);
     if (matchedGroup) {
       orderedCandidates = resolveGroupCandidates(
@@ -68,7 +77,7 @@ export async function buildInternalRoutingPlan(
     const resolveRequest: GenerateRequest = {
       prompt: '',
       model: optimizedRequest.model,
-      provider: optimizedRequest.metadata?.['provider'] as string | undefined,
+      provider: requestedProvider,
     };
     orderedCandidates = await resolveCandidates(options.providers, resolveRequest, (candidates) =>
       reorderByLatency(candidates, options.latencyMeasurer, options.explorationRate),
@@ -77,7 +86,7 @@ export async function buildInternalRoutingPlan(
 
   let classification: TaskClassification | null = null;
   let modelRouterDecision: RoutingDecision | null = null;
-  if (options.modelRouter && options.modelRouter.enabled) {
+  if (options.modelRouter && options.modelRouter.enabled && !requestedProvider && !strict) {
     classification = classify(extractPromptFromInternal(optimizedRequest));
     modelRouterDecision = options.modelRouter.route(classification);
     if (modelRouterDecision) {
@@ -93,8 +102,7 @@ export async function buildInternalRoutingPlan(
     }
   }
 
-  const requestedProvider = optimizedRequest.metadata?.['provider'] as string | undefined;
-  if (!requestedProvider && !modelRouterDecision) {
+  if (!requestedProvider && !strict && !modelRouterDecision) {
     const offloadClassification = classifyForOffload(extractPromptFromInternal(optimizedRequest));
     if (offloadClassification.shouldOffload) {
       const localIndex = orderedCandidates.findIndex((provider) => provider.id === 'local-llm');
@@ -109,8 +117,11 @@ export async function buildInternalRoutingPlan(
   }
 
   const routedModel = modelRouterDecision?.endpoint.modelId ?? model;
-  const availableCandidates = orderedCandidates.filter((provider) =>
-    options.circuitBreaker.canExecute(provider.id, 'default', routedModel).allowed,
+  const { availableCandidates, blockedStrictCandidate } = resolveExecutableCandidates(
+    orderedCandidates,
+    options.circuitBreaker,
+    routedModel,
+    strict,
   );
 
   return {
@@ -119,8 +130,11 @@ export async function buildInternalRoutingPlan(
     matchedGroup,
     orderedCandidates,
     availableCandidates,
+    blockedStrictCandidate,
     classification,
     modelRouterDecision,
     routedModel,
+    requestedProvider,
+    strict,
   };
 }

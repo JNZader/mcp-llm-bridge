@@ -56,6 +56,10 @@ export function buildChatGenerateRequest(
 		system,
 		model: canonicalRequest.model,
 		maxTokens: canonicalRequest.max_tokens,
+		...(typeof canonicalRequest["provider"] === "string"
+			? { provider: canonicalRequest["provider"] }
+			: {}),
+		...(canonicalRequest["strict"] === true ? { strict: true } : {}),
 		project,
 	};
 }

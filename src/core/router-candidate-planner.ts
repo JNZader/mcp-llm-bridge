@@ -3,6 +3,7 @@ import type { ProviderGroup } from './groups.js';
 import type { ModelEndpoint } from '../model-routing/types.js';
 import type { LatencyMeasurer } from '../latency/measurer.js';
 import type { ProviderCandidate } from '../latency/types.js';
+import type { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 import { createBalancer, memberKey } from './balancer.js';
 import { resolveModel } from './fuzzy.js';
 import { buildLatencyMap, selectProviderWithLatency } from '../latency/selector.js';
@@ -122,6 +123,47 @@ export function resolveProviderModel(
   }
 
   return currentModel;
+}
+
+export interface ExecutableCandidatesResolution {
+  availableCandidates: LLMProvider[];
+  blockedStrictCandidate: LLMProvider | null;
+}
+
+export function resolveExecutableCandidates(
+  candidates: LLMProvider[],
+  circuitBreaker: CircuitBreakerV2,
+  model: string,
+  strict: boolean,
+): ExecutableCandidatesResolution {
+  if (strict) {
+    const selectedCandidate = candidates[0] ?? null;
+    if (!selectedCandidate) {
+      return {
+        availableCandidates: [],
+        blockedStrictCandidate: null,
+      };
+    }
+
+    if (!circuitBreaker.canExecute(selectedCandidate.id, 'default', model).allowed) {
+      return {
+        availableCandidates: [],
+        blockedStrictCandidate: selectedCandidate,
+      };
+    }
+
+    return {
+      availableCandidates: [selectedCandidate],
+      blockedStrictCandidate: null,
+    };
+  }
+
+  return {
+    availableCandidates: candidates.filter((provider) =>
+      circuitBreaker.canExecute(provider.id, 'default', model).allowed,
+    ),
+    blockedStrictCandidate: null,
+  };
 }
 
 export function reorderByLatency(

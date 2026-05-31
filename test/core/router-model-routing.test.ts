@@ -15,7 +15,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Router, resetCircuitBreakerV2 } from '../../src/core/router.js';
+import { getCircuitBreakerV2, Router, resetCircuitBreakerV2 } from '../../src/core/router.js';
 import { TransformerRegistry } from '../../src/core/transformer.js';
 import { LocalLLMError } from '../../src/local-llm/client.js';
 import type {
@@ -773,13 +773,9 @@ describe('Router + ModelRouter integration', () => {
   });
 
   it('generateFromInternal does not use ModelRouter when request specifies provider', async () => {
-    // When a provider is specified in metadata, the resolveCandidates path puts it first
-    // ModelRouter should still be skipped because in generateFromInternal it checks
-    // this._modelRouter && this._modelRouter.enabled (not provider/strict like generate())
-    // Actually, generateFromInternal does NOT skip ModelRouter when provider is specified.
-    // Let's verify it still works correctly — the ModelRouter may reorder candidates.
     const router = new Router();
     const registry = new TransformerRegistry();
+    let routeCalls = 0;
 
     const alpha = createMockProvider({
       id: 'alpha',
@@ -830,7 +826,13 @@ describe('Router + ModelRouter integration', () => {
       costTier: 'standard',
     };
 
-    const mockRouter = createMockModelRouter({ enabled: true, decision });
+    const mockRouter = createMockModelRouter({
+      enabled: true,
+      decision,
+      onRoute: () => {
+        routeCalls++;
+      },
+    });
     router.setModelRouter(mockRouter);
 
     // Request specifies alpha in metadata
@@ -842,11 +844,184 @@ describe('Router + ModelRouter integration', () => {
 
     const result = await router.generateFromInternal(request);
 
-    // In generateFromInternal, resolveCandidates is called with provider from metadata,
-    // which puts alpha first. Then ModelRouter reorders to put beta first.
-    // So beta should win.
-    assert.equal(result.content, 'beta-response');
-    assert.equal(result.metadata?.['provider'], 'beta');
+    assert.equal(result.content, 'alpha-response');
+    assert.equal(result.metadata?.['provider'], 'alpha');
+    assert.equal(routeCalls, 0);
+  });
+
+  it('keeps explicit provider authoritative across generate, generateFromInternal, and streaming', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    let routeCalls = 0;
+
+    const alpha = createMockProvider({
+      id: 'alpha',
+      name: 'Alpha',
+      type: 'api',
+      models: [{ id: 'shared-model', name: 'Shared Model', provider: 'alpha', maxTokens: 4096 }],
+      response: {
+        text: 'alpha-response',
+        provider: 'alpha',
+        model: 'shared-model',
+        resolvedProvider: 'alpha',
+        resolvedModel: 'shared-model',
+        fallbackUsed: false,
+      },
+    });
+    const beta = createMockProvider({
+      id: 'beta',
+      name: 'Beta',
+      type: 'api',
+      models: [{ id: 'shared-model', name: 'Shared Model', provider: 'beta', maxTokens: 4096 }],
+      response: {
+        text: 'beta-response',
+        provider: 'beta',
+        model: 'shared-model',
+        resolvedProvider: 'beta',
+        resolvedModel: 'shared-model',
+        fallbackUsed: false,
+      },
+    });
+
+    router.register(alpha);
+    router.register(beta);
+    router.setTransformerRegistry(registry);
+    registerPassthroughOutbound(registry, 'alpha');
+    registerPassthroughOutbound(registry, 'beta');
+    registry.registerStreamOutbound('alpha', {
+      name: 'alpha',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+    registry.registerStreamOutbound('beta', {
+      name: 'beta',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+
+    router.setModelRouter(createMockModelRouter({
+      enabled: true,
+      decision: {
+        endpoint: createMockEndpoint({ id: 'beta-endpoint', provider: 'beta', modelId: 'shared-model' }),
+        matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['beta-endpoint'] }),
+        reason: 'Primary model for summarization',
+        isFallback: false,
+        costTier: 'standard',
+      },
+      onRoute: () => {
+        routeCalls++;
+      },
+    }));
+
+    const generated = await router.generate({
+      prompt: 'summarize this',
+      model: 'shared-model',
+      provider: 'alpha',
+      strict: true,
+    });
+    const internal = await router.generateFromInternal({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'shared-model',
+      metadata: { provider: 'alpha', strict: true },
+    });
+    const streamingCandidates = await router.resolveStreamingProviders({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'shared-model',
+      metadata: { provider: 'alpha', strict: true },
+    });
+
+    assert.equal(generated.provider, 'alpha');
+    assert.equal(generated.routing?.strategy, 'explicit-provider');
+    assert.equal(generated.routing?.decisionReason, 'Provider alpha requested explicitly');
+    assert.equal(internal.metadata?.['provider'], 'alpha');
+    assert.equal(streamingCandidates[0]?.provider.id, 'alpha');
+    assert.equal(streamingCandidates.length, 1);
+    assert.equal(routeCalls, 0);
+  });
+
+  it('strict internal routing fails when an explicit provider is breaker-blocked and does not expose backups', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    router.register(createMockProvider({
+      id: 'alpha',
+      name: 'Alpha',
+      type: 'api',
+      models: [{ id: 'shared-model', name: 'Shared Model', provider: 'alpha', maxTokens: 4096 }],
+      response: {
+        text: 'alpha-response',
+        provider: 'alpha',
+        model: 'shared-model',
+        resolvedProvider: 'alpha',
+        resolvedModel: 'shared-model',
+        fallbackUsed: false,
+      },
+    }));
+    router.register(createMockProvider({
+      id: 'beta',
+      name: 'Beta',
+      type: 'api',
+      models: [{ id: 'shared-model', name: 'Shared Model', provider: 'beta', maxTokens: 4096 }],
+      response: {
+        text: 'beta-response',
+        provider: 'beta',
+        model: 'shared-model',
+        resolvedProvider: 'beta',
+        resolvedModel: 'shared-model',
+        fallbackUsed: false,
+      },
+    }));
+    router.setTransformerRegistry(registry);
+    registerPassthroughOutbound(registry, 'alpha');
+    registerPassthroughOutbound(registry, 'beta');
+    registry.registerStreamOutbound('alpha', {
+      name: 'alpha',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+    registry.registerStreamOutbound('beta', {
+      name: 'beta',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+
+    const previousFlag = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'true';
+
+    try {
+      const circuitBreaker = getCircuitBreakerV2();
+      for (let index = 0; index < 5; index++) {
+        circuitBreaker.recordFailure('alpha', 'default', 'shared-model');
+      }
+
+      await assert.rejects(
+        () => router.generateFromInternal({
+          messages: [{ role: 'user', content: 'summarize this' }],
+          model: 'shared-model',
+          metadata: { provider: 'alpha', strict: true },
+        }),
+        /Strict mode candidate alpha is blocked by an open circuit breaker/,
+      );
+
+      await assert.rejects(
+        () => router.resolveStreamingProviders({
+          messages: [{ role: 'user', content: 'summarize this' }],
+          model: 'shared-model',
+          metadata: { provider: 'alpha', strict: true },
+        }),
+        /Strict mode candidate alpha is blocked by an open circuit breaker/,
+      );
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      } else {
+        process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = previousFlag;
+      }
+    }
   });
 
   it('generateFromInternal falls back when ModelRouter endpoint not found', async () => {

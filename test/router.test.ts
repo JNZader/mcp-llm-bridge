@@ -4,10 +4,10 @@
  * Uses mock providers implementing the LLMProvider interface.
  */
 
-import { describe, it, mock } from 'node:test';
+import { beforeEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Router } from '../src/core/router.js';
+import { getCircuitBreakerV2, resetCircuitBreakerV2, Router } from '../src/core/router.js';
 import type {
   LLMProvider,
   GenerateRequest,
@@ -76,6 +76,10 @@ describe('Router registration', () => {
 // ── Generation routing ────────────────────────────────────
 
 describe('Router.generate()', () => {
+  beforeEach(() => {
+    resetCircuitBreakerV2();
+  });
+
   it('returns response from first available provider', async () => {
     const router = new Router();
     router.register(createMockProvider({
@@ -248,6 +252,92 @@ describe('Router.generate()', () => {
     assert.equal(result.provider, 'backup');
     assert.equal(result.fallbackUsed, true);
     assert.equal(backupGenerate.mock.callCount(), 1);
+  });
+
+  it('fails in strict mode when the resolved candidate is breaker-blocked', async () => {
+    const router = new Router();
+    const backupGenerate = mock.fn(async () => ({
+      text: 'from-backup',
+      provider: 'backup',
+      model: 'backup-model',
+      resolvedProvider: 'backup',
+      resolvedModel: 'backup-model',
+      fallbackUsed: false,
+    }));
+
+    router.register(createMockProvider({
+      id: 'primary',
+      name: 'Primary',
+      type: 'api',
+      models: [{ id: 'primary-model', name: 'Primary Model', provider: 'primary', maxTokens: 4096 }],
+    }));
+    router.register({
+      ...createMockProvider({
+        id: 'backup',
+        name: 'Backup',
+        type: 'api',
+        models: [{ id: 'backup-model', name: 'Backup Model', provider: 'backup', maxTokens: 4096 }],
+      }),
+      generate: backupGenerate,
+    });
+
+    const previousFlag = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'true';
+
+    try {
+      const circuitBreaker = getCircuitBreakerV2();
+      for (let index = 0; index < 5; index++) {
+        circuitBreaker.recordFailure('primary', 'default', 'primary-model');
+      }
+
+      await assert.rejects(
+        () => router.generate({ prompt: 'test', model: 'primary-model', strict: true }),
+        /Strict mode candidate primary is blocked by an open circuit breaker/,
+      );
+      assert.equal(backupGenerate.mock.callCount(), 0);
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      } else {
+        process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = previousFlag;
+      }
+    }
+  });
+
+  it('does not use a backup provider when strict mode targets an explicit provider', async () => {
+    const router = new Router();
+    const backupGenerate = mock.fn(async () => ({
+      text: 'from-backup',
+      provider: 'backup',
+      model: 'backup-model',
+      resolvedProvider: 'backup',
+      resolvedModel: 'backup-model',
+      fallbackUsed: false,
+    }));
+
+    router.register(createMockProvider({
+      id: 'primary',
+      name: 'Primary',
+      type: 'api',
+      models: [{ id: 'primary-model', name: 'Primary Model', provider: 'primary', maxTokens: 4096 }],
+      shouldFail: true,
+      failMessage: 'primary exploded',
+    }));
+    router.register({
+      ...createMockProvider({
+        id: 'backup',
+        name: 'Backup',
+        type: 'api',
+        models: [{ id: 'backup-model', name: 'Backup Model', provider: 'backup', maxTokens: 4096 }],
+      }),
+      generate: backupGenerate,
+    });
+
+    await assert.rejects(
+      () => router.generate({ prompt: 'test', provider: 'primary', strict: true }),
+      /primary exploded/,
+    );
+    assert.equal(backupGenerate.mock.callCount(), 0);
   });
 
   it('throws when all providers fail', async () => {

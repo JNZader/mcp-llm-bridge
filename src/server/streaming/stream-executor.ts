@@ -70,6 +70,12 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		messages: internalMessages,
 		model: canonical.model,
 		maxTokens: canonical.max_tokens,
+		metadata: {
+			...(typeof canonical["provider"] === "string"
+				? { provider: canonical["provider"] }
+				: {}),
+			...(canonical["strict"] === true ? { strict: true } : {}),
+		},
 	};
 
 	const finalizeAbort = async () => {

@@ -39,6 +39,7 @@ import type { ModelRouterStatsSnapshot, RoutingDecision } from '../model-routing
 import {
   prioritizeEndpointCandidate,
   reorderByLatency,
+  resolveExecutableCandidates,
   resolveCandidates,
 } from './router-candidate-planner.js';
 import {
@@ -295,9 +296,18 @@ export class Router {
     // Filter out providers with open circuit breakers (V2 with per-model granularity)
     const circuitBreaker = getCircuitBreakerV2();
     const model = modelRouterDecision?.endpoint.modelId ?? request.model ?? 'unknown';
-    const availableCandidates = candidates.filter((p) =>
-      circuitBreaker.canExecute(p.id, 'default', model).allowed
+    const { availableCandidates, blockedStrictCandidate } = resolveExecutableCandidates(
+      candidates,
+      circuitBreaker,
+      model,
+      request.strict === true,
     );
+
+    if (request.strict && blockedStrictCandidate) {
+      throw new Error(
+        `Strict mode candidate ${blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
+      );
+    }
 
     if (availableCandidates.length === 0) {
       // All candidates have open circuit breakers
@@ -492,7 +502,7 @@ export class Router {
     const clientId = optimizedRequest.metadata?.['clientId'] as string | undefined;
 
     // 1. Check session stickiness
-    if (this._sessionManager && clientId && model) {
+    if (!plan.requestedProvider && this._sessionManager && clientId && model) {
       const pinned = this._sessionManager.getRouterStickySession(clientId, model);
       if (pinned) {
         const stickyProvider = this._providers.find((p) => p.id === pinned.provider);
@@ -527,6 +537,12 @@ export class Router {
     if (plan.orderedCandidates.length === 0) {
       throw new Error(
         'No providers available. Store API credentials via vault_store or install a CLI tool.',
+      );
+    }
+
+    if (plan.strict && plan.blockedStrictCandidate) {
+      throw new Error(
+        `Strict mode candidate ${plan.blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
       );
     }
 
@@ -613,6 +629,12 @@ export class Router {
       circuitBreaker: getCircuitBreakerV2(),
       optimizeMessages: optimizeMessagesEnabled(),
     });
+
+    if (plan.strict && plan.blockedStrictCandidate) {
+      throw new Error(
+        `Strict mode candidate ${plan.blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
+      );
+    }
 
     const resolvedProviders: ResolvedStreamingProvider[] = [];
 
@@ -716,16 +738,16 @@ function determineDecisionReason(
   modelRouterDecision: RoutingDecision | null,
   offloadClassification: TaskClassification | null,
 ): string {
+  if (request.provider) {
+    return `Provider ${request.provider} requested explicitly`;
+  }
+
   if (modelRouterDecision) {
     return modelRouterDecision.reason;
   }
 
   if (offloadClassification?.reason) {
     return offloadClassification.reason;
-  }
-
-  if (request.provider) {
-    return `Provider ${request.provider} requested explicitly`;
   }
 
   if (request.model) {
