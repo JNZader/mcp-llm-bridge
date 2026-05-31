@@ -54,6 +54,11 @@ import {
   buildInternalRequest,
   withResolutionMetadata,
 } from './router-shaping.js';
+import {
+  createProviderErrorAccumulator,
+  throwAllProvidersFailed,
+  tryCandidates,
+} from './router-attempts.js';
 import { optimizeMessagesEnabled } from './runtime-flags.js';
 
 import { logger } from './logger.js';
@@ -327,53 +332,52 @@ export class Router {
       return withResolutionMetadata(request, result, false, latencyMs);
     }
 
-    const errors: string[] = [];
-
-    for (const [index, provider] of availableCandidates.entries()) {
-      try {
-        const result = await executeGenerateAttempt({
+    const providerErrors = createProviderErrorAccumulator();
+    const attemptedResult = await tryCandidates(availableCandidates, (provider) =>
+      executeGenerateAttempt({
+        provider,
+        request: buildGenerateRequest(
+          request,
           provider,
-          request: buildGenerateRequest(
-            request,
-            provider,
-            modelRouterDecision?.endpoint,
-          ),
-          routedEndpoint: modelRouterDecision?.endpoint,
-          circuitBreaker,
-          startTime,
-          defaultModel: model,
-          classification,
-          ...telemetry,
-          logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
-            if (error instanceof LocalLLMError) {
-              logger.warn(
-                {
-                  provider: failedProvider.id,
-                  model: attemptedModel,
-                  backend: error.backend,
-                  error: message,
-                },
-                'Local LLM failed — falling back to cloud provider',
-              );
-              recordLocalFallbackMetric(this.getTelemetryContext(), {
-                attemptedModel,
-                startTime,
-                project: request.project,
-                message,
-              });
-              return;
-            }
+          modelRouterDecision?.endpoint,
+        ),
+        routedEndpoint: modelRouterDecision?.endpoint,
+        circuitBreaker,
+        startTime,
+        defaultModel: model,
+        classification,
+        ...telemetry,
+        logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
+          if (error instanceof LocalLLMError) {
+            logger.warn(
+              {
+                provider: failedProvider.id,
+                model: attemptedModel,
+                backend: error.backend,
+                error: message,
+              },
+              'Local LLM failed — falling back to cloud provider',
+            );
+            recordLocalFallbackMetric(this.getTelemetryContext(), {
+              attemptedModel,
+              startTime,
+              project: request.project,
+              message,
+            });
+            return;
+          }
 
-            logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
-          },
-        });
-        const latencyMs = Date.now() - startTime;
-        return withResolutionMetadata(request, result, index > 0, latencyMs);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push(`${provider.id}: ${message}`);
-        continue;
-      }
+          logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
+        },
+      }),
+      (provider, error) => {
+        providerErrors.add(provider, error);
+      },
+    );
+
+    if (attemptedResult) {
+      const latencyMs = Date.now() - startTime;
+      return withResolutionMetadata(request, attemptedResult.result, attemptedResult.index > 0, latencyMs);
     }
 
     // Try free model fallback before giving up
@@ -384,14 +388,13 @@ export class Router {
         const latencyMs = Date.now() - startTime;
         return withResolutionMetadata(request, freeResult, true, latencyMs);
       } catch (freeError) {
-        const freeMsg = freeError instanceof Error ? freeError.message : String(freeError);
-        errors.push(`free-models: ${freeMsg}`);
+        providerErrors.errors.push(
+          `free-models: ${freeError instanceof Error ? freeError.message : String(freeError)}`,
+        );
       }
     }
 
-    throw new Error(
-      `All providers failed. Store credentials via vault_store or install a CLI tool.\n${errors.join('\n')}`,
-    );
+    throwAllProvidersFailed(providerErrors.errors);
   }
 
   /**
@@ -475,47 +478,43 @@ export class Router {
       );
     }
 
-    const errors: string[] = [];
-
-    for (const provider of plan.availableCandidates) {
-      try {
-        const result = await tryProvider({
+    const providerErrors = createProviderErrorAccumulator();
+    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider) =>
+      tryProvider({
+        provider,
+        request: buildInternalRequest(
+          optimizedRequest,
           provider,
-          request: buildInternalRequest(
-            optimizedRequest,
-            provider,
-            plan.modelRouterDecision?.endpoint,
-          ),
-          registry,
-           circuitBreaker,
-           startTime,
-           classification: plan.classification ?? undefined,
-           routedEndpoint: plan.modelRouterDecision?.endpoint,
-           ...telemetry,
-         });
+          plan.modelRouterDecision?.endpoint,
+        ),
+        registry,
+        circuitBreaker,
+        startTime,
+        classification: plan.classification ?? undefined,
+        routedEndpoint: plan.modelRouterDecision?.endpoint,
+        ...telemetry,
+      }),
+      (provider, error) => {
+        providerErrors.add(provider, error);
+      },
+    );
 
-        // Pin session on success if stickiness is enabled
-        if (this._sessionManager && clientId && model && plan.matchedGroup?.stickyTTL) {
-          this._sessionManager.pinRouterStickySession(
-            clientId,
-            model,
-            provider.id,
-            'default',
-            plan.matchedGroup.stickyTTL * 1000,
-          );
-        }
-
-        return result;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push(`${provider.id}: ${message}`);
-        continue;
+    if (attemptedResult) {
+      // Pin session on success if stickiness is enabled
+      if (this._sessionManager && clientId && model && plan.matchedGroup?.stickyTTL) {
+        this._sessionManager.pinRouterStickySession(
+          clientId,
+          model,
+          attemptedResult.provider.id,
+          'default',
+          plan.matchedGroup.stickyTTL * 1000,
+        );
       }
+
+      return attemptedResult.result;
     }
 
-    throw new Error(
-      `All providers failed. Store credentials via vault_store or install a CLI tool.\n${errors.join('\n')}`,
-    );
+    throwAllProvidersFailed(providerErrors.errors);
   }
 
   /**
