@@ -37,6 +37,7 @@ export interface ModelSyncConfig {
   apiKey: string;
   matchRegex?: string;
   autoSyncIntervalMs: number;
+  upstreamTimeoutMs?: number;
 }
 
 export interface ModelSyncResult {

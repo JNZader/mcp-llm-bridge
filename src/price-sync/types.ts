@@ -8,6 +8,7 @@
 
 export const DEFAULT_CURRENCY = 'USD';
 export const DEFAULT_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
 
 // === Interfaces (Flat Structure) ===
 
@@ -25,6 +26,7 @@ export interface ModelPrice {
 export interface PriceSyncConfig {
   autoSyncIntervalMs: number; // Default: 24 hours
   defaultCurrency: string;    // Default: 'USD'
+  upstreamTimeoutMs: number;  // Default: 30 seconds
 }
 
 export interface PriceCalculation {
@@ -109,7 +111,8 @@ export function isPriceSyncConfig(value: unknown): value is PriceSyncConfig {
 
   return (
     typeof obj.autoSyncIntervalMs === 'number' &&
-    typeof obj.defaultCurrency === 'string'
+    typeof obj.defaultCurrency === 'string' &&
+    typeof obj.upstreamTimeoutMs === 'number'
   );
 }
 

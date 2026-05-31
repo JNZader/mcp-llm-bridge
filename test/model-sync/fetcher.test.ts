@@ -158,6 +158,15 @@ function mockFetchError(status: number): typeof fetch {
     } as Response);
 }
 
+function mockAbortableFetch(): typeof fetch {
+  return ((_input: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+    })) as typeof fetch;
+}
+
 // === Tests ===
 
 describe('ModelSyncManager', () => {
@@ -360,6 +369,43 @@ describe('ModelSyncManager', () => {
       assert.strictEqual(recovery.modelsFound.length, 1);
       assert.strictEqual(manager.getRunStatus(PROVIDER_TYPE.OPENAI).isRunning, false);
     });
+
+    it('should release the lock and capture timeout status after upstream timeout', async () => {
+      global.fetch = mockAbortableFetch();
+
+      await assert.rejects(
+        async () =>
+          manager.syncProvider({
+            provider: PROVIDER_TYPE.OPENAI,
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'sk-test',
+            autoSyncIntervalMs: 24 * 60 * 60 * 1000,
+            upstreamTimeoutMs: 10,
+          }),
+        /timed out/
+      );
+
+      const status = manager.getRunStatus(PROVIDER_TYPE.OPENAI);
+      assert.strictEqual(status.isRunning, false);
+      assert.strictEqual(status.startedAt, null);
+      assert.ok(status.lastCompletedAt);
+      assert.strictEqual(status.lastSuccessAt, null);
+      assert.match(status.lastError ?? '', /timed out/);
+      assert.match(status.lastResultSummary?.error ?? '', /timed out/);
+
+      global.fetch = mockFetch({ data: [{ id: 'gpt-4o' }] });
+
+      const recovery = await manager.syncProvider({
+        provider: PROVIDER_TYPE.OPENAI,
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-test',
+        autoSyncIntervalMs: 24 * 60 * 60 * 1000,
+        upstreamTimeoutMs: 10,
+      });
+
+      assert.strictEqual(recovery.modelsFound.length, 1);
+      assert.strictEqual(manager.getRunStatus(PROVIDER_TYPE.OPENAI).isRunning, false);
+    });
   });
 
   describe('auto-sync', () => {
@@ -455,6 +501,41 @@ describe('ModelSyncManager', () => {
 
       manager.stopAllAutoSync();
       assert.strictEqual(manager.getRunningAutoSyncProviders().length, 0);
+    });
+
+    it('should serialize auto-sync runs without overlap noise', async () => {
+      let activeRuns = 0;
+      let maxActiveRuns = 0;
+      let runCount = 0;
+
+      manager.syncProvider = async () => {
+        runCount++;
+        activeRuns++;
+        maxActiveRuns = Math.max(maxActiveRuns, activeRuns);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        activeRuns--;
+
+        return {
+          provider: PROVIDER_TYPE.OPENAI,
+          timestamp: Date.now(),
+          modelsFound: [],
+          modelsAdded: [],
+          modelsRemoved: [],
+        };
+      };
+
+      manager.startAutoSync({
+        provider: PROVIDER_TYPE.OPENAI,
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-test',
+        autoSyncIntervalMs: 10,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 130));
+      manager.stopAutoSync(PROVIDER_TYPE.OPENAI);
+
+      assert.strictEqual(maxActiveRuns, 1);
+      assert.ok(runCount <= 3, `expected serialized scheduling, saw ${runCount} runs`);
     });
   });
 

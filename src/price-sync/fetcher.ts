@@ -6,6 +6,8 @@
 
 import { ModelPrice, DEFAULT_CURRENCY } from './types.js';
 
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
+
 // === Models.dev Response Types ===
 
 interface ModelsDevPricing {
@@ -30,8 +32,21 @@ interface ModelsDevResponse {
 export class PriceFetcher {
   private readonly modelsDevUrl = 'https://models.dev/api.json';
 
-  async fetchPrices(): Promise<ModelPrice[]> {
-    const response = await fetch(this.modelsDevUrl);
+  async fetchPrices(timeoutMs: number = DEFAULT_UPSTREAM_TIMEOUT_MS): Promise<ModelPrice[]> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(this.modelsDevUrl, { signal: controller.signal });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Upstream price fetch timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
       throw new Error(`Failed to fetch prices: ${response.status}`);

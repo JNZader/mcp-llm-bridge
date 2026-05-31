@@ -14,16 +14,41 @@ import {
 // === Abstract Interface ===
 
 export interface ModelFetcher {
-  fetchModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]>;
+  fetchModels(baseUrl: string, apiKey: string, timeoutMs?: number): Promise<ModelInfo[]>;
+}
+
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
+
+async function fetchWithTimeout(
+  input: string | URL,
+  init: RequestInit,
+  timeoutMs: number = DEFAULT_UPSTREAM_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Upstream model fetch timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // === OpenAI-Style Fetcher (works for OpenAI, Groq, OpenRouter) ===
 
 export class OpenAIModelFetcher implements ModelFetcher {
-  async fetchModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]> {
-    const response = await fetch(`${baseUrl}/models`, {
+  async fetchModels(baseUrl: string, apiKey: string, timeoutMs?: number): Promise<ModelInfo[]> {
+    const response = await fetchWithTimeout(`${baseUrl}/models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
-    });
+    }, timeoutMs);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch models: ${response.status}`);
@@ -63,10 +88,10 @@ export class OpenAIModelFetcher implements ModelFetcher {
 // === Anthropic Fetcher ===
 
 export class AnthropicModelFetcher implements ModelFetcher {
-  async fetchModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]> {
-    const response = await fetch(`${baseUrl}/models`, {
+  async fetchModels(baseUrl: string, apiKey: string, timeoutMs?: number): Promise<ModelInfo[]> {
+    const response = await fetchWithTimeout(`${baseUrl}/models`, {
       headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json' },
-    });
+    }, timeoutMs);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch models: ${response.status}`);
@@ -106,7 +131,7 @@ export class AnthropicModelFetcher implements ModelFetcher {
 // === Gemini Fetcher (paginated) ===
 
 export class GeminiModelFetcher implements ModelFetcher {
-  async fetchModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]> {
+  async fetchModels(baseUrl: string, apiKey: string, timeoutMs?: number): Promise<ModelInfo[]> {
     const models: ModelInfo[] = [];
     let pageToken: string | undefined;
 
@@ -115,7 +140,7 @@ export class GeminiModelFetcher implements ModelFetcher {
       url.searchParams.set('key', apiKey);
       if (pageToken) url.searchParams.set('pageToken', pageToken);
 
-      const response = await fetch(url);
+      const response = await fetchWithTimeout(url, {}, timeoutMs);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch models: ${response.status}`);

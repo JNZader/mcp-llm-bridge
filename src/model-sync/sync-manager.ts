@@ -41,7 +41,8 @@ export class ModelSyncAlreadyRunningError extends Error {
 
 export class ModelSyncManager {
   private db: Database;
-  private syncTimers: Map<ProviderType, NodeJS.Timeout> = new Map();
+  private autoSyncStates: Map<ProviderType, { timer?: NodeJS.Timeout; stopped: boolean }> =
+    new Map();
   private static runStates: Map<ProviderType, ModelSyncRunStatus> = new Map();
 
   constructor(db: Database) {
@@ -113,7 +114,11 @@ export class ModelSyncManager {
       }
 
       // Fetch models from provider
-      const models = await fetcher.fetchModels(config.baseUrl, config.apiKey);
+      const models = await fetcher.fetchModels(
+        config.baseUrl,
+        config.apiKey,
+        config.upstreamTimeoutMs
+      );
 
       // Filter by regex if provided
       const filteredModels = this.filterByRegex(models, config.matchRegex);
@@ -323,28 +328,43 @@ export class ModelSyncManager {
    * Start auto-sync for provider
    */
   startAutoSync(config: ModelSyncConfig): void {
-    // Stop existing timer if any
     this.stopAutoSync(config.provider);
 
-    // Run immediately
-    this.syncProvider(config).catch(console.error);
+    const state: { timer?: NodeJS.Timeout; stopped: boolean } = { stopped: false };
+    this.autoSyncStates.set(config.provider, state);
 
-    // Schedule periodic sync
-    const timer = setInterval(() => {
-      this.syncProvider(config).catch(console.error);
-    }, config.autoSyncIntervalMs);
+    const scheduleNext = (delayMs: number): void => {
+      if (state.stopped || this.autoSyncStates.get(config.provider) !== state) {
+        return;
+      }
 
-    this.syncTimers.set(config.provider, timer);
+      state.timer = setTimeout(async () => {
+        try {
+          await this.syncProvider(config);
+        } catch (error) {
+          if (!(error instanceof ModelSyncAlreadyRunningError)) {
+            console.error(error);
+          }
+        } finally {
+          scheduleNext(config.autoSyncIntervalMs);
+        }
+      }, delayMs);
+    };
+
+    scheduleNext(0);
   }
 
   /**
    * Stop auto-sync for provider
    */
   stopAutoSync(provider: ProviderType): void {
-    const timer = this.syncTimers.get(provider);
-    if (timer) {
-      clearInterval(timer);
-      this.syncTimers.delete(provider);
+    const state = this.autoSyncStates.get(provider);
+    if (state) {
+      state.stopped = true;
+      if (state.timer) {
+        clearTimeout(state.timer);
+      }
+      this.autoSyncStates.delete(provider);
     }
   }
 
@@ -352,9 +372,8 @@ export class ModelSyncManager {
    * Stop all auto-sync timers
    */
   stopAllAutoSync(): void {
-    for (const [provider, timer] of this.syncTimers) {
-      clearInterval(timer);
-      this.syncTimers.delete(provider);
+    for (const provider of this.autoSyncStates.keys()) {
+      this.stopAutoSync(provider);
     }
   }
 
@@ -451,14 +470,14 @@ export class ModelSyncManager {
    * Check if auto-sync is running for provider
    */
   isAutoSyncRunning(provider: ProviderType): boolean {
-    return this.syncTimers.has(provider);
+    return this.autoSyncStates.has(provider);
   }
 
   /**
    * Get all running auto-sync providers
    */
   getRunningAutoSyncProviders(): ProviderType[] {
-    return Array.from(this.syncTimers.keys());
+    return Array.from(this.autoSyncStates.keys());
   }
 
   getRunStatus(provider: ProviderType): ModelSyncRunStatus {

@@ -17,6 +17,7 @@ import {
   PriceSyncResultSummary,
   DEFAULT_CURRENCY,
   DEFAULT_SYNC_INTERVAL_MS,
+  DEFAULT_UPSTREAM_TIMEOUT_MS,
 } from './types.js';
 import { createPriceFetcher } from './fetcher.js';
 
@@ -47,7 +48,7 @@ export class PriceSyncAlreadyRunningError extends Error {
 export class PriceManager {
   private db: Database;
   private prices: Map<string, ModelPrice>; // Cache: "provider:modelId"
-  private syncTimer?: NodeJS.Timeout;
+  private autoSyncState?: { timer?: NodeJS.Timeout; stopped: boolean };
   private config: PriceSyncConfig;
   private static runStatus: PriceSyncRunStatus = {
     isRunning: false,
@@ -64,6 +65,7 @@ export class PriceManager {
     this.config = {
       autoSyncIntervalMs: config?.autoSyncIntervalMs ?? DEFAULT_SYNC_INTERVAL_MS,
       defaultCurrency: config?.defaultCurrency ?? DEFAULT_CURRENCY,
+      upstreamTimeoutMs: config?.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS,
     };
     this.refreshCache();
   }
@@ -108,7 +110,7 @@ export class PriceManager {
 
     const fetcher = createPriceFetcher();
     try {
-      const upstreamPrices = await fetcher.fetchPrices();
+      const upstreamPrices = await fetcher.fetchPrices(this.config.upstreamTimeoutMs);
 
       let updated = 0;
       let added = 0;
@@ -347,27 +349,43 @@ export class PriceManager {
    * Start auto-sync
    */
   startAutoSync(intervalMs?: number): void {
-    // Stop existing timer if any
     this.stopAutoSync();
 
     const interval = intervalMs ?? this.config.autoSyncIntervalMs;
+    const state: { timer?: NodeJS.Timeout; stopped: boolean } = { stopped: false };
+    this.autoSyncState = state;
 
-    // Run immediately
-    this.syncFromUpstream().catch(console.error);
+    const scheduleNext = (delayMs: number): void => {
+      if (state.stopped || this.autoSyncState !== state) {
+        return;
+      }
 
-    // Schedule periodic sync
-    this.syncTimer = setInterval(() => {
-      this.syncFromUpstream().catch(console.error);
-    }, interval);
+      state.timer = setTimeout(async () => {
+        try {
+          await this.syncFromUpstream();
+        } catch (error) {
+          if (!(error instanceof PriceSyncAlreadyRunningError)) {
+            console.error(error);
+          }
+        } finally {
+          scheduleNext(interval);
+        }
+      }, delayMs);
+    };
+
+    scheduleNext(0);
   }
 
   /**
    * Stop auto-sync
    */
   stopAutoSync(): void {
-    if (this.syncTimer) {
-      clearInterval(this.syncTimer);
-      this.syncTimer = undefined;
+    if (this.autoSyncState) {
+      this.autoSyncState.stopped = true;
+      if (this.autoSyncState.timer) {
+        clearTimeout(this.autoSyncState.timer);
+      }
+      this.autoSyncState = undefined;
     }
   }
 
@@ -375,7 +393,7 @@ export class PriceManager {
    * Check if auto-sync is running
    */
   isAutoSyncRunning(): boolean {
-    return this.syncTimer !== undefined;
+    return this.autoSyncState !== undefined;
   }
 
   /**

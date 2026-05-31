@@ -5,7 +5,7 @@
  * Following Red → Green → Refactor cycle
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
@@ -194,16 +194,31 @@ function mockFetchError(status: number): typeof fetch {
   } as Response);
 }
 
+function mockAbortableFetch(): typeof fetch {
+  return ((_input: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+    })) as typeof fetch;
+}
+
 // === Tests ===
 
 describe('PriceManager', () => {
   let db: Database;
   let manager: PriceManager;
+  const originalFetch = global.fetch;
 
   beforeEach(() => {
     db = createMockDatabase();
     PriceManager.resetRuntimeState();
     manager = createPriceManager(db);
+  });
+
+  afterEach(() => {
+    manager.stopAutoSync();
+    global.fetch = originalFetch;
   });
 
   describe('syncFromUpstream', () => {
@@ -398,6 +413,40 @@ describe('PriceManager', () => {
       assert.strictEqual(status.lastSuccessAt, null);
       assert.match(status.lastError ?? '', /Failed to fetch prices/);
       assert.match(status.lastResultSummary?.error ?? '', /Failed to fetch prices/);
+
+      global.fetch = mockFetch({
+        providers: {
+          openai: {
+            'gpt-4o': {
+              name: 'GPT-4o',
+              input: { price: 2.5, currency: 'USD' },
+              output: { price: 10.0, currency: 'USD' },
+            },
+          },
+        },
+      });
+
+      const recovery = await manager.syncFromUpstream();
+      assert.strictEqual(recovery.added, 1);
+      assert.strictEqual(manager.getRunStatus().isRunning, false);
+    });
+
+    it('should release the lock and capture timeout status after upstream timeout', async () => {
+      global.fetch = mockAbortableFetch();
+      manager = createPriceManager(db, { upstreamTimeoutMs: 10 });
+
+      await assert.rejects(
+        async () => manager.syncFromUpstream(),
+        /timed out/
+      );
+
+      const status = manager.getRunStatus();
+      assert.strictEqual(status.isRunning, false);
+      assert.strictEqual(status.startedAt, null);
+      assert.ok(status.lastCompletedAt);
+      assert.strictEqual(status.lastSuccessAt, null);
+      assert.match(status.lastError ?? '', /timed out/);
+      assert.match(status.lastResultSummary?.error ?? '', /timed out/);
 
       global.fetch = mockFetch({
         providers: {
@@ -615,6 +664,30 @@ describe('PriceManager', () => {
           resolve();
         }, 250);
       });
+    });
+
+    it('should serialize auto-sync runs without overlap noise', async () => {
+      let activeRuns = 0;
+      let maxActiveRuns = 0;
+      let runCount = 0;
+
+      manager.syncFromUpstream = async () => {
+        runCount++;
+        activeRuns++;
+        maxActiveRuns = Math.max(maxActiveRuns, activeRuns);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        activeRuns--;
+
+        return { updated: 0, added: 0, unchanged: 0, timestamp: Date.now() };
+      };
+
+      manager.startAutoSync(10);
+
+      await new Promise((resolve) => setTimeout(resolve, 130));
+      manager.stopAutoSync();
+
+      assert.strictEqual(maxActiveRuns, 1);
+      assert.ok(runCount <= 3, `expected serialized scheduling, saw ${runCount} runs`);
     });
   });
 
