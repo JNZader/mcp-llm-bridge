@@ -27,6 +27,7 @@ import { bootstrapFreeModels } from "./bootstrap/free-models.js";
 import { bootstrapLatencyRouting } from "./bootstrap/latency.js";
 import { bootstrapLocalLLM } from "./bootstrap/local-llm.js";
 import { bootstrapModelRouting } from "./bootstrap/model-routing.js";
+import { setupGracefulShutdown } from "./bootstrap/shutdown.js";
 import { loadConfig } from "./core/config.js";
 import { initMetrics } from "./core/metrics.js";
 import { Router } from "./core/router.js";
@@ -118,31 +119,18 @@ const { approvalStore, pageIndexTools } = createToolingServices({
 // ── Local LLM Provider + HF Auto-Discovery ───────────────
 await bootstrapLocalLLM(router, db);
 
-/**
- * Graceful shutdown handler.
- * Closes the vault database connection, provider homes, and tracing on exit.
- */
-async function setupGracefulShutdown(vault: Vault): Promise<void> {
-	const cleanup = async (signal: string) => {
-		logger.info({ signal }, "Shutting down");
-		compressor.destroy();
-		latencyMeasurer.stopBackgroundTask();
-		freeModelRouter.destroy();
-		costTracker.destroy();
-		groupStore.close();
-		sessionManager.destroy();
-		cleanupAllProviderHomes();
-		vault.destroy();
-		await shutdownTracing();
-		process.exit(0);
-	};
-
-	process.on("SIGINT", () => cleanup("SIGINT"));
-	process.on("SIGTERM", () => cleanup("SIGTERM"));
-}
-
 // Setup graceful shutdown
-await setupGracefulShutdown(vault);
+await setupGracefulShutdown({
+	compressor,
+	latencyMeasurer,
+	freeModelRouter,
+	costTracker,
+	groupStore,
+	sessionManager,
+	vault,
+	cleanupAllProviderHomes,
+	shutdownTracing,
+});
 
 // Initialize comparison service
 const maxComparisonCostUsd = getMaxComparisonCostUsdFromEnv();
