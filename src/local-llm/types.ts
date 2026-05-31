@@ -48,6 +48,48 @@ export interface DetectionResult {
   error?: string;
 }
 
+export const LOCAL_LLM_STATUS_SOURCE = {
+  CACHE: 'cache',
+  PROBE: 'probe',
+  IN_FLIGHT: 'in-flight',
+  DISABLED: 'disabled',
+} as const;
+
+export type LocalLLMStatusSource =
+  (typeof LOCAL_LLM_STATUS_SOURCE)[keyof typeof LOCAL_LLM_STATUS_SOURCE];
+
+/**
+ * Backend-level operational status for local LLM detection.
+ */
+export interface LocalLLMStatusBackend extends DetectionResult {
+  /** Number of models exposed by this backend. */
+  modelCount: number;
+}
+
+/**
+ * Shared operational snapshot for local LLM visibility.
+ */
+export interface LocalLLMStatus {
+  /** Whether local LLM usage is enabled by config/runtime. */
+  enabled: boolean;
+  /** True when local LLM is enabled and at least one model is ready. */
+  ready: boolean;
+  /** ISO timestamp for when this snapshot was created. */
+  checkedAt: string;
+  /** Where the snapshot data came from. */
+  source: LocalLLMStatusSource;
+  /** True when the detection results were served from cache. */
+  cacheHit: boolean;
+  /** Number of backends represented in the snapshot. */
+  backendCount: number;
+  /** Number of connected backends. */
+  connectedBackendCount: number;
+  /** Total models discovered across all backends. */
+  modelCount: number;
+  /** Per-backend details. */
+  backends: LocalLLMStatusBackend[];
+}
+
 /**
  * Task classification result with offloading recommendation.
  */

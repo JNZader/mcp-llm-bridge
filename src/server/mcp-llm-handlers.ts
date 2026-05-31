@@ -1,19 +1,39 @@
 import type { Router } from '../core/router.js';
 import type { BridgeOrchestrator } from '../bridge/orchestrator.js';
 import type { Vault } from '../vault/vault.js';
-import { detectLocalLLMs, pickBestLocalModel } from '../local-llm/detector.js';
+import { getLocalLLMStatus, pickBestLocalModel } from '../local-llm/detector.js';
 import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
 import { discoverModels } from '../model-discovery/discovery.js';
 import { getLocalLLMUrls, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
-import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
+import { DEFAULT_LOCAL_LLM_CONFIG, type LocalLLMStatus } from '../local-llm/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
 
 function jsonResult(payload: unknown, isError?: boolean): McpToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(payload) }],
     ...(isError ? { isError: true } : {}),
+  };
+}
+
+function toSlimLocalLLMStatus(status: LocalLLMStatus) {
+  return {
+    enabled: status.enabled,
+    ready: status.ready,
+    checkedAt: status.checkedAt,
+    source: status.source,
+    cacheHit: status.cacheHit,
+    backendCount: status.backendCount,
+    connectedBackendCount: status.connectedBackendCount,
+    modelCount: status.modelCount,
+    backends: status.backends.map((backend) => ({
+      backend: backend.backend,
+      status: backend.status,
+      baseUrl: backend.baseUrl,
+      error: backend.error,
+      modelCount: backend.modelCount,
+    })),
   };
 }
 
@@ -60,16 +80,30 @@ export async function handleLocalLlmGenerateTool(
   const maxTokens = args['maxTokens'] as number | undefined;
 
   if (!localLLMEnabled()) {
+    const localLLMStatus = await getLocalLLMStatus(
+      { enabled: false, ...getLocalLLMUrls() },
+      { skipDetectionWhenDisabled: true },
+    );
     const result = await router.generate({ prompt, system, maxTokens });
-    return jsonResult({ ...result, backend: 'cloud', reason: 'LOCAL_LLM_ENABLED=false' });
+    return jsonResult({
+      ...result,
+      backend: 'cloud',
+      reason: 'LOCAL_LLM_ENABLED=false',
+      localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
+    });
   }
 
-  const detections = await detectLocalLLMs();
-  const localModel = pickBestLocalModel(detections, preferredModel);
+  const localLLMStatus = await getLocalLLMStatus({ enabled: true, ...getLocalLLMUrls() });
+  const localModel = pickBestLocalModel(localLLMStatus.backends, preferredModel);
 
   if (!localModel) {
     const result = await router.generate({ prompt, system, maxTokens });
-    return jsonResult({ ...result, backend: 'cloud', reason: 'No local models available' });
+    return jsonResult({
+      ...result,
+      backend: 'cloud',
+      reason: 'No local models available',
+      localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
+    });
   }
 
   const classification = classifyForOffload(prompt);
@@ -80,6 +114,7 @@ export async function handleLocalLlmGenerateTool(
       ...result,
       backend: 'cloud',
       reason: `Task not offloadable: ${classification.reason}`,
+      localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
     });
   }
 
@@ -104,6 +139,7 @@ export async function handleLocalLlmGenerateTool(
         backend: 'cloud',
         fallbackUsed: true,
         fallbackReason: `Local LLM failed: ${error.message}`,
+        localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
       });
     }
     throw error;

@@ -75,6 +75,8 @@ describe('local_llm_generate MCP tool', () => {
     assert.equal(result.isError, undefined);
     const text = JSON.parse(result.content[0]!.text);
     assert.equal(text.backend, 'cloud');
+    assert.equal(text.localLLMStatus.enabled, false);
+    assert.equal(text.localLLMStatus.source, 'disabled');
   });
 
   it('returns cloud fallback when no local models available', async () => {
@@ -84,6 +86,8 @@ describe('local_llm_generate MCP tool', () => {
     const text = JSON.parse(result.content[0]!.text);
     assert.equal(text.backend, 'cloud');
     assert.ok(text.reason?.includes('No local models available'));
+    assert.equal(typeof text.localLLMStatus.checkedAt, 'string');
+    assert.equal(typeof text.localLLMStatus.backendCount, 'number');
   });
 
   it('returns cloud fallback for non-offloadable task', async () => {
@@ -96,6 +100,7 @@ describe('local_llm_generate MCP tool', () => {
     assert.equal(text.backend, 'cloud');
     // Should route to cloud because complex tasks are not offloadable
     assert.equal(text.provider, 'mock-cloud');
+    assert.equal(typeof text.localLLMStatus.modelCount, 'number');
   });
 });
 

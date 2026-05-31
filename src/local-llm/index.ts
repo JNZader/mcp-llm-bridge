@@ -24,6 +24,7 @@ export { type TaskType } from '../classification/index.js';
 // Detection
 export {
   detectLocalLLMs,
+  getLocalLLMStatus,
   pickBestLocalModel,
   parseParameterSize,
 } from './detector.js';

@@ -11,8 +11,11 @@ import type {
   LocalLLMConfig,
   DetectionResult,
   LocalModel,
+  LocalLLMStatus,
+  LocalLLMStatusBackend,
+  LocalLLMStatusSource,
 } from './types.js';
-import { DEFAULT_LOCAL_LLM_CONFIG } from './types.js';
+import { DEFAULT_LOCAL_LLM_CONFIG, LOCAL_LLM_STATUS_SOURCE } from './types.js';
 
 const DEFAULT_SUCCESS_CACHE_TTL_MS = 5000;
 const DEFAULT_FAILURE_CACHE_TTL_MS = 1500;
@@ -27,6 +30,10 @@ export interface DetectLocalLLMsOptions {
   forceRefresh?: boolean;
   successCacheTtlMs?: number;
   failureCacheTtlMs?: number;
+}
+
+export interface GetLocalLLMStatusOptions extends DetectLocalLLMsOptions {
+  skipDetectionWhenDisabled?: boolean;
 }
 
 const detectionCache = new Map<string, LocalLLMDetectionCacheEntry>();
@@ -61,6 +68,72 @@ function getCacheKey(config: LocalLLMConfig): string {
 
 function hasAvailableModels(results: DetectionResult[]): boolean {
   return results.some((result) => result.status === 'connected' && result.models.length > 0);
+}
+
+function getStatusSource(
+  config: LocalLLMConfig,
+  options?: DetectLocalLLMsOptions,
+): LocalLLMStatusSource {
+  if (options?.forceRefresh) {
+    return LOCAL_LLM_STATUS_SOURCE.PROBE;
+  }
+
+  const cached = detectionCache.get(getCacheKey(config));
+  const now = Date.now();
+
+  if (cached?.results && cached.expiresAt > now) {
+    return LOCAL_LLM_STATUS_SOURCE.CACHE;
+  }
+
+  if (cached?.inFlight) {
+    return LOCAL_LLM_STATUS_SOURCE.IN_FLIGHT;
+  }
+
+  return LOCAL_LLM_STATUS_SOURCE.PROBE;
+}
+
+function buildDisabledDetectionResults(config: LocalLLMConfig): DetectionResult[] {
+  return [
+    {
+      backend: 'ollama',
+      status: 'disconnected',
+      baseUrl: config.ollamaUrl,
+      models: [],
+      error: 'Detection skipped because local LLM is disabled',
+    },
+    {
+      backend: 'lm-studio',
+      status: 'disconnected',
+      baseUrl: config.lmStudioUrl,
+      models: [],
+      error: 'Detection skipped because local LLM is disabled',
+    },
+  ];
+}
+
+function buildLocalLLMStatus(
+  config: LocalLLMConfig,
+  results: DetectionResult[],
+  source: LocalLLMStatusSource,
+): LocalLLMStatus {
+  const backends: LocalLLMStatusBackend[] = results.map((result) => ({
+    ...result,
+    modelCount: result.models.length,
+  }));
+  const connectedBackendCount = backends.filter((backend) => backend.status === 'connected').length;
+  const modelCount = backends.reduce((total, backend) => total + backend.modelCount, 0);
+
+  return {
+    enabled: config.enabled,
+    ready: config.enabled && modelCount > 0,
+    checkedAt: new Date().toISOString(),
+    source,
+    cacheHit: source === LOCAL_LLM_STATUS_SOURCE.CACHE,
+    backendCount: backends.length,
+    connectedBackendCount,
+    modelCount,
+    backends,
+  };
 }
 
 async function runDetections(config: LocalLLMConfig): Promise<DetectionResult[]> {
@@ -241,6 +314,25 @@ export async function detectLocalLLMs(
   });
 
   return inFlight;
+}
+
+export async function getLocalLLMStatus(
+  config?: Partial<LocalLLMConfig>,
+  options?: GetLocalLLMStatusOptions,
+): Promise<LocalLLMStatus> {
+  const cfg = { ...DEFAULT_LOCAL_LLM_CONFIG, ...config };
+
+  if (!cfg.enabled && options?.skipDetectionWhenDisabled) {
+    return buildLocalLLMStatus(
+      cfg,
+      buildDisabledDetectionResults(cfg),
+      LOCAL_LLM_STATUS_SOURCE.DISABLED,
+    );
+  }
+
+  const source = getStatusSource(cfg, options);
+  const results = await detectLocalLLMs(cfg, options);
+  return buildLocalLLMStatus(cfg, results, source);
 }
 
 export function resetLocalLLMDetectionCache(): void {

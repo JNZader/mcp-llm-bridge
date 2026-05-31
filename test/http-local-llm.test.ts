@@ -103,16 +103,33 @@ async function request(
 // ── Tests ────────────────────────────────────────────────
 
 describe('GET /v1/local/models', () => {
-  it('returns backends array with ollama and lm-studio', async () => {
+  it('returns an operator-facing status snapshot with ollama and lm-studio backends', async () => {
     const res = await request('GET', '/v1/local/models');
     assert.equal(res.status, 200);
-    const body = res.body as { backends: Array<{ backend: string; status: string; models: unknown[] }> };
+    const body = res.body as {
+      enabled: boolean;
+      ready: boolean;
+      checkedAt: string;
+      backendCount: number;
+      connectedBackendCount: number;
+      modelCount: number;
+      backends: Array<{ backend: string; status: string; baseUrl: string; modelCount: number; models: unknown[] }>;
+    };
+
+    assert.equal(typeof body.enabled, 'boolean');
+    assert.equal(typeof body.ready, 'boolean');
+    assert.equal(typeof body.checkedAt, 'string');
+    assert.equal(typeof body.backendCount, 'number');
+    assert.equal(typeof body.connectedBackendCount, 'number');
+    assert.equal(typeof body.modelCount, 'number');
     assert.ok(Array.isArray(body.backends));
     assert.equal(body.backends.length, 2);
 
     const backends = body.backends.map((b) => b.backend);
     assert.ok(backends.includes('ollama'));
     assert.ok(backends.includes('lm-studio'));
+    assert.ok(body.backends.every((backend) => typeof backend.baseUrl === 'string'));
+    assert.ok(body.backends.every((backend) => typeof backend.modelCount === 'number'));
   });
 
   it('returns disconnected status when no local LLM is running', async () => {

@@ -1,6 +1,8 @@
 import type { Hono } from "hono";
 
-import { detectLocalLLMs } from "../../local-llm/detector.js";
+import { getLocalLLMUrls } from "../../core/local-llm-env.js";
+import { localLLMEnabled } from "../../core/runtime-flags.js";
+import { getLocalLLMStatus } from "../../local-llm/detector.js";
 import { createCatalogFromMcpTools, type ToolSource } from "../../tool-catalog/index.js";
 import { getRuntimeMcpTools } from "../mcp.js";
 
@@ -59,13 +61,11 @@ export function registerToolingRoutes(app: Hono): void {
 
 	app.get("/v1/local/models", async (c) => {
 		try {
-			const results = await detectLocalLLMs();
-			const backends = results.map((r) => ({
-				backend: r.backend,
-				status: r.status,
-				models: r.models,
-			}));
-			return c.json({ backends });
+			const status = await getLocalLLMStatus({
+				enabled: localLLMEnabled(),
+				...getLocalLLMUrls(),
+			});
+			return c.json(status);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json({ error: message }, 500);

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   detectLocalLLMs,
+  getLocalLLMStatus,
   parseParameterSize,
   pickBestLocalModel,
   resetLocalLLMDetectionCache,
@@ -236,5 +237,60 @@ describe('detectLocalLLMs cache hardening', () => {
     assert.equal(first[0]?.models[0]?.id, 'model-1');
     assert.equal(refreshed[0]?.models[0]?.id, 'model-2');
     assert.equal(fetchMock.mock.callCount(), 4);
+  });
+});
+
+describe('getLocalLLMStatus', () => {
+  it('returns an aggregated operational snapshot and reports cache reuse', async () => {
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'qwen2.5-coder:7b', details: { parameter_size: '7B' } }] });
+      }
+
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [{ id: 'deepseek-coder-6.7b' }] });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    const first = await getLocalLLMStatus(undefined, { successCacheTtlMs: 50, failureCacheTtlMs: 25 });
+    const second = await getLocalLLMStatus(undefined, { successCacheTtlMs: 50, failureCacheTtlMs: 25 });
+
+    assert.equal(first.enabled, true);
+    assert.equal(first.ready, true);
+    assert.equal(first.source, 'probe');
+    assert.equal(first.cacheHit, false);
+    assert.equal(first.backendCount, 2);
+    assert.equal(first.connectedBackendCount, 2);
+    assert.equal(first.modelCount, 2);
+    assert.equal(typeof first.checkedAt, 'string');
+    assert.equal(first.backends[0]?.modelCount, 1);
+
+    assert.equal(second.source, 'cache');
+    assert.equal(second.cacheHit, true);
+    assert.equal(fetchMock.mock.callCount(), 2);
+  });
+
+  it('can return a disabled snapshot without probing', async () => {
+    const fetchMock = mock.fn(async () => jsonResponse({ models: [] }));
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    const status = await getLocalLLMStatus(
+      { enabled: false },
+      { skipDetectionWhenDisabled: true },
+    );
+
+    assert.equal(status.enabled, false);
+    assert.equal(status.ready, false);
+    assert.equal(status.source, 'disabled');
+    assert.equal(status.cacheHit, false);
+    assert.equal(status.backendCount, 2);
+    assert.equal(status.connectedBackendCount, 0);
+    assert.equal(status.modelCount, 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
   });
 });
