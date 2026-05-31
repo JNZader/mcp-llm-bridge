@@ -10,6 +10,24 @@ import { resolveRequestProject } from "./request-validation.js";
 export const CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED =
 	"At least one user message is required";
 
+function getOptionalCanonicalString(
+	request: CanonicalRequest | ChatCompletionsRequest,
+	key: string,
+): string | undefined {
+	if (!(key in request)) return undefined;
+	const value = (request as Record<string, unknown>)[key];
+	return typeof value === "string" ? value : undefined;
+}
+
+function getOptionalCanonicalBoolean(
+	request: CanonicalRequest | ChatCompletionsRequest,
+	key: string,
+): boolean {
+	if (!(key in request)) return false;
+	const value = (request as Record<string, unknown>)[key];
+	return value === true;
+}
+
 export function buildChatGenerateRequest(
 	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
 	project?: string,
@@ -56,10 +74,12 @@ export function buildChatGenerateRequest(
 		system,
 		model: canonicalRequest.model,
 		maxTokens: canonicalRequest.max_tokens,
-		...(typeof canonicalRequest["provider"] === "string"
-			? { provider: canonicalRequest["provider"] }
+		...(typeof getOptionalCanonicalString(canonicalRequest, "provider") === "string"
+			? { provider: getOptionalCanonicalString(canonicalRequest, "provider") }
 			: {}),
-		...(canonicalRequest["strict"] === true ? { strict: true } : {}),
+		...(getOptionalCanonicalBoolean(canonicalRequest, "strict")
+			? { strict: true }
+			: {}),
 		project,
 	};
 }
