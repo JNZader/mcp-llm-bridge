@@ -1,3 +1,5 @@
+import { circuitBreakerEnabled } from './runtime-flags.js';
+
 /**
  * Circuit Breaker pattern implementation for provider resilience.
  *
@@ -248,7 +250,7 @@ export class CircuitBreakerRegistry {
   private defaultConfig: Partial<CircuitBreakerConfig> = {};
 
   constructor(enabled = true) {
-    this.enabled = enabled && process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] !== 'false';
+    this.enabled = enabled && circuitBreakerEnabled();
   }
 
   /**

@@ -192,6 +192,26 @@ describe('CircuitBreakerRegistry', () => {
     assert.equal(registry.canRequest('provider-a'), true);
   });
 
+  it('uses the shared runtime flag when env disables the registry', () => {
+    const original = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'false';
+
+    try {
+      const registry = new CircuitBreakerRegistry();
+      const breaker = registry.get('provider-a');
+      breaker.forceState(CircuitState.OPEN);
+
+      assert.equal(registry.isEnabled(), false);
+      assert.equal(registry.canRequest('provider-a'), true);
+    } finally {
+      if (original === undefined) {
+        delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      } else {
+        process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = original;
+      }
+    }
+  });
+
   it('getAllStats returns stats for all registered breakers', () => {
     const registry = new CircuitBreakerRegistry();
     registry.get('a');
