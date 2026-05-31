@@ -6,6 +6,7 @@ import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { Vault } from "../../vault/vault.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
+import { buildChatGenerateRequest } from "../http-helpers/chat-request.js";
 import { buildProviderStreamCall } from "./provider-stream-client.js";
 import {
 	createStreamingRequestLogFinalizer,
@@ -71,20 +72,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 			if (resolvedCandidates.length === 0) {
 				let result: GenerateResponse;
 				try {
-					result = await router.generate({
-						prompt: canonical.messages
-							.filter((message) => message.role !== "system")
-							.map((message) => message.content)
-							.join("\n"),
-						system:
-							canonical.messages
-								.filter((message) => message.role === "system")
-								.map((message) => message.content)
-								.join("\n") || undefined,
-						model: canonical.model,
-						maxTokens: canonical.max_tokens,
-						project,
-					});
+					result = await router.generate(buildChatGenerateRequest(canonical, project));
 				} catch (error) {
 					await finalizeRequestLog({
 						error: normalizeStreamingError(error),

@@ -576,30 +576,49 @@ describe('GET /v1/logs', () => {
       const streamModel = 'stream-fallback-model';
       const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
       const originalGenerate = router.generate.bind(router);
+      let observedRequest: Record<string, unknown> | undefined;
+
+      const messages = [
+        { role: 'system', content: 'You are terse.' },
+        { role: 'user', content: 'First question' },
+        { role: 'assistant', content: 'First answer' },
+        { role: 'user', content: 'Second question' },
+      ];
 
       (router as any).resolveStreamingProviders = async () => [];
-      (router as any).generate = async () => ({
-        text: 'Fallback response',
-        model: streamModel,
-        tokensUsed: 5,
-        requestedProvider: 'mock-fallback',
-        requestedModel: streamModel,
-        resolvedProvider: 'mock-fallback',
-        resolvedModel: streamModel,
-      });
+      (router as any).generate = async (request: Record<string, unknown>) => {
+        observedRequest = request;
+        return {
+          text: 'Fallback response',
+          model: streamModel,
+          tokensUsed: 5,
+          requestedProvider: 'mock-fallback',
+          requestedModel: streamModel,
+          resolvedProvider: 'mock-fallback',
+          resolvedModel: streamModel,
+        };
+      };
 
       try {
         const res = await requestText('POST', '/v1/chat/completions', {
           body: {
             model: streamModel,
-            messages: [{ role: 'user', content: 'Hello fallback' }],
+            messages,
             stream: true,
           },
         });
 
         assert.equal(res.status, 200);
+        assert.match(res.data, /"object":"chat\.completion\.chunk"/);
         assert.match(res.data, /Fallback response/);
         assert.match(res.data, /data: \[DONE\]/);
+        assert.deepEqual(observedRequest, {
+          prompt: 'user: First question\nassistant: First answer\nuser: Second question',
+          system: 'You are terse.',
+          model: streamModel,
+          maxTokens: undefined,
+          project: undefined,
+        });
 
         const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
         assert.equal(logsRes.status, 200);

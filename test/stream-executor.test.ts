@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { GenerateResponse } from "../src/core/types.js";
+import { buildChatGenerateRequest } from "../src/server/http-helpers/chat-request.js";
 import { createStreamExecutor } from "../src/server/streaming/stream-executor.js";
 import type { InternalLLMChunk } from "../src/transformers/streaming.js";
 
@@ -16,6 +17,17 @@ function createCanonicalRequest() {
 describe("createStreamExecutor", () => {
 	it("falls back to router.generate when no streaming providers resolve", async () => {
 		const events: string[] = [];
+		const canonical = {
+			model: "test-model",
+			messages: [
+				{ role: "system" as const, content: "You are terse." },
+				{ role: "user" as const, content: "First question" },
+				{ role: "assistant" as const, content: "First answer" },
+				{ role: "user" as const, content: "Second question" },
+			],
+			stream: true,
+			max_tokens: 128,
+		};
 		const fallbackResult: GenerateResponse = {
 			text: "fallback",
 			provider: "mock",
@@ -25,13 +37,18 @@ describe("createStreamExecutor", () => {
 			fallbackUsed: false,
 			tokensUsed: 3,
 		};
+		const generateRequests: unknown[] = [];
 
 		const executor = createStreamExecutor({
-			canonical: createCanonicalRequest(),
+			canonical,
 			router: {
 				resolveStreamingProviders: async () => [],
-				generate: async () => fallbackResult,
+				generate: async (request) => {
+					generateRequests.push(request);
+					return fallbackResult;
+				},
 			} as never,
+			project: "stream-project",
 		});
 
 		await executor.execute({
@@ -50,6 +67,7 @@ describe("createStreamExecutor", () => {
 		});
 
 		assert.deepEqual(events, ["fallback:fallback", "done"]);
+		assert.deepEqual(generateRequests, [buildChatGenerateRequest(canonical, "stream-project")]);
 	});
 
 	it("buffers empty pre-content chunks until meaningful content arrives", async () => {

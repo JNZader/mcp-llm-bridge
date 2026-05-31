@@ -10,9 +10,9 @@ import { resolveRequestProject } from "./request-validation.js";
 export const CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED =
 	"At least one user message is required";
 
-export function prepareChatGenerateRequest(
+export function buildChatGenerateRequest(
 	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
-	c: Context,
+	project?: string,
 ): GenerateRequest {
 	const internalMessages = canonicalRequest.messages.map((message) => ({
 		role: message.role,
@@ -56,6 +56,16 @@ export function prepareChatGenerateRequest(
 		system,
 		model: canonicalRequest.model,
 		maxTokens: canonicalRequest.max_tokens,
-		project: resolveRequestProject(undefined, c),
+		project,
 	};
+}
+
+export function prepareChatGenerateRequest(
+	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
+	c: Context,
+): GenerateRequest {
+	return buildChatGenerateRequest(
+		canonicalRequest,
+		resolveRequestProject(undefined, c),
+	);
 }
