@@ -2,8 +2,10 @@ import type { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 
 import { getLocalLLMUrls, resolveHfToken } from '../../../core/local-llm-env.js';
+import { localLLMEnabled } from '../../../core/runtime-flags.js';
 import type { FreeModelRouter } from '../../../free-models/router.js';
 import { loadCatalog, importCatalog } from '../../../free-models/registry.js';
+import { getSlimLocalLLMStatus } from '../../../local-llm/status.js';
 import { discoverModels } from '../../../model-discovery/discovery.js';
 
 export interface AdminDiscoveryRouteDeps {
@@ -49,6 +51,10 @@ export function registerAdminDiscoveryRoutes(
       const body = await c.req.json().catch(() => ({}));
       const hfToken = resolveHfToken(body['hfToken'] as string | undefined);
       const enabled = body['enabled'] === undefined ? true : body['enabled'] !== false;
+      const localLLMStatus = await getSlimLocalLLMStatus(
+        { enabled: localLLMEnabled(), ...getLocalLLMUrls() },
+        localLLMEnabled() ? undefined : { skipDetectionWhenDisabled: true },
+      );
 
       const result = await discoverModels(
         {
@@ -69,6 +75,7 @@ export function registerAdminDiscoveryRoutes(
         timestamp: result.timestamp,
         partial: result.partial,
         snapshotUsed: result.snapshotUsed,
+        localLLMStatus,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

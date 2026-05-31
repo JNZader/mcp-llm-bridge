@@ -114,6 +114,17 @@ describe('POST /v1/admin/discover', () => {
       unenrichedCount: number;
       partial: boolean;
       snapshotUsed: boolean;
+      localLLMStatus: {
+        enabled: boolean;
+        ready: boolean;
+        checkedAt: string;
+        backends: Array<{
+          backend: string;
+          status: string;
+          baseUrl: string;
+          modelCount: number;
+        }>;
+      };
     };
 
     assert.equal(body.ok, true);
@@ -124,6 +135,12 @@ describe('POST /v1/admin/discover', () => {
     assert.equal(typeof body.unenrichedCount, 'number');
     assert.equal(typeof body.partial, 'boolean');
     assert.equal(typeof body.snapshotUsed, 'boolean');
+    assert.equal(typeof body.localLLMStatus.enabled, 'boolean');
+    assert.equal(typeof body.localLLMStatus.ready, 'boolean');
+    assert.equal(typeof body.localLLMStatus.checkedAt, 'string');
+    assert.ok(Array.isArray(body.localLLMStatus.backends));
+    assert.ok(body.localLLMStatus.backends.length >= 2);
+    assert.equal(typeof body.localLLMStatus.backends[0]?.modelCount, 'number');
   });
 
   it('accepts optional hfToken override', async () => {

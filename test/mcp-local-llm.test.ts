@@ -119,6 +119,10 @@ describe('discover_models MCP tool', () => {
     assert.equal(typeof text.snapshotUsed, 'boolean');
     assert.ok(text.backendsScanned.includes('ollama'));
     assert.ok(text.backendsScanned.includes('lm-studio'));
+    assert.equal(typeof text.localLLMStatus.enabled, 'boolean');
+    assert.equal(typeof text.localLLMStatus.checkedAt, 'string');
+    assert.ok(Array.isArray(text.localLLMStatus.backends));
+    assert.equal(typeof text.localLLMStatus.backends[0]?.modelCount, 'number');
   });
 
   it('accepts optional hfToken', async () => {

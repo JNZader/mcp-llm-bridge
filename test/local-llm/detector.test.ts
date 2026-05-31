@@ -15,6 +15,7 @@ import {
   pickBestLocalModel,
   resetLocalLLMDetectionCache,
 } from '../../src/local-llm/detector.js';
+import { getSlimLocalLLMStatus, toSlimLocalLLMStatus } from '../../src/local-llm/status.js';
 import type { DetectionResult, LocalModel } from '../../src/local-llm/types.js';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -280,6 +281,84 @@ describe('getLocalLLMStatus', () => {
     mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
 
     const status = await getLocalLLMStatus(
+      { enabled: false },
+      { skipDetectionWhenDisabled: true },
+    );
+
+    assert.equal(status.enabled, false);
+    assert.equal(status.ready, false);
+    assert.equal(status.source, 'disabled');
+    assert.equal(status.cacheHit, false);
+    assert.equal(status.backendCount, 2);
+    assert.equal(status.connectedBackendCount, 0);
+    assert.equal(status.modelCount, 0);
+    assert.equal(fetchMock.mock.callCount(), 0);
+  });
+});
+
+describe('local LLM slim status helpers', () => {
+  it('maps a full status to the shared slim shape', () => {
+    const slim = toSlimLocalLLMStatus({
+      enabled: true,
+      ready: false,
+      checkedAt: '2026-05-31T00:00:00.000Z',
+      source: 'probe',
+      cacheHit: false,
+      backendCount: 2,
+      connectedBackendCount: 1,
+      modelCount: 3,
+      backends: [
+        {
+          backend: 'ollama',
+          status: 'connected',
+          baseUrl: 'http://localhost:11434',
+          models: [],
+          modelCount: 2,
+        },
+        {
+          backend: 'lm-studio',
+          status: 'disconnected',
+          baseUrl: 'http://localhost:1234',
+          models: [],
+          error: 'ECONNREFUSED',
+          modelCount: 1,
+        },
+      ],
+    });
+
+    assert.deepEqual(slim, {
+      enabled: true,
+      ready: false,
+      checkedAt: '2026-05-31T00:00:00.000Z',
+      source: 'probe',
+      cacheHit: false,
+      backendCount: 2,
+      connectedBackendCount: 1,
+      modelCount: 3,
+      backends: [
+        {
+          backend: 'ollama',
+          status: 'connected',
+          baseUrl: 'http://localhost:11434',
+          error: undefined,
+          modelCount: 2,
+        },
+        {
+          backend: 'lm-studio',
+          status: 'disconnected',
+          baseUrl: 'http://localhost:1234',
+          error: 'ECONNREFUSED',
+          modelCount: 1,
+        },
+      ],
+    });
+  });
+
+  it('builds a disabled slim snapshot without probing', async () => {
+    const fetchMock = mock.fn(async () => jsonResponse({ models: [] }));
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    const status = await getSlimLocalLLMStatus(
       { enabled: false },
       { skipDetectionWhenDisabled: true },
     );

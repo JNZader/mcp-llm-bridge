@@ -4,36 +4,17 @@ import type { Vault } from '../vault/vault.js';
 import { getLocalLLMStatus, pickBestLocalModel } from '../local-llm/detector.js';
 import { callLocalLLM, LocalLLMError } from '../local-llm/client.js';
 import { classifyForOffload, meetsOffloadThreshold } from '../local-llm/router.js';
+import { getSlimLocalLLMStatus, toSlimLocalLLMStatus } from '../local-llm/status.js';
 import { discoverModels } from '../model-discovery/discovery.js';
 import { getLocalLLMUrls, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
-import { DEFAULT_LOCAL_LLM_CONFIG, type LocalLLMStatus } from '../local-llm/types.js';
+import { DEFAULT_LOCAL_LLM_CONFIG } from '../local-llm/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
 
 function jsonResult(payload: unknown, isError?: boolean): McpToolResult {
   return {
     content: [{ type: 'text', text: JSON.stringify(payload) }],
     ...(isError ? { isError: true } : {}),
-  };
-}
-
-function toSlimLocalLLMStatus(status: LocalLLMStatus) {
-  return {
-    enabled: status.enabled,
-    ready: status.ready,
-    checkedAt: status.checkedAt,
-    source: status.source,
-    cacheHit: status.cacheHit,
-    backendCount: status.backendCount,
-    connectedBackendCount: status.connectedBackendCount,
-    modelCount: status.modelCount,
-    backends: status.backends.map((backend) => ({
-      backend: backend.backend,
-      status: backend.status,
-      baseUrl: backend.baseUrl,
-      error: backend.error,
-      modelCount: backend.modelCount,
-    })),
   };
 }
 
@@ -80,7 +61,7 @@ export async function handleLocalLlmGenerateTool(
   const maxTokens = args['maxTokens'] as number | undefined;
 
   if (!localLLMEnabled()) {
-    const localLLMStatus = await getLocalLLMStatus(
+    const localLLMStatus = await getSlimLocalLLMStatus(
       { enabled: false, ...getLocalLLMUrls() },
       { skipDetectionWhenDisabled: true },
     );
@@ -89,7 +70,7 @@ export async function handleLocalLlmGenerateTool(
       ...result,
       backend: 'cloud',
       reason: 'LOCAL_LLM_ENABLED=false',
-      localLLMStatus: toSlimLocalLLMStatus(localLLMStatus),
+      localLLMStatus,
     });
   }
 
@@ -153,6 +134,10 @@ export async function handleDiscoverModelsTool(
   const hfToken = args['hfToken'] as string | undefined;
   const enabled = args['enabled'] === undefined ? true : args['enabled'] !== false;
   try {
+    const localLLMStatus = await getSlimLocalLLMStatus(
+      { enabled: localLLMEnabled(), ...getLocalLLMUrls() },
+      localLLMEnabled() ? undefined : { skipDetectionWhenDisabled: true },
+    );
     const result = await discoverModels(
       { hfToken: resolveHfToken(hfToken), enabled },
       getLocalLLMUrls(),
@@ -167,6 +152,7 @@ export async function handleDiscoverModelsTool(
       timestamp: result.timestamp,
       partial: result.partial,
       snapshotUsed: result.snapshotUsed,
+      localLLMStatus,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
