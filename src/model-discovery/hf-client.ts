@@ -102,11 +102,12 @@ export class HFClient {
       return { metadata: cached.metadata, error: null, stale: false };
     }
 
+    const url = `${this.config.hfApiUrl}/models/${hfModelId}`;
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1, options?.timeoutMs ?? this.config.hfTimeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const url = `${this.config.hfApiUrl}/models/${hfModelId}`;
-      const controller = new AbortController();
-      const timeoutMs = Math.max(1, options?.timeoutMs ?? this.config.hfTimeoutMs);
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       const headers: Record<string, string> = {
         'Accept': 'application/json',
@@ -119,8 +120,6 @@ export class HFClient {
         headers,
         signal: controller.signal,
       });
-
-      clearTimeout(timer);
 
       if (!response.ok) {
         return this.fallbackToStale(
@@ -146,6 +145,8 @@ export class HFClient {
         staleSqlite,
         allowStale,
       );
+    } finally {
+      clearTimeout(timer);
     }
   }
 
