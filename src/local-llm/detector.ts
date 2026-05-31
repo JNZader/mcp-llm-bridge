@@ -168,10 +168,10 @@ async function probeBackend(
   baseUrl: string,
   timeoutMs: number,
 ): Promise<DetectionResult> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  try {
     const endpoint = backend === 'ollama'
       ? `${baseUrl}/api/tags`
       : `${baseUrl}/v1/models`;
@@ -180,8 +180,6 @@ async function probeBackend(
       signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
     });
-
-    clearTimeout(timer);
 
     if (!response.ok) {
       return {
@@ -210,6 +208,8 @@ async function probeBackend(
       models: [],
       error: isTimeout ? 'Connection timed out' : message,
     };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

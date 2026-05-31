@@ -71,6 +71,8 @@ export async function callLocalLLM(
   const cfg = { ...DEFAULT_LOCAL_LLM_CONFIG, ...config };
   const url = buildCompletionUrl(model.backend, cfg);
   const startTime = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.requestTimeoutMs);
 
   const messages: Array<{ role: string; content: string }> = [];
   if (system) {
@@ -79,9 +81,6 @@ export async function callLocalLLM(
   messages.push({ role: 'user', content: prompt });
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), cfg.requestTimeoutMs);
-
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -93,8 +92,6 @@ export async function callLocalLLM(
       }),
       signal: controller.signal,
     });
-
-    clearTimeout(timer);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'unknown error');
@@ -130,6 +127,8 @@ export async function callLocalLLM(
       model.backend,
       error,
     );
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -142,19 +141,18 @@ export async function pingBackend(
 ): Promise<boolean> {
   const cfg = { ...DEFAULT_LOCAL_LLM_CONFIG, ...config };
   const baseUrl = backend === 'ollama' ? cfg.ollamaUrl : cfg.lmStudioUrl;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), cfg.connectionTimeoutMs);
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), cfg.connectionTimeoutMs);
-
     // Ollama: GET / returns "Ollama is running"
     // LM Studio: GET /v1/models returns model list
     const endpoint = backend === 'ollama' ? baseUrl : `${baseUrl}/v1/models`;
     const response = await fetch(endpoint, { signal: controller.signal });
-
-    clearTimeout(timer);
     return response.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }

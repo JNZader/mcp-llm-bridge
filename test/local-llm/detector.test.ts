@@ -139,6 +139,31 @@ describe('pickBestLocalModel', () => {
 });
 
 describe('detectLocalLLMs cache hardening', () => {
+  it('clears backend abort timers when probing fails early', async () => {
+    const timeoutTokens = [{ id: 'ollama' }, { id: 'lm-studio' }];
+    const setTimeoutMock = mock.fn(() => timeoutTokens.shift() as ReturnType<typeof setTimeout>);
+    const clearTimeoutMock = mock.fn();
+    const fetchMock = mock.fn(async () => {
+      throw new Error('ECONNREFUSED');
+    });
+
+    mock.method(globalThis, 'setTimeout', setTimeoutMock as typeof setTimeout);
+    mock.method(globalThis, 'clearTimeout', clearTimeoutMock as typeof clearTimeout);
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    const results = await detectLocalLLMs(undefined, { forceRefresh: true });
+
+    assert.equal(fetchMock.mock.callCount(), 2);
+    assert.equal(setTimeoutMock.mock.callCount(), 2);
+    assert.equal(clearTimeoutMock.mock.callCount(), 2);
+    assert.deepEqual(
+      clearTimeoutMock.mock.calls.map((call) => call.arguments[0]),
+      [{ id: 'ollama' }, { id: 'lm-studio' }],
+    );
+    assert.equal(results[0]?.status, 'disconnected');
+    assert.equal(results[1]?.status, 'disconnected');
+  });
+
   it('shares one in-flight probe across concurrent callers', async () => {
     const fetchMock = mock.fn(async (input: string | URL | Request) => {
       const url = String(input);
