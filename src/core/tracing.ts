@@ -17,6 +17,7 @@ import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { trace, context, SpanStatusCode, Span } from '@opentelemetry/api';
 import { VERSION } from './constants.js';
 import { calculateCost } from './pricing.js';
+import { getTracingOtlpEndpoint, isTracingEnabled } from './tracing-config.js';
 
 let sdk: NodeSDK | null = null;
 
@@ -27,12 +28,11 @@ let sdk: NodeSDK | null = null;
 export function initTracing(): void {
   if (sdk) return;
 
-  const enabled = process.env['LLM_GATEWAY_TRACING_ENABLED'] === 'true';
-  if (!enabled) {
+  if (!isTracingEnabled()) {
     return;
   }
 
-  const endpoint = process.env['LLM_GATEWAY_OTLP_ENDPOINT'] ?? 'http://localhost:4318/v1/traces';
+  const endpoint = getTracingOtlpEndpoint();
 
   const traceExporter = new OTLPTraceExporter({
     url: endpoint,
