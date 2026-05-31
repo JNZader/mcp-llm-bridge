@@ -13,10 +13,9 @@ import type {
   ModelEndpoint,
   RouteRule,
   CostTier,
-  QualityLevel,
 } from './types.js';
 import { COST_TIER_ORDER } from './types.js';
-import type { TaskType } from '../classification/index.js';
+import { TASK_TYPE_VALUES, type TaskType } from '../classification/index.js';
 
 /** Raw endpoint definition as it appears in model-routing.json. */
 export interface JsonEndpoint {
@@ -34,7 +33,10 @@ export interface JsonRouteRule {
   taskType: TaskType | '*';
   preferredEndpoints: string[];
   maxCostTier: CostTier;
-  minQuality: QualityLevel;
+  /** @deprecated Ignored at runtime and accepted only for backward compatibility. */
+  minQuality?: string;
+  /** @deprecated Ignored at runtime and accepted only for backward compatibility. */
+  keywordPatterns?: string[];
   allowFallback: boolean;
 }
 
@@ -63,11 +65,10 @@ function isValidCostTier(value: unknown): value is CostTier {
 }
 
 /**
- * Validate that a value is a valid quality level.
+ * Validate that a value is a valid runtime task type or wildcard.
  */
-const VALID_QUALITY_LEVELS: QualityLevel[] = ['low', 'medium', 'high', 'critical'];
-function isValidQualityLevel(value: unknown): value is QualityLevel {
-  return isNonEmptyString(value) && VALID_QUALITY_LEVELS.includes(value as QualityLevel);
+function isValidTaskType(value: unknown): value is TaskType | '*' {
+  return value === '*' || (isNonEmptyString(value) && TASK_TYPE_VALUES.includes(value as TaskType));
 }
 
 /**
@@ -102,20 +103,18 @@ function validateRule(raw: unknown): JsonRouteRule | null {
   const obj = raw as Record<string, unknown>;
 
   if (!isNonEmptyString(obj.id)) return null;
-  if (!isNonEmptyString(obj.taskType)) return null;
+  if (!isValidTaskType(obj.taskType)) return null;
   if (!Array.isArray(obj.preferredEndpoints)) return null;
   if (!isValidCostTier(obj.maxCostTier)) return null;
-  if (!isValidQualityLevel(obj.minQuality)) return null;
   if (typeof obj.allowFallback !== 'boolean') return null;
 
   return {
     id: obj.id,
-    taskType: obj.taskType as TaskType | '*',
+    taskType: obj.taskType,
     preferredEndpoints: obj.preferredEndpoints.filter(
       (e): e is string => typeof e === 'string',
     ),
     maxCostTier: obj.maxCostTier,
-    minQuality: obj.minQuality,
     allowFallback: obj.allowFallback,
   };
 }
@@ -177,7 +176,6 @@ function toRouteRule(json: JsonRouteRule): RouteRule {
     taskPattern: json.taskType,
     preferredModels: json.preferredEndpoints,
     maxCostTier: json.maxCostTier,
-    minQuality: json.minQuality,
     allowFallback: json.allowFallback,
   };
 }

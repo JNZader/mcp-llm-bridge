@@ -334,7 +334,6 @@ describe('GET /v1/admin/model-router/stats', () => {
           taskPattern: 'summarization',
           preferredModels: ['local-llama'],
           maxCostTier: COST_TIER.CHEAP,
-          minQuality: 'low',
           allowFallback: true,
         },
       ],

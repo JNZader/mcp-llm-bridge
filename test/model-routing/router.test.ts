@@ -52,7 +52,6 @@ const commitRule: RouteRule = {
   taskPattern: 'commit-message',
   preferredModels: ['local-llama', 'groq-llama'],
   maxCostTier: COST_TIER.CHEAP,
-  minQuality: 'medium',
   allowFallback: true,
 };
 
@@ -61,7 +60,6 @@ const boilerplateRule: RouteRule = {
   taskPattern: 'boilerplate',
   preferredModels: ['local-llama'],
   maxCostTier: COST_TIER.FREE,
-  minQuality: 'low',
   allowFallback: false,
 };
 

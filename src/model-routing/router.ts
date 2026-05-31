@@ -1,9 +1,8 @@
 /**
  * Model router — cost-aware routing with quality fallback.
  *
- * Evaluates routing rules against task classifications, selects
- * the cheapest available model that meets quality thresholds,
- * and falls back to expensive models when quality drops.
+ * Evaluates routing rules against task classifications, walks the
+ * preferred endpoint list in order, and falls back when quality drops.
  */
 
 import type {
@@ -27,7 +26,7 @@ import type { TaskClassification } from '../classification/index.js';
  * 1. Match task classification against rules (first match wins)
  * 2. Filter preferred models by availability and cost tier
  * 3. Check quality stats — skip models below quality threshold
- * 4. Select cheapest qualifying model
+ * 4. Select the first qualifying preferred model
  * 5. If none qualify, fallback to default (if allowed)
  */
 export class ModelRouter {
@@ -249,7 +248,6 @@ export class ModelRouter {
       taskPattern: '*',
       preferredModels: [this.config.defaultEndpoint],
       maxCostTier: 'expensive' as CostTier,
-      minQuality: 'low' as QualityStats['taskPattern'] extends string ? 'low' : never,
       allowFallback: false,
     };
 

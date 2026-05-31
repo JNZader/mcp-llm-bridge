@@ -1354,13 +1354,13 @@ If the local LLM fails or the task is not offloadable, the gateway falls back to
 
 ## Model Routing
 
-Model routing adds task-aware provider selection that classifies each prompt and routes it to the optimal endpoint based on configured rules, cost tiers, and quality thresholds.
+Model routing adds task-aware provider selection that classifies each prompt and routes it based on configured rules, preferred endpoint order, cost tiers, and observed quality feedback.
 
 ### What It Does
 
-- **Classifies** incoming prompts into task types (`code`, `analysis`, `chat`, `reasoning`, etc.)
+- **Classifies** incoming prompts into runtime task types such as `code-review`, `large-context`, `fast-completion`, `summarization`, and `translation`
 - **Matches** the task against routing rules defined in `model-routing.json`
-- **Selects** the cheapest available endpoint that meets quality requirements
+- **Tries** preferred endpoints in rule order while enforcing the configured cost cap
 - **Falls back** to more expensive endpoints if quality drops below threshold
 - **Learns** from feedback — records success/failure per endpoint+task for adaptive routing
 
@@ -1419,21 +1419,20 @@ Create `model-routing.json` in the project root. The gateway loads it at startup
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | string | Unique rule identifier |
-| `taskType` | string | Task type to match, or `*` for wildcard |
+| `taskType` | string | One of `large-context`, `code-review`, `fast-completion`, `default`, `boilerplate`, `commit-message`, `format-conversion`, `style-check`, `summarization`, `translation`, `not-offloadable`, or `*` |
 | `preferredEndpoints` | array | Ordered list of endpoint IDs to try |
 | `maxCostTier` | string | Most expensive tier allowed for this task |
-| `minQuality` | string | Minimum quality level: `low`, `medium`, `high`, `critical` |
 | `allowFallback` | boolean | Whether to fall back to default endpoint if all preferred fail |
 
 ### Example Task-to-Endpoint Mappings
 
-| Task Type | Preferred Endpoints | Cost Cap | Min Quality |
-|-----------|---------------------|----------|-------------|
-| `code` | Claude Sonnet → GPT-4.1 | `expensive` | `high` |
-| `analysis` | Claude Sonnet → GPT-4.1 | `expensive` | `high` |
-| `chat` | GPT-4.1-mini → OpenCode CLI | `standard` | `medium` |
-| `reasoning` | GPT-4.1 → Claude Sonnet | `expensive` | `critical` |
-| `*` (default) | OpenCode CLI → GPT-4.1-mini | `standard` | `low` |
+| Task Type | Preferred Endpoints | Cost Cap |
+|-----------|---------------------|----------|
+| `code-review` | Claude Sonnet → GPT-4.1 | `expensive` |
+| `large-context` | Claude Sonnet → GPT-4.1 | `expensive` |
+| `fast-completion` | GPT-4.1-mini → OpenCode CLI | `standard` |
+| `summarization` | GPT-4.1 → Claude Sonnet | `expensive` |
+| `*` (default) | OpenCode CLI → GPT-4.1-mini | `standard` |
 
 ### Coexistence with Local-LLM Offloading
 

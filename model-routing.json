@@ -56,47 +56,43 @@
   ],
   "rules": [
     {
-      "id": "rule-code-generation",
-      "taskType": "code",
+      "id": "rule-code-review",
+      "taskType": "code-review",
       "preferredEndpoints": [
         "anthropic-claude-3.7-sonnet",
         "openai-gpt-4.1"
       ],
       "maxCostTier": "expensive",
-      "minQuality": "high",
       "allowFallback": true
     },
     {
-      "id": "rule-analysis",
-      "taskType": "analysis",
+      "id": "rule-large-context",
+      "taskType": "large-context",
       "preferredEndpoints": [
         "anthropic-claude-3.7-sonnet",
         "openai-gpt-4.1"
       ],
       "maxCostTier": "expensive",
-      "minQuality": "high",
       "allowFallback": true
     },
     {
-      "id": "rule-chat",
-      "taskType": "chat",
+      "id": "rule-fast-completion",
+      "taskType": "fast-completion",
       "preferredEndpoints": [
         "openai-gpt-4.1-mini",
         "opencode-cli-default"
       ],
       "maxCostTier": "standard",
-      "minQuality": "medium",
       "allowFallback": true
     },
     {
-      "id": "rule-reasoning",
-      "taskType": "reasoning",
+      "id": "rule-summarization",
+      "taskType": "summarization",
       "preferredEndpoints": [
         "openai-gpt-4.1",
         "anthropic-claude-3.7-sonnet"
       ],
       "maxCostTier": "expensive",
-      "minQuality": "critical",
       "allowFallback": true
     },
     {
@@ -107,7 +103,6 @@
         "openai-gpt-4.1-mini"
       ],
       "maxCostTier": "standard",
-      "minQuality": "low",
       "allowFallback": true
     }
   ],

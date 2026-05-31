@@ -51,7 +51,6 @@ function validBaseConfig(): Record<string, unknown> {
         taskType: '*',
         preferredEndpoints: ['test-local'],
         maxCostTier: 'free',
-        minQuality: 'low',
         allowFallback: false,
       },
     ],
@@ -154,6 +153,64 @@ test('validates costTier values', () => {
     assert.ok(config, 'config should load despite invalid endpoint');
     assert.equal(config!.endpoints.length, 1);
     assert.equal(config!.endpoints[0]!.id, 'good-tier');
+  } finally {
+    restoreOriginal();
+  }
+});
+
+test('rejects rules with unsupported taskType values', () => {
+  try {
+    const cfg = validBaseConfig();
+    cfg.rules = [
+      {
+        id: 'bad-rule',
+        taskType: 'reasoning',
+        preferredEndpoints: ['test-local'],
+        maxCostTier: 'free',
+        allowFallback: false,
+      },
+      {
+        id: 'good-rule',
+        taskType: 'summarization',
+        preferredEndpoints: ['test-local'],
+        maxCostTier: 'free',
+        allowFallback: false,
+      },
+    ];
+    writeConfig(cfg);
+    const config = loadConfig();
+    assert.ok(config, 'config should load despite invalid rule');
+    assert.equal(config!.rules.length, 1);
+    assert.equal(config!.rules[0]!.id, 'good-rule');
+  } finally {
+    restoreOriginal();
+  }
+});
+
+test('accepts deprecated rule fields but does not map them into runtime rules', () => {
+  try {
+    const cfg = validBaseConfig();
+    cfg.rules = [
+      {
+        id: 'legacy-rule',
+        taskType: 'commit-message',
+        preferredEndpoints: ['test-local'],
+        maxCostTier: 'free',
+        minQuality: 'critical',
+        keywordPatterns: ['commit', 'git'],
+        allowFallback: true,
+      },
+    ];
+    writeConfig(cfg);
+    const config = loadConfig();
+    assert.ok(config, 'config should load with deprecated fields');
+    assert.deepEqual(config!.rules[0], {
+      id: 'legacy-rule',
+      taskPattern: 'commit-message',
+      preferredModels: ['test-local'],
+      maxCostTier: 'free',
+      allowFallback: true,
+    });
   } finally {
     restoreOriginal();
   }

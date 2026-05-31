@@ -127,9 +127,7 @@ function createMockRule(opts: Partial<RouteRule> & { id: string; preferredModels
   return {
     taskPattern: opts.taskPattern ?? '*',
     maxCostTier: opts.maxCostTier ?? 'expensive',
-    minQuality: opts.minQuality ?? 'low',
     allowFallback: opts.allowFallback ?? true,
-    keywordPatterns: opts.keywordPatterns ?? [],
     ...opts,
   };
 }

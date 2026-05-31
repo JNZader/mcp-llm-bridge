@@ -2,7 +2,7 @@
  * Model routing — types and interfaces.
  *
  * Generic model routing that sends tasks to the optimal model
- * based on task type, cost awareness, and quality thresholds.
+ * based on task type, preferred endpoint order, and quality thresholds.
  * Extends local-llm offloading with multi-model routing.
  */
 
@@ -58,16 +58,20 @@ export interface ModelEndpoint {
 export interface RouteRule {
   /** Unique rule identifier. */
   id: string;
-  /** Task type pattern to match (from local-llm classification). */
+  /** Task type pattern to match (from the runtime classifier taxonomy). */
   taskPattern: TaskType | '*';
-  /** Optional keyword patterns for finer matching. */
+  /**
+   * @deprecated Ignored at runtime and kept only for compatibility with older TS consumers.
+   */
   keywordPatterns?: string[];
   /** Ordered list of preferred model endpoint IDs. */
   preferredModels: string[];
   /** Maximum cost tier allowed for this task. */
   maxCostTier: CostTier;
-  /** Minimum quality level required. */
-  minQuality: QualityLevel;
+  /**
+   * @deprecated Ignored at runtime and no longer part of the effective routing contract.
+   */
+  minQuality?: QualityLevel;
   /** Whether to enable fallback to expensive models. */
   allowFallback: boolean;
 }

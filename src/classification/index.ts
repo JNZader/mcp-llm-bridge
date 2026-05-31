@@ -6,19 +6,24 @@
  * offload types into a single TaskType string union.
  */
 
-/** Unified task type enum — subsumes bridge + local-llm taxonomies. */
-export type TaskType =
-  | 'large-context'
-  | 'code-review'
-  | 'fast-completion'
-  | 'default'
-  | 'boilerplate'
-  | 'commit-message'
-  | 'format-conversion'
-  | 'style-check'
-  | 'summarization'
-  | 'translation'
-  | 'not-offloadable';
+/** Unified task type taxonomy — subsumes bridge + local-llm taxonomies. */
+export const TASK_TYPE = {
+  LARGE_CONTEXT: 'large-context',
+  CODE_REVIEW: 'code-review',
+  FAST_COMPLETION: 'fast-completion',
+  DEFAULT: 'default',
+  BOILERPLATE: 'boilerplate',
+  COMMIT_MESSAGE: 'commit-message',
+  FORMAT_CONVERSION: 'format-conversion',
+  STYLE_CHECK: 'style-check',
+  SUMMARIZATION: 'summarization',
+  TRANSLATION: 'translation',
+  NOT_OFFLOADABLE: 'not-offloadable',
+} as const;
+
+export type TaskType = (typeof TASK_TYPE)[keyof typeof TASK_TYPE];
+
+export const TASK_TYPE_VALUES: TaskType[] = Object.values(TASK_TYPE);
 
 /** Result of a unified classification. */
 export interface ClassificationResult {

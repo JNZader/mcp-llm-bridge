@@ -50,48 +50,43 @@
   ],
   "rules": [
     {
-      "_comment": "Code generation gets the best model first, then fallback",
-      "id": "rule-code-generation",
-      "taskType": "code",
+      "_comment": "Code review tasks get the strongest review-oriented models first",
+      "id": "rule-code-review",
+      "taskType": "code-review",
       "preferredEndpoints": ["anthropic-claude-sonnet", "openai-gpt-4o"],
       "maxCostTier": "expensive",
-      "minQuality": "high",
       "allowFallback": true
     },
     {
-      "_comment": "Analysis tasks prefer strong reasoning models",
-      "id": "rule-analysis",
-      "taskType": "analysis",
+      "_comment": "Large-context work prefers the biggest context windows",
+      "id": "rule-large-context",
+      "taskType": "large-context",
       "preferredEndpoints": ["openai-gpt-4o", "anthropic-claude-sonnet"],
       "maxCostTier": "expensive",
-      "minQuality": "high",
       "allowFallback": true
     },
     {
-      "_comment": "Chat tasks use fast/cheap models; fall back to free CLI",
-      "id": "rule-chat",
-      "taskType": "chat",
+      "_comment": "Short generic prompts can use fast/cheap models first",
+      "id": "rule-fast-completion",
+      "taskType": "fast-completion",
       "preferredEndpoints": ["groq-llama-70b", "opencode-cli-default"],
       "maxCostTier": "cheap",
-      "minQuality": "medium",
       "allowFallback": true
     },
     {
-      "_comment": "Reasoning tasks demand the most capable model",
-      "id": "rule-reasoning",
-      "taskType": "reasoning",
-      "preferredEndpoints": ["openai-gpt-4o", "anthropic-claude-sonnet"],
-      "maxCostTier": "expensive",
-      "minQuality": "critical",
-      "allowFallback": true
-    },
-    {
-      "_comment": "Formatting and summarization can use local LLM if available",
-      "id": "rule-formatting",
-      "taskType": "formatting",
+      "_comment": "Formatting and serialization work can prefer local or free models",
+      "id": "rule-format-conversion",
+      "taskType": "format-conversion",
       "preferredEndpoints": ["local-llm-ollama", "opencode-cli-default"],
       "maxCostTier": "free",
-      "minQuality": "low",
+      "allowFallback": true
+    },
+    {
+      "_comment": "Summaries can use a balanced paid model before free fallbacks",
+      "id": "rule-summarization",
+      "taskType": "summarization",
+      "preferredEndpoints": ["anthropic-claude-sonnet", "opencode-cli-default"],
+      "maxCostTier": "standard",
       "allowFallback": true
     },
     {
@@ -100,7 +95,6 @@
       "taskType": "*",
       "preferredEndpoints": ["opencode-cli-default", "groq-llama-70b"],
       "maxCostTier": "cheap",
-      "minQuality": "low",
       "allowFallback": true
     }
   ],
