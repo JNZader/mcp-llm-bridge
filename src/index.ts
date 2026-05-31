@@ -15,7 +15,7 @@ import { initTracing, shutdownTracing } from "./core/tracing.js";
 initTracing();
 
 import { cleanupAllProviderHomes } from "./adapters/cli-home.js";
-import { createAllAdapters, LocalLLMProvider } from "./adapters/index.js";
+import { createAllAdapters } from "./adapters/index.js";
 import { BridgeOrchestrator, loadBridgeConfig } from "./bridge/index.js";
 import { ComparisonService } from "./comparison/service.js";
 import {
@@ -23,20 +23,14 @@ import {
 	createCoreServices,
 	createToolingServices,
 } from "./bootstrap/core-services.js";
+import { bootstrapLocalLLM } from "./bootstrap/local-llm.js";
 import { bootstrapModelRouting } from "./bootstrap/model-routing.js";
 import { loadConfig } from "./core/config.js";
 import { logger } from "./core/logger.js";
 import { initMetrics } from "./core/metrics.js";
-import {
-	autoDiscoverModelsEnabled,
-	freeModelCatalogEnabled,
-	latencyRoutingEnabled,
-	localLLMEnabled,
-} from "./core/runtime-flags.js";
+import { freeModelCatalogEnabled, latencyRoutingEnabled } from "./core/runtime-flags.js";
 import { Router } from "./core/router.js";
-import { SessionManager } from "./session/index.js";
 import { registry } from "./core/transformer.js";
-import { StateManager } from "./crdt/index.js";
 import {
 	FreeModelRouter,
 	importCatalog,
@@ -53,7 +47,6 @@ import {
 } from "./server/mcp.js";
 import { Vault } from "./vault/index.js";
 import { migrate } from "./db/migrate.js";
-import { discoverModels } from "./model-discovery/index.js";
 
 // Populate the transformer registry with all inbound/outbound transformers
 import "./transformers/index.js";
@@ -150,60 +143,8 @@ const { approvalStore, pageIndexTools } = createToolingServices({
 	dbPath: config.dbPath,
 });
 
-// ── Local LLM Provider ────────────────────────────────────
-const localLLMRuntimeEnabled = localLLMEnabled();
-let localLLMProvider: LocalLLMProvider | null = null;
-
-if (localLLMRuntimeEnabled) {
-	localLLMProvider = new LocalLLMProvider({
-		enabled: true,
-		ollamaUrl: process.env["OLLAMA_URL"] ?? "http://localhost:11434",
-		lmStudioUrl: process.env["LM_STUDIO_URL"] ?? "http://localhost:1234",
-	});
-
-	// Register as normal provider so it participates in routing + circuit breakers
-	router.register(localLLMProvider);
-
-	// Detect models at bootstrap
-	await localLLMProvider.refreshModels();
-	if (localLLMProvider.models.length > 0) {
-		logger.info(
-			{ models: localLLMProvider.models.map((m) => m.id) },
-			"Local LLM provider active",
-		);
-	} else {
-		logger.warn("Local LLM enabled but no backends detected — will use cloud providers only");
-	}
-}
-
-// ── HF Auto-Discovery ───────────────────────────────────
-const autoDiscoverEnabled = autoDiscoverModelsEnabled();
-if (autoDiscoverEnabled && localLLMRuntimeEnabled) {
-	try {
-		const discoveryResult = await discoverModels(
-			{
-				hfToken: process.env["HF_TOKEN"],
-				enabled: true,
-			},
-			{
-				ollamaUrl: process.env["OLLAMA_URL"] ?? "http://localhost:11434",
-				lmStudioUrl: process.env["LM_STUDIO_URL"] ?? "http://localhost:1234",
-			},
-			db,
-		);
-		logger.info(
-			{
-				models: discoveryResult.models.length,
-				enriched: discoveryResult.enrichedCount,
-				backends: discoveryResult.backendsScanned,
-			},
-			"Model discovery completed at bootstrap",
-		);
-	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		logger.warn({ error: msg }, "Model discovery failed at bootstrap");
-	}
-}
+// ── Local LLM Provider + HF Auto-Discovery ───────────────
+await bootstrapLocalLLM(router, db);
 
 /**
  * Graceful shutdown handler.
