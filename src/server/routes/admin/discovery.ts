@@ -53,7 +53,9 @@ export function registerAdminDiscoveryRoutes(
       const enabled = body['enabled'] === undefined ? true : body['enabled'] !== false;
       const localLLMStatus = await getSlimLocalLLMStatus(
         { enabled: localLLMEnabled(), ...getLocalLLMUrls() },
-        localLLMEnabled() ? undefined : { skipDetectionWhenDisabled: true },
+        localLLMEnabled()
+          ? { forceRefresh: true }
+          : { skipDetectionWhenDisabled: true },
       );
 
       const result = await discoverModels(
@@ -63,6 +65,7 @@ export function registerAdminDiscoveryRoutes(
         },
         getLocalLLMUrls(),
         deps.db,
+        { forceRefreshLocalDetection: true },
       );
 
       return c.json({

@@ -61,10 +61,11 @@ export function registerToolingRoutes(app: Hono): void {
 
 	app.get("/v1/local/models", async (c) => {
 		try {
+			const enabled = localLLMEnabled();
 			const status = await getLocalLLMStatus({
-				enabled: localLLMEnabled(),
+				enabled,
 				...getLocalLLMUrls(),
-			});
+			}, enabled ? undefined : { skipDetectionWhenDisabled: true });
 			return c.json(status);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

@@ -136,12 +136,15 @@ export async function handleDiscoverModelsTool(
   try {
     const localLLMStatus = await getSlimLocalLLMStatus(
       { enabled: localLLMEnabled(), ...getLocalLLMUrls() },
-      localLLMEnabled() ? undefined : { skipDetectionWhenDisabled: true },
+      localLLMEnabled()
+        ? { forceRefresh: true }
+        : { skipDetectionWhenDisabled: true },
     );
     const result = await discoverModels(
       { hfToken: resolveHfToken(hfToken), enabled },
       getLocalLLMUrls(),
       vault?.getDb(),
+      { forceRefreshLocalDetection: true },
     );
     return jsonResult({
       models: result.models,

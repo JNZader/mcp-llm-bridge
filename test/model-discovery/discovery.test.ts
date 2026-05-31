@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, unlinkSync } from 'node:fs';
 import { afterEach, describe, it, mock } from 'node:test';
 
+import { resetLocalLLMDetectionCache } from '../../src/local-llm/detector.js';
 import { discoverModels } from '../../src/model-discovery/discovery.js';
 import { Vault } from '../../src/vault/vault.js';
 import type { GatewayConfig } from '../../src/core/types.js';
@@ -38,6 +39,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 afterEach(() => {
   mock.restoreAll();
+  resetLocalLLMDetectionCache();
 });
 
 describe('discoverModels hardening', () => {
@@ -76,6 +78,72 @@ describe('discoverModels hardening', () => {
       assert.equal(result.snapshotUsed, false);
       assert.deepEqual(resultA, resultB);
       assert.equal(fetchMock.mock.callCount(), 3);
+    } finally {
+      vault.destroy();
+      cleanupDb(dbPath);
+    }
+  });
+
+  it('forces a fresh local detection run for explicit discovery requests', async () => {
+    const { vault, dbPath } = createVault();
+    let generation = 0;
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        generation += 1;
+        return jsonResponse({
+          models: [{ name: `custom-model-${generation}` }],
+        });
+      }
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [] });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    try {
+      const db = vault.getDb();
+      const first = await discoverModels(undefined, undefined, db);
+      const second = await discoverModels(undefined, undefined, db);
+
+      assert.equal(first.models[0]?.local.id, 'custom-model-1');
+      assert.equal(second.models[0]?.local.id, 'custom-model-2');
+      assert.equal(fetchMock.mock.callCount(), 4);
+    } finally {
+      vault.destroy();
+      cleanupDb(dbPath);
+    }
+  });
+
+  it('keeps discovery single-flight scoped to the effective local config', async () => {
+    const { vault, dbPath } = createVault();
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'http://127.0.0.1:11434/api/tags') {
+        return jsonResponse({ models: [{ name: 'ollama-a' }] });
+      }
+      if (url === 'http://127.0.0.1:21434/api/tags') {
+        return jsonResponse({ models: [{ name: 'ollama-b' }] });
+      }
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [] });
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
+
+    try {
+      const db = vault.getDb();
+      const first = discoverModels(undefined, { ollamaUrl: 'http://127.0.0.1:11434' }, db);
+      const second = discoverModels(undefined, { ollamaUrl: 'http://127.0.0.1:21434' }, db);
+      const [resultA, resultB] = await Promise.all([first, second]);
+
+      assert.equal(resultA.models[0]?.local.id, 'ollama-a');
+      assert.equal(resultB.models[0]?.local.id, 'ollama-b');
+      assert.equal(fetchMock.mock.callCount(), 4);
     } finally {
       vault.destroy();
       cleanupDb(dbPath);

@@ -2,7 +2,7 @@
  * HTTP local LLM endpoint tests — verify /v1/local/models.
  */
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { unlinkSync, existsSync } from 'node:fs';
@@ -47,6 +47,14 @@ before(async () => {
       resolve();
     });
   });
+});
+
+beforeEach(() => {
+  delete process.env['LOCAL_LLM_ENABLED'];
+});
+
+afterEach(() => {
+  delete process.env['LOCAL_LLM_ENABLED'];
 });
 
 after(() => {
@@ -143,5 +151,26 @@ describe('GET /v1/local/models', () => {
         `Expected disconnected/error but got ${backend.status}`,
       );
     }
+  });
+
+  it('returns a disabled snapshot without probing when LOCAL_LLM_ENABLED=false', async () => {
+    process.env['LOCAL_LLM_ENABLED'] = 'false';
+
+    const res = await request('GET', '/v1/local/models');
+    assert.equal(res.status, 200);
+    const body = res.body as {
+      enabled: boolean;
+      ready: boolean;
+      source: string;
+      modelCount: number;
+      backends: Array<{ status: string; error?: string }>;
+    };
+
+    assert.equal(body.enabled, false);
+    assert.equal(body.ready, false);
+    assert.equal(body.source, 'disabled');
+    assert.equal(body.modelCount, 0);
+    assert.ok(body.backends.every((backend) => backend.status === 'disconnected'));
+    assert.ok(body.backends.every((backend) => backend.error?.includes('disabled')));
   });
 });

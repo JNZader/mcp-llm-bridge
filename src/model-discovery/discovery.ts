@@ -8,10 +8,10 @@
  * 4. Recommend capabilities and routing config
  */
 
-import type { LocalLLMConfig } from '../local-llm/types.js';
+import { DEFAULT_LOCAL_LLM_CONFIG, type LocalLLMConfig } from '../local-llm/types.js';
 import type { CostTier } from '../model-routing/types.js';
 import { COST_TIER } from '../model-routing/types.js';
-import { detectLocalLLMs } from '../local-llm/detector.js';
+import { detectLocalLLMs, type DetectLocalLLMsOptions } from '../local-llm/detector.js';
 import { HFClient } from './hf-client.js';
 import { resolveHFModelId, inferCapabilities, recommendTasks } from './resolver.js';
 import type { EnrichedModel, DiscoveryResult, ModelDiscoveryConfig } from './types.js';
@@ -20,7 +20,13 @@ import type Database from 'better-sqlite3';
 
 const DISCOVERY_SNAPSHOT_KEY = 'local-llm';
 
-let inFlightDiscovery: Promise<DiscoveryResult> | null = null;
+export interface DiscoverModelsOptions {
+  forceRefreshLocalDetection?: boolean;
+}
+
+const inFlightDiscoveries = new Map<string, Promise<DiscoveryResult>>();
+const discoveryDbIds = new WeakMap<Database.Database, number>();
+let nextDiscoveryDbId = 1;
 
 /**
  * Run a full model discovery scan.
@@ -32,6 +38,7 @@ export async function discoverModels(
   discoveryConfig?: Partial<ModelDiscoveryConfig>,
   llmConfig?: Partial<LocalLLMConfig>,
   db?: Database.Database,
+  options?: DiscoverModelsOptions,
 ): Promise<DiscoveryResult> {
   const config = { ...DEFAULT_DISCOVERY_CONFIG, ...discoveryConfig };
 
@@ -39,21 +46,27 @@ export async function discoverModels(
     return loadSnapshotOrEmpty(db, 'Model discovery disabled by config');
   }
 
+  const discoveryKey = getDiscoveryKey(config, llmConfig, db, options);
+  const inFlightDiscovery = inFlightDiscoveries.get(discoveryKey);
   if (inFlightDiscovery) {
     return inFlightDiscovery;
   }
 
-  inFlightDiscovery = runDiscovery(config, llmConfig, db).finally(() => {
-    inFlightDiscovery = null;
+  const discoveryPromise = runDiscovery(config, llmConfig, db, {
+    forceRefresh: options?.forceRefreshLocalDetection ?? true,
+  }).finally(() => {
+    inFlightDiscoveries.delete(discoveryKey);
   });
 
-  return inFlightDiscovery;
+  inFlightDiscoveries.set(discoveryKey, discoveryPromise);
+  return discoveryPromise;
 }
 
 async function runDiscovery(
   config: ModelDiscoveryConfig,
   llmConfig?: Partial<LocalLLMConfig>,
   db?: Database.Database,
+  detectionOptions?: DetectLocalLLMsOptions,
 ): Promise<DiscoveryResult> {
   const hfClient = new HFClient(config, db);
   const errors: string[] = [];
@@ -62,7 +75,7 @@ async function runDiscovery(
   let detections = [] as Awaited<ReturnType<typeof detectLocalLLMs>>;
 
   try {
-    detections = await detectLocalLLMs(llmConfig);
+    detections = await detectLocalLLMs(llmConfig, detectionOptions);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     errors.push(`Local model detection failed: ${msg}`);
@@ -176,6 +189,35 @@ async function runDiscovery(
   }
 
   return liveResult;
+}
+
+function getDiscoveryKey(
+  config: ModelDiscoveryConfig,
+  llmConfig?: Partial<LocalLLMConfig>,
+  db?: Database.Database,
+  options?: DiscoverModelsOptions,
+): string {
+  return JSON.stringify({
+    config,
+    llmConfig: { ...DEFAULT_LOCAL_LLM_CONFIG, ...llmConfig },
+    dbId: getDiscoveryDbId(db),
+    forceRefreshLocalDetection: options?.forceRefreshLocalDetection ?? true,
+  });
+}
+
+function getDiscoveryDbId(db?: Database.Database): number | null {
+  if (!db) {
+    return null;
+  }
+
+  const existing = discoveryDbIds.get(db);
+  if (existing) {
+    return existing;
+  }
+
+  const created = nextDiscoveryDbId++;
+  discoveryDbIds.set(db, created);
+  return created;
 }
 
 function loadSnapshotOrEmpty(
