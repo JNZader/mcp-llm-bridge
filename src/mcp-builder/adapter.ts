@@ -4,12 +4,41 @@ import type { McpServerDefinition, ToolPattern, ToolResult } from './index.js';
 interface RegisteredDynamicTool {
   plugin: string;
   pattern: ToolPattern;
+  runtime: DynamicToolRuntimeState;
 }
 
 const DYNAMIC_TOOL_ERROR = {
   EXECUTION_FAILED: 'dynamic-tool-error',
   TIMEOUT: 'dynamic-tool-timeout',
+  QUARANTINED: 'dynamic-tool-quarantined',
 } as const;
+
+const DYNAMIC_TOOL_STATUS = {
+  HEALTHY: 'healthy',
+  QUARANTINED: 'quarantined',
+} as const;
+
+const DYNAMIC_TOOL_QUARANTINE_THRESHOLD = 2;
+
+type DynamicToolErrorCode = (typeof DYNAMIC_TOOL_ERROR)[keyof typeof DYNAMIC_TOOL_ERROR];
+type DynamicToolStatus = (typeof DYNAMIC_TOOL_STATUS)[keyof typeof DYNAMIC_TOOL_STATUS];
+
+interface DynamicToolRuntimeState {
+  consecutiveFailures: number;
+  quarantined: boolean;
+  lastErrorCode?: DynamicToolErrorCode;
+  lastErrorMessage?: string;
+}
+
+export interface DynamicToolRuntimeHealth {
+  name: string;
+  plugin: string;
+  status: DynamicToolStatus;
+  consecutiveFailures: number;
+  quarantined: boolean;
+  lastErrorCode?: DynamicToolErrorCode;
+  lastErrorMessage?: string;
+}
 
 class DynamicToolTimeoutError extends Error {
   constructor(readonly toolName: string, readonly plugin: string, readonly timeoutMs: number) {
@@ -46,7 +75,14 @@ export class McpDefinitionAdapter {
           return this.mapResult(result ?? this.createExecutionErrorResult(tool.name, pluginName, 'Dynamic tool is not registered'));
         });
       }
-      this.dynamicTools.set(tool.name, { plugin: pluginName, pattern: tool });
+      this.dynamicTools.set(tool.name, {
+        plugin: pluginName,
+        pattern: tool,
+        runtime: {
+          consecutiveFailures: 0,
+          quarantined: false,
+        },
+      });
     }
   }
 
@@ -54,20 +90,28 @@ export class McpDefinitionAdapter {
     const entry = this.dynamicTools.get(name);
     if (!entry) return undefined;
 
+    if (entry.runtime.quarantined) {
+      return this.createQuarantinedResult(name, entry.plugin, entry.runtime.consecutiveFailures);
+    }
+
     const timeoutMs = dynamicPluginToolTimeoutMs();
 
     try {
-      return await withTimeout(
+      const result = await withTimeout(
         entry.pattern.handler(args),
         timeoutMs,
         () => new DynamicToolTimeoutError(name, entry.plugin, timeoutMs),
       );
+      this.resetRuntime(entry.runtime);
+      return result;
     } catch (error) {
       if (error instanceof DynamicToolTimeoutError) {
+        this.recordFailure(entry.runtime, DYNAMIC_TOOL_ERROR.TIMEOUT, error.message);
         return this.createTimeoutResult(error.toolName, error.plugin, error.timeoutMs);
       }
 
       const message = error instanceof Error ? error.message : String(error);
+      this.recordFailure(entry.runtime, DYNAMIC_TOOL_ERROR.EXECUTION_FAILED, message);
       return this.createExecutionErrorResult(name, entry.plugin, message);
     }
   }
@@ -100,6 +144,34 @@ export class McpDefinitionAdapter {
     }));
   }
 
+  getRuntimeHealth(): DynamicToolRuntimeHealth[] {
+    return Array.from(this.dynamicTools.values()).map(({ plugin, pattern, runtime }) => ({
+      name: pattern.name,
+      plugin,
+      status: runtime.quarantined ? DYNAMIC_TOOL_STATUS.QUARANTINED : DYNAMIC_TOOL_STATUS.HEALTHY,
+      consecutiveFailures: runtime.consecutiveFailures,
+      quarantined: runtime.quarantined,
+      lastErrorCode: runtime.lastErrorCode,
+      lastErrorMessage: runtime.lastErrorMessage,
+    }));
+  }
+
+  private resetRuntime(runtime: DynamicToolRuntimeState): void {
+    runtime.consecutiveFailures = 0;
+    runtime.quarantined = false;
+    runtime.lastErrorCode = undefined;
+    runtime.lastErrorMessage = undefined;
+  }
+
+  private recordFailure(runtime: DynamicToolRuntimeState, errorCode: DynamicToolErrorCode, message: string): void {
+    runtime.consecutiveFailures += 1;
+    runtime.lastErrorCode = errorCode;
+    runtime.lastErrorMessage = message;
+    if (runtime.consecutiveFailures >= DYNAMIC_TOOL_QUARANTINE_THRESHOLD) {
+      runtime.quarantined = true;
+    }
+  }
+
   private createTimeoutResult(toolName: string, plugin: string, timeoutMs: number): ToolResult {
     return {
       content: [{
@@ -125,6 +197,22 @@ export class McpDefinitionAdapter {
           code: DYNAMIC_TOOL_ERROR.EXECUTION_FAILED,
           toolName,
           plugin,
+        }),
+      }],
+      isError: true,
+    };
+  }
+
+  private createQuarantinedResult(toolName: string, plugin: string, consecutiveFailures: number): ToolResult {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: `Dynamic tool '${toolName}' has been quarantined after ${consecutiveFailures} consecutive failures`,
+          code: DYNAMIC_TOOL_ERROR.QUARANTINED,
+          toolName,
+          plugin,
+          consecutiveFailures,
         }),
       }],
       isError: true,

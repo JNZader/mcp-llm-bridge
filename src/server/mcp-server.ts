@@ -18,7 +18,7 @@ import { dynamicMcpServersEnabled, mcpServersDir } from '../core/mcp-runtime-con
 import { logger } from '../core/logger.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
 import type { ApprovalStore } from '../approval/index.js';
-import { McpDefinitionAdapter } from '../mcp-builder/adapter.js';
+import { McpDefinitionAdapter, type DynamicToolRuntimeHealth } from '../mcp-builder/adapter.js';
 import { loadPlugins, type LoadedPlugin, type PluginLoadIssue } from '../mcp-builder/loader.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 import { TOOLS, getRuntimeMcpTools as getRuntimeMcpToolsFromRegistry } from './mcp-tool-registry.js';
@@ -70,6 +70,22 @@ export interface DynamicPluginLoadedServer {
   plugin: string;
   toolCount: number;
   toolNames: string[];
+  runtime: DynamicPluginRuntimeHealth;
+}
+
+export interface DynamicPluginToolRuntimeHealth {
+  name: string;
+  status: DynamicToolRuntimeHealth['status'];
+  consecutiveFailures: number;
+  quarantined: boolean;
+  lastErrorCode?: DynamicToolRuntimeHealth['lastErrorCode'];
+  lastErrorMessage?: string;
+}
+
+export interface DynamicPluginRuntimeHealth {
+  healthyToolCount: number;
+  quarantinedToolCount: number;
+  tools: DynamicPluginToolRuntimeHealth[];
 }
 
 export interface DynamicPluginCollision {
@@ -88,6 +104,8 @@ export interface DynamicPluginLoadSummary {
   errors: PluginLoadIssue[];
   collisions: DynamicPluginCollision[];
 }
+
+type AdmittedDynamicPluginLoadedServer = Omit<DynamicPluginLoadedServer, 'runtime'>;
 
 let dynamicPluginLoadSummary: DynamicPluginLoadSummary = {
   enabled: false,
@@ -109,15 +127,38 @@ function createEmptyDynamicPluginLoadSummary(enabled: boolean, directory: string
   };
 }
 
+function createPluginRuntimeHealth(
+  loadedServer: Omit<DynamicPluginLoadedServer, 'runtime'>,
+  runtimeHealthByToolName: Map<string, DynamicToolRuntimeHealth>,
+): DynamicPluginRuntimeHealth {
+  const tools = loadedServer.toolNames.map((toolName) => {
+    const runtime = runtimeHealthByToolName.get(toolName);
+    return {
+      name: toolName,
+      status: runtime?.status ?? 'healthy',
+      consecutiveFailures: runtime?.consecutiveFailures ?? 0,
+      quarantined: runtime?.quarantined ?? false,
+      lastErrorCode: runtime?.lastErrorCode,
+      lastErrorMessage: runtime?.lastErrorMessage,
+    };
+  });
+
+  return {
+    healthyToolCount: tools.filter((tool) => !tool.quarantined).length,
+    quarantinedToolCount: tools.filter((tool) => tool.quarantined).length,
+    tools,
+  };
+}
+
 function admitDynamicPlugins(
   server: Server,
   plugins: LoadedPlugin[],
   adapter: McpDefinitionAdapter,
   enforcer?: ProfileEnforcer,
-): Pick<DynamicPluginLoadSummary, 'loaded' | 'collisions'> {
+): { loaded: AdmittedDynamicPluginLoadedServer[]; collisions: DynamicPluginCollision[] } {
   const builtInToolNames = new Set<string>(TOOLS.map((tool) => tool.name));
   const admittedToolOwners = new Map<string, string>();
-  const loaded: DynamicPluginLoadedServer[] = [];
+  const loaded: AdmittedDynamicPluginLoadedServer[] = [];
   const collisions: DynamicPluginCollision[] = [];
 
   for (const plugin of plugins) {
@@ -183,7 +224,19 @@ export function getRuntimeMcpTools() {
 }
 
 export function getDynamicPluginLoadSummary(): DynamicPluginLoadSummary {
-  return dynamicPluginLoadSummary;
+  const runtimeHealthByToolName = new Map(
+    (dynamicToolAdapter?.getRuntimeHealth() ?? []).map((tool) => [tool.name, tool]),
+  );
+
+  return {
+    ...dynamicPluginLoadSummary,
+    loaded: dynamicPluginLoadSummary.loaded.map(({ plugin, toolCount, toolNames }) => ({
+      plugin,
+      toolCount,
+      toolNames,
+      runtime: createPluginRuntimeHealth({ plugin, toolCount, toolNames }, runtimeHealthByToolName),
+    })),
+  };
 }
 
 export async function startMcpServer(options: StartMcpServerOptions): Promise<Server> {
@@ -281,7 +334,15 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
     dynamicPluginLoadSummary = {
       enabled: true,
       directory: pluginsDir,
-      loaded: admissionSummary.loaded,
+      loaded: admissionSummary.loaded.map(({ plugin, toolCount, toolNames }) => ({
+        plugin,
+        toolCount,
+        toolNames,
+        runtime: createPluginRuntimeHealth(
+          { plugin, toolCount, toolNames },
+          new Map<string, DynamicToolRuntimeHealth>(),
+        ),
+      })),
       skipped: pluginLoadSummary.skipped,
       errors: pluginLoadSummary.errors,
       collisions: admissionSummary.collisions,

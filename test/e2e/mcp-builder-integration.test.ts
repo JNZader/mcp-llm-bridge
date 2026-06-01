@@ -42,6 +42,21 @@ process.on('exit', () => {
 let tempDir: string;
 let server: any;
 
+function healthyRuntime(toolNames: string[]) {
+  return {
+    healthyToolCount: toolNames.length,
+    quarantinedToolCount: 0,
+    tools: toolNames.map((name) => ({
+      name,
+      status: 'healthy',
+      consecutiveFailures: 0,
+      quarantined: false,
+      lastErrorCode: undefined,
+      lastErrorMessage: undefined,
+    })),
+  };
+}
+
 before(async () => {
   tempDir = join(tmpdir(), `mcp-builder-e2e-${Date.now()}`);
   await mkdir(tempDir, { recursive: true });
@@ -127,6 +142,7 @@ describe('MCP dynamic server startup', () => {
           plugin: 'default-dir',
           toolCount: 1,
           toolNames: ['dynamic_default_dir'],
+          runtime: healthyRuntime(['dynamic_default_dir']),
         },
       ]);
 
@@ -175,13 +191,14 @@ describe('MCP dynamic server startup', () => {
     // Verify dynamic tool is loaded
     assert.ok(dynamicToolAdapter, 'dynamicToolAdapter should be set');
     assert.strictEqual(dynamicToolAdapter!.hasTool('dynamic_greet'), true);
-    assert.deepStrictEqual(getDynamicPluginLoadSummary().loaded, [
-      {
-        plugin: 'test',
-        toolCount: 1,
-        toolNames: ['dynamic_greet'],
-      },
-    ]);
+     assert.deepStrictEqual(getDynamicPluginLoadSummary().loaded, [
+       {
+         plugin: 'test',
+         toolCount: 1,
+         toolNames: ['dynamic_greet'],
+         runtime: healthyRuntime(['dynamic_greet']),
+       },
+     ]);
 
     // Test dynamic tool execution via handleToolCall
     const result = await handleToolCall('dynamic_greet', { name: 'World' }, router, vault);
@@ -270,7 +287,7 @@ describe('Dynamic tool execution', () => {
     await rm(join(tempDir, 'exec.mcp-server.js'));
   });
 
-  it('returns a bounded timeout error for a hanging dynamic tool call', async () => {
+  it('quarantines a repeatedly timing-out dynamic tool and exposes runtime health', async () => {
     process.env.MCP_DYNAMIC_SERVERS = 'true';
     process.env.MCP_SERVERS_DIR = tempDir;
     process.env.MCP_PLUGIN_TOOL_TIMEOUT_MS = '25';
@@ -299,18 +316,54 @@ describe('Dynamic tool execution', () => {
       server = await startMcpServer({ router, vault });
 
       const startedAt = Date.now();
+      const first = await handleToolCall('dynamic_hang', {}, router, vault);
+      const second = await handleToolCall('dynamic_hang', {}, router, vault);
       const result = await handleToolCall('dynamic_hang', {}, router, vault);
       const elapsedMs = Date.now() - startedAt;
 
       assert.ok(elapsedMs < 250, `tool execution should be bounded, got ${elapsedMs}ms`);
-      assert.equal(result.isError, true);
-      assert.deepStrictEqual(JSON.parse(result.content[0]!.text), {
+      assert.equal(first.isError, true);
+      assert.equal(second.isError, true);
+      assert.deepStrictEqual(JSON.parse(first.content[0]!.text), {
         error: "Dynamic tool 'dynamic_hang' timed out after 25ms",
         code: 'dynamic-tool-timeout',
         toolName: 'dynamic_hang',
         plugin: 'timeout',
         timeoutMs: 25,
       });
+      assert.deepStrictEqual(JSON.parse(second.content[0]!.text), {
+        error: "Dynamic tool 'dynamic_hang' timed out after 25ms",
+        code: 'dynamic-tool-timeout',
+        toolName: 'dynamic_hang',
+        plugin: 'timeout',
+        timeoutMs: 25,
+      });
+      assert.equal(result.isError, true);
+      assert.deepStrictEqual(JSON.parse(result.content[0]!.text), {
+        error: "Dynamic tool 'dynamic_hang' has been quarantined after 2 consecutive failures",
+        code: 'dynamic-tool-quarantined',
+        toolName: 'dynamic_hang',
+        plugin: 'timeout',
+        consecutiveFailures: 2,
+      });
+
+      assert.deepStrictEqual(getDynamicPluginLoadSummary().loaded, [{
+        plugin: 'timeout',
+        toolCount: 1,
+        toolNames: ['dynamic_hang'],
+        runtime: {
+          healthyToolCount: 0,
+          quarantinedToolCount: 1,
+          tools: [{
+            name: 'dynamic_hang',
+            status: 'quarantined',
+            consecutiveFailures: 2,
+            quarantined: true,
+            lastErrorCode: 'dynamic-tool-timeout',
+            lastErrorMessage: 'Dynamic tool timed out after 25ms',
+          }],
+        },
+      }]);
     } finally {
       await server?.close?.();
       server = null;
@@ -451,6 +504,7 @@ describe('Dynamic tool security profiles', () => {
       plugin: 'quarantine',
       toolCount: 1,
       toolNames: ['dynamic_safe'],
+      runtime: healthyRuntime(['dynamic_safe']),
     }]);
     assert.strictEqual(summary.skipped.length, 1);
     assert.strictEqual(summary.skipped[0]!.toolName, 'dynamic_quarantined');
@@ -596,12 +650,13 @@ describe('Dynamic tool security profiles', () => {
     try {
       server = await startMcpServer({ router, vault });
 
-      const summary = getDynamicPluginLoadSummary();
-      assert.deepStrictEqual(summary.loaded, [{
-        plugin: 'healthy',
-        toolCount: 1,
-        toolNames: ['dynamic_healthy'],
-      }]);
+    const summary = getDynamicPluginLoadSummary();
+    assert.deepStrictEqual(summary.loaded, [{
+      plugin: 'healthy',
+      toolCount: 1,
+      toolNames: ['dynamic_healthy'],
+      runtime: healthyRuntime(['dynamic_healthy']),
+    }]);
       assert.strictEqual(summary.errors.length, 1);
       assert.strictEqual(summary.errors[0]!.plugin, 'hung');
       assert.strictEqual(summary.errors[0]!.code, 'load-timeout');
@@ -679,6 +734,7 @@ describe('Dynamic tool security profiles', () => {
         plugin: 'alpha',
         toolCount: 1,
         toolNames: ['dynamic_collision'],
+        runtime: healthyRuntime(['dynamic_collision']),
       },
     ]);
     assert.strictEqual(summary.collisions.length, 2);
