@@ -3,12 +3,10 @@ import type Database from "better-sqlite3";
 import type { BridgeOrchestrator, BridgeConfig } from "../bridge/index.js";
 import { ComparisonService } from "../comparison/service.js";
 import {
-	createToolingServices,
 	type ComparisonServices,
 	type CoreServices,
 	type ToolingServices,
 } from "./core-services.js";
-import { createComparisonContext } from "./comparison.js";
 import { bootstrapLocalLLM } from "./local-llm.js";
 import { type GatewayConfig } from "../core/types.js";
 import type { FreeModelRouter } from "../free-models/router.js";
@@ -16,6 +14,7 @@ import type { LatencyMeasurer } from "../latency/index.js";
 import { Vault } from "../vault/index.js";
 import { bootstrapRouterFeatures } from "./router-features.js";
 import { createRuntimeFoundation } from "./runtime-foundation.js";
+import { createSupportServices } from "./support-services.js";
 
 export interface RuntimeContext
 	extends CoreServices,
@@ -45,14 +44,9 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
 		bridge,
 	} = await bootstrapRouterFeatures(router, vault, coreServices);
 
-	const toolingServices = createToolingServices({
-		db,
-		dbPath: config.dbPath,
-	});
-
 	await bootstrapLocalLLM(router, db);
 
-	const comparisonContext = createComparisonContext({
+	const supportServices = createSupportServices({
 		db,
 		dbPath: config.dbPath,
 		router,
@@ -71,7 +65,6 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
 		freeModelRouter,
 		latencyMeasurer,
 		...coreServices,
-		...toolingServices,
-		...comparisonContext,
+		...supportServices,
 	};
 }
