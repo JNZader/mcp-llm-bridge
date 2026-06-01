@@ -14,7 +14,7 @@ export interface StreamingRequestLogFinalizer {
 interface StreamingAttemptTelemetryInput {
 	providerId: string;
 	resolvedModel: string;
-	streamStartTime: number;
+	attemptStartTime: number;
 	project?: string;
 	attempts?: number;
 	totalTokens?: number;
@@ -68,7 +68,7 @@ export async function finalizeStreamingAttemptSuccess(
 	const {
 		providerId,
 		resolvedModel,
-		streamStartTime,
+		attemptStartTime,
 		project,
 		attempts,
 		totalTokens,
@@ -87,7 +87,7 @@ export async function finalizeStreamingAttemptSuccess(
 		totalTokens,
 		tokensIn: inputTokens,
 		tokensOut: outputTokens,
-		latencyMs: Date.now() - streamStartTime,
+		latencyMs: Date.now() - attemptStartTime,
 		success: true,
 		attempt: attempts,
 		project,
@@ -113,7 +113,7 @@ export async function finalizeStreamingAttemptFailure(
 	const {
 		providerId,
 		resolvedModel,
-		streamStartTime,
+		attemptStartTime,
 		project,
 		attempts,
 		totalTokens,
@@ -135,7 +135,7 @@ export async function finalizeStreamingAttemptFailure(
 		totalTokens,
 		tokensIn: inputTokens,
 		tokensOut: outputTokens,
-		latencyMs: Date.now() - streamStartTime,
+		latencyMs: Date.now() - attemptStartTime,
 		success: false,
 		attempt: attempts,
 		project,

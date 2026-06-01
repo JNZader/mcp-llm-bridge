@@ -147,6 +147,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
   if (!outbound) {
     const cliOutbound = registry.getOutbound('cli');
     if (provider.type === 'cli' && cliOutbound) {
+      const attemptStartTime = Date.now();
       try {
         const nativeRequest = cliOutbound.transformRequest(request);
         const prompt = (nativeRequest as Record<string, unknown>)['prompt'] as string;
@@ -161,7 +162,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
 
         circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
         const response = cliOutbound.transformResponse(result);
-        const latencyMs = Date.now() - startTime;
+        const latencyMs = Date.now() - attemptStartTime;
         recordUsage(
           provider.id,
           response.model,
@@ -181,7 +182,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       } catch (error) {
         circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
         const message = error instanceof Error ? error.message : String(error);
-        const latencyMs = Date.now() - startTime;
+        const latencyMs = Date.now() - attemptStartTime;
         recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, undefined, message);
         if (classification) {
           recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
@@ -195,6 +196,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     throw new Error(`no outbound transformer for ${provider.id}`);
   }
 
+  const attemptStartTime = Date.now();
   try {
     outbound.transformRequest(request);
 
@@ -209,7 +211,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     const result = await provider.generate(adapterRequest);
     circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
 
-    const latencyMs = Date.now() - startTime;
+    const latencyMs = Date.now() - attemptStartTime;
 
     const response: InternalLLMResponse = {
       content: result.text,
@@ -244,7 +246,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
   } catch (error) {
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
     const message = error instanceof Error ? error.message : String(error);
-    const latencyMs = Date.now() - startTime;
+    const latencyMs = Date.now() - attemptStartTime;
     recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, undefined, message);
     if (classification) {
       recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
@@ -273,11 +275,12 @@ export async function executeGenerateAttempt(
   } = options;
 
   const attemptedModel = request.model ?? defaultModel;
+  const attemptStartTime = Date.now();
 
   try {
     const result = await provider.generate(request);
     circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
-    const latencyMs = Date.now() - startTime;
+    const latencyMs = Date.now() - attemptStartTime;
     const resolvedModel = result.model ?? attemptedModel;
     recordUsage(
       provider.id,
@@ -301,7 +304,7 @@ export async function executeGenerateAttempt(
   } catch (error) {
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
     const message = error instanceof Error ? error.message : String(error);
-    const latencyMs = Date.now() - startTime;
+    const latencyMs = Date.now() - attemptStartTime;
     recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, request.project, message);
     if (classification) {
       recordModelFeedback(

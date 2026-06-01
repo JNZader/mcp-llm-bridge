@@ -16,6 +16,14 @@
 import { Counter, Histogram, Gauge, collectDefaultMetrics, register } from 'prom-client';
 import { Router } from './router.js';
 
+export interface RecordLlmAttemptMetricInput {
+  provider: string;
+  model: string;
+  success: boolean;
+  latencyMs: number;
+  totalTokens?: number;
+}
+
 // HTTP metrics
 export const httpRequestsTotal = new Counter({
   name: 'http_requests_total',
@@ -98,6 +106,22 @@ export async function updateProviderAvailability(router: Router): Promise<void> 
   for (const status of statuses) {
     providerAvailable.set({ provider: status.id }, status.available ? 1 : 0);
   }
+}
+
+export function recordLlmAttemptMetric(input: RecordLlmAttemptMetricInput): void {
+  const { provider, model, success, latencyMs, totalTokens } = input;
+  const status = success ? 'success' : 'error';
+
+  llmRequestsTotal.inc({ provider, model, status });
+  llmRequestDuration.observe({ provider, model }, Math.max(latencyMs, 0) / 1000);
+
+  if (typeof totalTokens === 'number') {
+    llmTokensUsedTotal.inc({ provider, model }, totalTokens);
+  }
+}
+
+export function resetMetrics(): void {
+  register.resetMetrics();
 }
 
 /**

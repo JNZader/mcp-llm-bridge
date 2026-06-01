@@ -49,7 +49,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		abortSignal,
 		providerStreamCallFactory = buildProviderStreamCall,
 	} = input;
-	const streamStartTime = Date.now();
 	const { logCtx, finalizeRequestLog } = createStreamingRequestLogFinalizer(
 		requestLogger,
 		canonical.model,
@@ -166,6 +165,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 					const { provider, request: resolvedRequest, streamTransformer, onSuccess, recordResult } =
 						resolved;
+					const attemptStartTime = Date.now();
 					let breakerModel = resolvedRequest.model || canonical.model || "unknown";
 					let attemptInputTokens: number | undefined;
 					let attemptOutputTokens: number | undefined;
@@ -248,7 +248,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						await finalizeStreamingAttemptSuccess({
 							providerId: provider.id,
 							resolvedModel: breakerModel,
-							streamStartTime,
+							attemptStartTime,
 							project,
 							attempts,
 							totalTokens,
@@ -276,7 +276,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						const resolvedError = await finalizeStreamingAttemptFailure({
 							providerId: provider.id,
 							resolvedModel: breakerModel,
-							streamStartTime,
+							attemptStartTime,
 							project,
 							attempts,
 							totalTokens:

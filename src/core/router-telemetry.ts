@@ -10,6 +10,7 @@ import {
   resolveProviderModel,
 } from './router-candidate-planner.js';
 import { logger } from './logger.js';
+import { recordLlmAttemptMetric } from './metrics.js';
 
 export interface RouterTelemetryContext {
   analyticsAggregator: AnalyticsAggregator | null;
@@ -113,13 +114,22 @@ export function recordUsage(
   telemetry: RouterTelemetryContext,
   input: RouterUsageRecordInput,
 ): void {
+  const totalTokens = input.totalTokens ?? (
+    typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
+      ? input.tokensIn + input.tokensOut
+      : undefined
+  );
+
+  recordLlmAttemptMetric({
+    provider: input.provider,
+    model: input.model,
+    success: input.success,
+    latencyMs: input.latencyMs,
+    totalTokens,
+  });
+
   if (telemetry.analyticsAggregator) {
     try {
-      const totalTokens = input.totalTokens ?? (
-        typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
-          ? input.tokensIn + input.tokensOut
-          : undefined
-      );
       const cost = input.costUsd ?? (
         typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
           ? calculateCost(input.model, input.tokensIn, input.tokensOut)
