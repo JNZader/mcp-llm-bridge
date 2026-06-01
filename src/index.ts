@@ -39,6 +39,7 @@ await setupGracefulShutdown({
 	costTracker: runtime.costTracker,
 	groupStore: runtime.groupStore,
 	sessionManager: runtime.sessionManager,
+	pageIndexService: runtime.pageIndex.service,
 	vault: runtime.vault,
 	cleanupAllProviderHomes,
 	shutdownTracing,

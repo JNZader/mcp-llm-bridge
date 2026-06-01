@@ -19,6 +19,7 @@ describe("setupGracefulShutdown", () => {
 			costTracker: { destroy() {} },
 			groupStore: { close() {} },
 			sessionManager: { destroy() {} },
+			pageIndexService: { close() {} },
 			vault: { destroy() {} },
 			cleanupAllProviderHomes() {},
 			shutdownTracing: async () => {},
@@ -44,6 +45,7 @@ describe("setupGracefulShutdown", () => {
 			costTracker: { destroy: () => events.push("costTracker.destroy") },
 			groupStore: { close: () => events.push("groupStore.close") },
 			sessionManager: { destroy: () => events.push("sessionManager.destroy") },
+			pageIndexService: { close: () => events.push("pageIndexService.close") },
 			vault: { destroy: () => events.push("vault.destroy") },
 			cleanupAllProviderHomes: () => events.push("cleanupAllProviderHomes"),
 			shutdownTracing: async () => {
@@ -70,6 +72,7 @@ describe("setupGracefulShutdown", () => {
 			"costTracker.destroy",
 			"groupStore.close",
 			"sessionManager.destroy",
+			"pageIndexService.close",
 			"cleanupAllProviderHomes",
 			"vault.destroy",
 			"shutdownTracing.start",

@@ -34,6 +34,7 @@ export interface ShutdownDeps {
 	costTracker: Destroyable;
 	groupStore: Closable;
 	sessionManager: Destroyable;
+	pageIndexService?: Closable;
 	vault: VaultLike;
 	cleanupAllProviderHomes: () => void;
 	shutdownTracing: () => Promise<void>;
@@ -51,6 +52,7 @@ export async function setupGracefulShutdown({
 	costTracker,
 	groupStore,
 	sessionManager,
+	pageIndexService,
 	vault,
 	cleanupAllProviderHomes,
 	shutdownTracing,
@@ -65,6 +67,7 @@ export async function setupGracefulShutdown({
 		costTracker.destroy();
 		groupStore.close();
 		sessionManager.destroy();
+		pageIndexService?.close();
 		cleanupAllProviderHomes();
 		vault.destroy();
 		await shutdownTracing();
