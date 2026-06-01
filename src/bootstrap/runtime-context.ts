@@ -1,6 +1,5 @@
 import type Database from "better-sqlite3";
 
-import { createAllAdapters } from "../adapters/index.js";
 import type { BridgeOrchestrator, BridgeConfig } from "../bridge/index.js";
 import { ComparisonService } from "../comparison/service.js";
 import {
@@ -19,11 +18,11 @@ import { bootstrapBridge } from "./bridge.js";
 import { loadConfig } from "../core/config.js";
 import { Router } from "../core/router.js";
 import { type GatewayConfig } from "../core/types.js";
-import { registry } from "../core/transformer.js";
 import { migrate } from "../db/migrate.js";
 import type { FreeModelRouter } from "../free-models/router.js";
 import type { LatencyMeasurer } from "../latency/index.js";
 import { Vault } from "../vault/index.js";
+import { bootstrapRouterBaseline } from "./router-baseline.js";
 
 export interface RuntimeContext
 	extends CoreServices,
@@ -55,17 +54,7 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
 		dbPath: config.dbPath,
 	});
 
-	for (const adapter of createAllAdapters(vault)) {
-		router.register(adapter);
-	}
-
-	router.setCostTracker(coreServices.costTracker);
-	router.setAnalyticsAggregator(coreServices.analyticsAggregator);
-	router.setTransformerRegistry(registry);
-	router.setGroupStore(coreServices.groupStore);
-
-	coreServices.sessionManager.startCleanup();
-	router.setSessionManager(coreServices.sessionManager);
+	bootstrapRouterBaseline(router, vault, coreServices);
 
 	const { freeModelEnabled, freeModelRouter } = bootstrapFreeModels(router);
 	const latencyMeasurer = bootstrapLatencyRouting(router);
