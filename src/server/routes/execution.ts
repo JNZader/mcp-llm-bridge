@@ -5,11 +5,7 @@ import { streamSSE } from "hono/streaming";
 import type { CostTracker } from "../../core/cost-tracker.js";
 import type { Router } from "../../core/router.js";
 import { validateChatCompletions, validateGenerateRequest } from "../../core/schemas.js";
-import { optimizeMessages } from "../../transformers/three-part-prompt.js";
-import {
-	createCanonicalResponse,
-	normalizeOpenAIRequest,
-} from "../../protocol-converter/index.js";
+import { createCanonicalResponse } from "../../protocol-converter/index.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { Vault } from "../../vault/vault.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
@@ -22,9 +18,12 @@ import {
 } from "../http-helpers/request-validation.js";
 import {
 	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
-	prepareChatGenerateRequest,
 } from "../http-helpers/chat-request.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
+import {
+	executeNonStreamingChatCompletions,
+	prepareChatCompletionsRequest,
+} from "../execution/chat-completions-service.js";
 import { createStreamExecutor } from "../streaming/stream-executor.js";
 
 export interface ExecutionRouteDeps {
@@ -32,26 +31,6 @@ export interface ExecutionRouteDeps {
 	vault: Vault;
 	costTracker?: CostTracker;
 	requestLogger?: RequestLogger;
-}
-
-function buildGatewayMetadata(result: {
-	requestedProvider?: string;
-	requestedModel?: string;
-	resolvedProvider?: string;
-	resolvedModel?: string;
-	fallbackUsed?: boolean;
-	tokensUsed?: number;
-	routing?: unknown;
-}) {
-	return {
-		requestedProvider: result.requestedProvider,
-		requestedModel: result.requestedModel,
-		resolvedProvider: result.resolvedProvider,
-		resolvedModel: result.resolvedModel,
-		fallbackUsed: result.fallbackUsed,
-		tokensUsed: result.tokensUsed,
-		routing: result.routing,
-	};
 }
 
 function buildStreamingChunkPayload(
@@ -230,7 +209,6 @@ export function registerExecutionRoutes(
 	});
 
 	app.post("/v1/chat/completions", async (c) => {
-		let logCtx: LogContext | undefined;
 		try {
 			const body = await c.req.json();
 
@@ -245,33 +223,18 @@ export function registerExecutionRoutes(
 				throw error;
 			}
 
-			let canonicalRequest: CanonicalRequest;
+			let preparedRequest;
 			try {
-				canonicalRequest = normalizeOpenAIRequest(validated);
+				preparedRequest = prepareChatCompletionsRequest(validated);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return jsonChatInvalidRequestError(c, message, null);
 			}
 
-			const internalMessages = canonicalRequest.messages.map((m) => ({
-				role: m.role as "system" | "user" | "assistant" | "tool",
-				content: m.content,
-			}));
-			const optimizedMessages = optimizeMessages(internalMessages);
-
-			if (canonicalRequest.stream) {
+			if (preparedRequest.canonicalRequest.stream) {
 				return handleStreamingRequest(
 					c,
-					{
-						...canonicalRequest,
-						messages: optimizedMessages.map((m) => ({
-							role: m.role,
-							content: typeof m.content === "string" ? m.content : "",
-						})) as {
-							role: "system" | "user" | "assistant";
-							content: string;
-						}[],
-					},
+					preparedRequest.optimizedCanonicalRequest,
 					router,
 					costTracker,
 					vault,
@@ -279,9 +242,15 @@ export function registerExecutionRoutes(
 				);
 			}
 
-			let generateRequest;
 			try {
-				generateRequest = prepareChatGenerateRequest(canonicalRequest, c);
+				return c.json(
+					await executeNonStreamingChatCompletions({
+						prepared: preparedRequest,
+						router,
+						project: c.req.header("X-Project") ?? undefined,
+						requestLogger,
+					}),
+				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				if (message === CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED) {
@@ -289,41 +258,7 @@ export function registerExecutionRoutes(
 				}
 				throw error;
 			}
-
-			logCtx = requestLogger?.captureStart({
-				provider: "unknown",
-				model: canonicalRequest.model || "unknown",
-				startTime: Date.now(),
-			});
-
-			const result = await router.generate(generateRequest);
-
-			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, {
-					outputTokens: result.tokensUsed || 0,
-					responseData: JSON.stringify(result),
-				});
-			}
-
-			const canonicalResponse = createCanonicalResponse(
-				`chatcmpl-${randomUUID()}`,
-				result.model,
-				result.text,
-				{ prompt: 0, completion: result.tokensUsed ?? 0 },
-			);
-
-			return c.json({
-				...canonicalResponse,
-				object: "chat.completion",
-				created: Math.floor(Date.now() / 1000),
-				x_gateway: buildGatewayMetadata(result),
-			});
 		} catch (error) {
-			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, {
-					error: error instanceof Error ? error : new Error(String(error)),
-				});
-			}
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json(
 				{
