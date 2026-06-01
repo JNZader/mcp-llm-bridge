@@ -1317,6 +1317,71 @@ describe('Router + ModelRouter integration', () => {
     assert.deepEqual(complexCalls, ['cloud', 'cloud']);
   });
 
+  it('keeps offload ordering consistent between internal and streaming resolution', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    router.register(createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+      },
+    }));
+    router.register(createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: {
+        text: 'local-response',
+        provider: 'local-llm',
+        model: 'local-model',
+        resolvedProvider: 'local-llm',
+        resolvedModel: 'local-model',
+        fallbackUsed: false,
+      },
+    }));
+    router.setTransformerRegistry(registry);
+    router.setModelRouter(createMockModelRouter({ enabled: true, decision: null }));
+    registerPassthroughOutbound(registry, 'cloud');
+    registerPassthroughOutbound(registry, 'local-llm');
+    registry.registerStreamOutbound('cloud', {
+      name: 'cloud',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+    registry.registerStreamOutbound('local-llm', {
+      name: 'local-llm',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+
+    const internal = await router.generateFromInternal({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'cloud-model',
+    });
+    const streaming = await router.resolveStreamingProviders({
+      messages: [{ role: 'user', content: 'summarize this' }],
+      model: 'cloud-model',
+    });
+
+    assert.equal(internal.metadata?.['provider'], 'local-llm');
+    assert.deepEqual(
+      streaming.map((candidate) => candidate.provider.id),
+      ['local-llm', 'cloud'],
+    );
+  });
+
   it('resolveStreamingProvider returns a success telemetry hook for ModelRouter feedback', async () => {
     const router = new Router();
     const registry = new TransformerRegistry();

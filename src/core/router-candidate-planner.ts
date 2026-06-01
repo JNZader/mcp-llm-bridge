@@ -109,6 +109,18 @@ export function prioritizeEndpointCandidate(
   return [selected, ...candidates.filter((provider) => provider !== selected)];
 }
 
+export function prioritizeProviderCandidate(
+  candidates: LLMProvider[],
+  providerId: string,
+): LLMProvider[] {
+  const selected = candidates.find((provider) => provider.id === providerId);
+  if (!selected) {
+    return candidates;
+  }
+
+  return [selected, ...candidates.filter((provider) => provider !== selected)];
+}
+
 export function providerMatchesEndpoint(provider: LLMProvider, endpoint: ModelEndpoint): boolean {
   return provider.id === endpoint.provider || provider.id === endpoint.id;
 }

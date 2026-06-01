@@ -32,16 +32,8 @@ import type { LatencyMeasurer } from '../latency/measurer.js';
 import type { ModelRouter } from '../model-routing/router.js';
 import type { AnalyticsAggregator } from '../analytics/index.js';
 import { LocalLLMError } from '../local-llm/client.js';
-import { classifyForOffload } from '../local-llm/router.js';
-import { classify } from '../classification/index.js';
-import type { TaskClassification } from '../classification/index.js';
-import type { ModelRouterStatsSnapshot, RoutingDecision } from '../model-routing/types.js';
-import {
-  prioritizeEndpointCandidate,
-  reorderByLatency,
-  resolveExecutableCandidates,
-  resolveCandidates,
-} from './router-candidate-planner.js';
+import type { ModelRouterStatsSnapshot } from '../model-routing/types.js';
+import { prioritizeProviderCandidate } from './router-candidate-planner.js';
 import {
   createAttemptTelemetryCallbacks,
   createStreamingRecordResult,
@@ -50,6 +42,11 @@ import {
 } from './router-telemetry.js';
 import { executeGenerateAttempt, tryProvider } from './router-executor.js';
 import { buildInternalRoutingPlan } from './router-internal-plan.js';
+import {
+  buildRoutingPolicyPlan,
+  determineDecisionReason,
+  determineRoutingStrategy,
+} from './router-policy-plan.js';
 import {
   buildRoutingMetadata,
   buildGenerateRequest,
@@ -246,12 +243,24 @@ export class Router {
     const startTime = Date.now();
     const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
     const attemptedProviders: string[] = [];
-    let candidates = await resolveCandidates(
-      this._providers,
-      request,
-      (orderedCandidates) =>
-        reorderByLatency(orderedCandidates, this._latencyMeasurer, this._explorationRate),
-    );
+    const circuitBreaker = getCircuitBreakerV2();
+    const plan = await buildRoutingPolicyPlan({
+      providers: this._providers,
+      request: {
+        prompt: request.prompt,
+        model: request.model,
+        provider: request.provider,
+        strict: request.strict === true,
+      },
+      groupStore: null,
+      sessionManager: null,
+      latencyMeasurer: this._latencyMeasurer,
+      explorationRate: this._explorationRate,
+      modelRouter: this._modelRouter,
+      circuitBreaker,
+      fallbackModel: 'unknown',
+    });
+    const candidates = plan.orderedCandidates;
 
     if (candidates.length === 0) {
       throw new Error(
@@ -259,58 +268,13 @@ export class Router {
       );
     }
 
-    // ── Model Routing: classify and route to optimal endpoint ──
-    let modelRouterDecision: RoutingDecision | null = null;
-    let appliedModelRouterDecision: RoutingDecision | null = null;
-    let classification: TaskClassification | null = null;
-    let offloadClassification: TaskClassification | null = null;
-    if (this._modelRouter && this._modelRouter.enabled && !request.provider && !request.strict) {
-      classification = classify(request.prompt);
-      modelRouterDecision = this._modelRouter.route(classification);
-      if (modelRouterDecision) {
-        const routedCandidates = prioritizeEndpointCandidate(
-          candidates,
-          modelRouterDecision.endpoint,
-        );
-        if (routedCandidates) {
-          candidates = routedCandidates;
-          appliedModelRouterDecision = modelRouterDecision;
-        } else {
-          logger.warn({ endpointId: modelRouterDecision.endpoint.id }, 'Unmatched ModelRouter endpoint');
-        }
-      }
-    }
-
-    // ── Sprint 3: Insert local-llm as first candidate when offloadable ──
-    // Only when ModelRouter is disabled or returned null (superseded by ModelRouter)
-    if (!request.provider && !request.strict && !modelRouterDecision) {
-      offloadClassification = classifyForOffload(request.prompt);
-      if (offloadClassification.shouldOffload) {
-        const localIndex = candidates.findIndex((p) => p.id === 'local-llm');
-        if (localIndex > 0) {
-          const localProvider = candidates[localIndex]!;
-          candidates = [localProvider, ...candidates.filter((_, i) => i !== localIndex)];
-        }
-      }
-    }
-
-    // Filter out providers with open circuit breakers (V2 with per-model granularity)
-    const circuitBreaker = getCircuitBreakerV2();
-    const model = modelRouterDecision?.endpoint.modelId ?? request.model ?? 'unknown';
-    const { availableCandidates, blockedStrictCandidate } = resolveExecutableCandidates(
-      candidates,
-      circuitBreaker,
-      model,
-      request.strict === true,
-    );
-
-    if (request.strict && blockedStrictCandidate) {
+    if (plan.strict && plan.blockedStrictCandidate) {
       throw new Error(
-        `Strict mode candidate ${blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
+        `Strict mode candidate ${plan.blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
       );
     }
 
-    if (availableCandidates.length === 0) {
+    if (plan.availableCandidates.length === 0) {
       // All candidates have open circuit breakers
       const openProviders = candidates.map((p) => p.id).join(', ');
       throw new Error(
@@ -318,8 +282,8 @@ export class Router {
       );
     }
 
-    if (request.strict) {
-      const provider = availableCandidates[0];
+    if (plan.strict) {
+      const provider = plan.availableCandidates[0];
 
       if (!provider) {
         throw new Error(
@@ -333,13 +297,13 @@ export class Router {
         request: buildGenerateRequest(
           request,
           provider,
-          modelRouterDecision?.endpoint,
+          plan.modelRouterDecision?.endpoint,
         ),
-        routedEndpoint: modelRouterDecision?.endpoint,
+        routedEndpoint: plan.modelRouterDecision?.endpoint,
         circuitBreaker,
         startTime,
-        defaultModel: model,
-        classification,
+        defaultModel: plan.routedModel,
+        classification: plan.classification,
         ...telemetry,
         logFailure: ({ provider: failedProvider, attemptedModel, message }) => {
           logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
@@ -352,34 +316,40 @@ export class Router {
         false,
         latencyMs,
         buildRoutingMetadata(result, false, {
-          strategy: determineRoutingStrategy(request, appliedModelRouterDecision, offloadClassification),
+          strategy: determineRoutingStrategy({
+            requestedProvider: request.provider,
+            requestedModel: request.model,
+            modelRouterDecision: plan.appliedModelRouterDecision,
+            offloadClassification: plan.offloadClassification,
+          }),
           attemptedProviders,
-          classification: classification ?? offloadClassification,
-          modelRouterDecision: appliedModelRouterDecision,
-          decisionReason: determineDecisionReason(
-            request,
-            appliedModelRouterDecision,
-            offloadClassification,
-          ),
+          classification: plan.classification ?? plan.offloadClassification,
+          modelRouterDecision: plan.appliedModelRouterDecision,
+          decisionReason: determineDecisionReason({
+            requestedProvider: request.provider,
+            requestedModel: request.model,
+            modelRouterDecision: plan.appliedModelRouterDecision,
+            offloadClassification: plan.offloadClassification,
+          }),
         }),
       );
     }
 
     const providerErrors = createProviderErrorAccumulator();
-    const attemptedResult = await tryCandidates(availableCandidates, (provider) => {
+    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider) => {
       attemptedProviders.push(provider.id);
       return executeGenerateAttempt({
         provider,
         request: buildGenerateRequest(
           request,
           provider,
-          modelRouterDecision?.endpoint,
+          plan.modelRouterDecision?.endpoint,
         ),
-        routedEndpoint: modelRouterDecision?.endpoint,
+        routedEndpoint: plan.modelRouterDecision?.endpoint,
         circuitBreaker,
         startTime,
-        defaultModel: model,
-        classification,
+        defaultModel: plan.routedModel,
+        classification: plan.classification,
         ...telemetry,
         logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
           if (error instanceof LocalLLMError) {
@@ -418,15 +388,21 @@ export class Router {
         attemptedResult.index > 0,
         latencyMs,
         buildRoutingMetadata(attemptedResult.result, attemptedResult.index > 0, {
-          strategy: determineRoutingStrategy(request, appliedModelRouterDecision, offloadClassification),
+          strategy: determineRoutingStrategy({
+            requestedProvider: request.provider,
+            requestedModel: request.model,
+            modelRouterDecision: plan.appliedModelRouterDecision,
+            offloadClassification: plan.offloadClassification,
+          }),
           attemptedProviders,
-          classification: classification ?? offloadClassification,
-          modelRouterDecision: appliedModelRouterDecision,
-          decisionReason: determineDecisionReason(
-            request,
-            appliedModelRouterDecision,
-            offloadClassification,
-          ),
+          classification: plan.classification ?? plan.offloadClassification,
+          modelRouterDecision: plan.appliedModelRouterDecision,
+          decisionReason: determineDecisionReason({
+            requestedProvider: request.provider,
+            requestedModel: request.model,
+            modelRouterDecision: plan.appliedModelRouterDecision,
+            offloadClassification: plan.offloadClassification,
+          }),
         }),
       );
     }
@@ -444,10 +420,15 @@ export class Router {
           true,
           latencyMs,
           buildRoutingMetadata(freeResult, true, {
-            strategy: determineRoutingStrategy(request, appliedModelRouterDecision, offloadClassification),
+            strategy: determineRoutingStrategy({
+              requestedProvider: request.provider,
+              requestedModel: request.model,
+              modelRouterDecision: plan.appliedModelRouterDecision,
+              offloadClassification: plan.offloadClassification,
+            }),
             attemptedProviders,
-            classification: classification ?? offloadClassification,
-            modelRouterDecision: appliedModelRouterDecision,
+            classification: plan.classification ?? plan.offloadClassification,
+            modelRouterDecision: plan.appliedModelRouterDecision,
             decisionReason: 'All paid providers failed; free model fallback succeeded',
           }),
         );
@@ -491,6 +472,7 @@ export class Router {
       providers: this._providers,
       request,
       groupStore: this._groupStore,
+      sessionManager: this._sessionManager,
       latencyMeasurer: this._latencyMeasurer,
       explorationRate: this._explorationRate,
       modelRouter: this._modelRouter,
@@ -500,36 +482,39 @@ export class Router {
     const { optimizedRequest } = plan;
 
     const model = plan.model;
-    const clientId = optimizedRequest.metadata?.['clientId'] as string | undefined;
 
     // 1. Check session stickiness
-    if (!plan.requestedProvider && this._sessionManager && clientId && model) {
-      const pinned = this._sessionManager.getRouterStickySession(clientId, model);
-      if (pinned) {
-        const stickyProvider = this._providers.find((p) => p.id === pinned.provider);
-        if (stickyProvider) {
-          if (circuitBreaker.canExecute(stickyProvider.id, 'default', plan.routedModel).allowed) {
-            try {
-              const result = await tryProvider({
-                provider: stickyProvider,
-                request: buildInternalRequest(
-                  optimizedRequest,
-                  stickyProvider,
-                  plan.modelRouterDecision?.endpoint,
-                ),
-                registry,
-                circuitBreaker,
-                startTime,
-                model: plan.routedModel,
-                classification: plan.classification ?? undefined,
-                routedEndpoint: plan.modelRouterDecision?.endpoint,
-                ...telemetry,
-              });
-              return result;
-            } catch {
-              // Sticky provider failed — fall through to normal routing
-              logger.warn({ provider: stickyProvider.id, clientId, model }, 'Sticky provider failed, falling through');
-            }
+    if (plan.stickySession?.pinnedProviderId) {
+      const stickyProvider = this._providers.find((p) => p.id === plan.stickySession?.pinnedProviderId);
+      if (stickyProvider) {
+        if (circuitBreaker.canExecute(stickyProvider.id, 'default', plan.routedModel).allowed) {
+          try {
+            const result = await tryProvider({
+              provider: stickyProvider,
+              request: buildInternalRequest(
+                optimizedRequest,
+                stickyProvider,
+                plan.modelRouterDecision?.endpoint,
+              ),
+              registry,
+              circuitBreaker,
+              startTime,
+              model: plan.routedModel,
+              classification: plan.classification ?? undefined,
+              routedEndpoint: plan.modelRouterDecision?.endpoint,
+              ...telemetry,
+            });
+            return result;
+          } catch {
+            // Sticky provider failed — fall through to normal routing
+            logger.warn(
+              {
+                provider: stickyProvider.id,
+                clientId: plan.stickySession.clientId,
+                model,
+              },
+              'Sticky provider failed, falling through',
+            );
           }
         }
       }
@@ -577,13 +562,13 @@ export class Router {
 
     if (attemptedResult) {
       // Pin session on success if stickiness is enabled
-      if (this._sessionManager && clientId && model && plan.matchedGroup?.stickyTTL) {
+      if (this._sessionManager && plan.stickySession?.stickyTtlMs) {
         this._sessionManager.pinRouterStickySession(
-          clientId,
-          model,
+          plan.stickySession.clientId,
+          plan.stickySession.model,
           attemptedResult.provider.id,
           'default',
-          plan.matchedGroup.stickyTTL * 1000,
+          plan.stickySession.stickyTtlMs,
         );
       }
 
@@ -624,6 +609,7 @@ export class Router {
       providers: this._providers,
       request,
       groupStore: this._groupStore,
+      sessionManager: this._sessionManager,
       latencyMeasurer: this._latencyMeasurer,
       explorationRate: this._explorationRate,
       modelRouter: this._modelRouter,
@@ -637,26 +623,17 @@ export class Router {
       );
     }
 
-    const clientId = plan.optimizedRequest.metadata?.['clientId'] as string | undefined;
-    const pinnedProviderId =
-      !plan.requestedProvider && this._sessionManager && clientId && plan.model
-        ? this._sessionManager.getRouterStickySession(clientId, plan.model)?.provider
-        : undefined;
-    const orderedStreamingCandidates =
-      pinnedProviderId
-        ? [
-            ...plan.availableCandidates.filter((provider) => provider.id === pinnedProviderId),
-            ...plan.availableCandidates.filter((provider) => provider.id !== pinnedProviderId),
-          ]
-        : plan.availableCandidates;
-
-    const stickyTtlMs = plan.matchedGroup?.stickyTTL ? plan.matchedGroup.stickyTTL * 1000 : null;
+    const orderedStreamingCandidates = plan.stickySession?.pinnedProviderId
+      ? prioritizeProviderCandidate(plan.availableCandidates, plan.stickySession.pinnedProviderId)
+      : plan.availableCandidates;
     const resolvedProviders: ResolvedStreamingProvider[] = [];
 
     for (const provider of orderedStreamingCandidates) {
       const streamTransformer = registry.getStreamOutbound(provider.id);
       if (streamTransformer) {
         const routedEndpoint = plan.modelRouterDecision?.endpoint;
+        const stickySession = plan.stickySession;
+        const stickyTtlMs = stickySession?.stickyTtlMs ?? null;
         resolvedProviders.push({
           provider,
           request: buildInternalRequest(
@@ -666,11 +643,11 @@ export class Router {
           ),
           streamTransformer,
           onSuccess:
-            this._sessionManager && clientId && plan.model && stickyTtlMs
+            this._sessionManager && stickySession && stickyTtlMs !== null
               ? () => {
                   this._sessionManager?.pinRouterStickySession(
-                    clientId,
-                    plan.model,
+                    stickySession.clientId,
+                    stickySession.model,
                     provider.id,
                     'default',
                     stickyTtlMs,
@@ -734,52 +711,4 @@ export class Router {
     return this._modelRouter?.getStatsSnapshot() ?? null;
   }
 
-}
-
-function determineRoutingStrategy(
-  request: GenerateRequest,
-  modelRouterDecision: RoutingDecision | null,
-  offloadClassification: TaskClassification | null,
-): string {
-  if (request.provider) {
-    return 'explicit-provider';
-  }
-
-  if (modelRouterDecision) {
-    return 'model-router';
-  }
-
-  if (offloadClassification?.shouldOffload) {
-    return 'local-offload';
-  }
-
-  if (request.model) {
-    return 'requested-model';
-  }
-
-  return 'standard';
-}
-
-function determineDecisionReason(
-  request: GenerateRequest,
-  modelRouterDecision: RoutingDecision | null,
-  offloadClassification: TaskClassification | null,
-): string {
-  if (request.provider) {
-    return `Provider ${request.provider} requested explicitly`;
-  }
-
-  if (modelRouterDecision) {
-    return modelRouterDecision.reason;
-  }
-
-  if (offloadClassification?.reason) {
-    return offloadClassification.reason;
-  }
-
-  if (request.model) {
-    return `Model ${request.model} requested explicitly`;
-  }
-
-  return 'Resolved by standard provider ordering';
 }
