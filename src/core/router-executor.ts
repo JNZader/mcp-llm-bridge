@@ -43,7 +43,6 @@ export interface ExecuteGenerateAttemptOptions {
   request: GenerateRequest;
   routedEndpoint?: ModelEndpoint;
   circuitBreaker: CircuitBreakerV2;
-  startTime: number;
   defaultModel: string;
   classification?: TaskClassification | null;
   attempt: number;
@@ -62,7 +61,6 @@ export interface TryProviderOptions {
   request: InternalLLMRequest;
   registry: TransformerRegistry;
   circuitBreaker: CircuitBreakerV2;
-  startTime: number;
   model?: string;
   classification?: TaskClassification;
   attempt: number;
@@ -130,7 +128,6 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     request,
     registry,
     circuitBreaker,
-    startTime,
     model = 'unknown',
     classification,
     attempt,
@@ -264,7 +261,6 @@ export async function executeGenerateAttempt(
     request,
     routedEndpoint,
     circuitBreaker,
-    startTime,
     defaultModel,
     classification,
     attempt,

@@ -302,7 +302,6 @@ export class Router {
         ),
         routedEndpoint: plan.modelRouterDecision?.endpoint,
         circuitBreaker,
-        startTime,
         defaultModel: plan.routedModel,
         classification: plan.classification,
         attempt: 1,
@@ -349,7 +348,6 @@ export class Router {
         ),
         routedEndpoint: plan.modelRouterDecision?.endpoint,
         circuitBreaker,
-        startTime,
         defaultModel: plan.routedModel,
         classification: plan.classification,
         attempt: index + 1,
@@ -463,13 +461,12 @@ export class Router {
    */
   async generateFromInternal(request: InternalLLMRequest): Promise<InternalLLMResponse> {
     if (!this._transformerRegistry) {
-      throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
-    }
+		throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
+	}
 
-    const registry = this._transformerRegistry;
-    const startTime = Date.now();
-    const circuitBreaker = getCircuitBreakerV2();
-    const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
+	const registry = this._transformerRegistry;
+	const circuitBreaker = getCircuitBreakerV2();
+	const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
 
     const plan = await buildInternalRoutingPlan({
       providers: this._providers,
@@ -498,12 +495,11 @@ export class Router {
                 optimizedRequest,
                 stickyProvider,
                 plan.modelRouterDecision?.endpoint,
-              ),
-              registry,
-              circuitBreaker,
-              startTime,
-              model: plan.routedModel,
-              classification: plan.classification ?? undefined,
+                ),
+                registry,
+                circuitBreaker,
+                model: plan.routedModel,
+                classification: plan.classification ?? undefined,
               attempt: 1,
               routedEndpoint: plan.modelRouterDecision?.endpoint,
               ...telemetry,
@@ -554,7 +550,6 @@ export class Router {
         ),
         registry,
         circuitBreaker,
-        startTime,
         classification: plan.classification ?? undefined,
         attempt: index + 1,
         routedEndpoint: plan.modelRouterDecision?.endpoint,
