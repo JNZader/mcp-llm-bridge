@@ -24,9 +24,11 @@ import type {
   AnalyticsQuery,
   RecordInput,
   AggregatorConfig,
-  Database,
-  AnalyticsFlushData,
+  AnalyticsPersistenceData,
+  AnalyticsPersistenceWriter,
 } from './types.js';
+
+const DEFAULT_FLUSH_INTERVAL_MS = 5000;
 
 /**
  * AnalyticsAggregator - In-memory metrics aggregation
@@ -37,6 +39,11 @@ import type {
 export class AnalyticsAggregator {
   private dimensions: AnalyticsDimensions;
   private maxLatencyWindow: number;
+  private persistenceWriter?: AnalyticsPersistenceWriter;
+  private flushInterval?: ReturnType<typeof setInterval>;
+  private flushPromise?: Promise<void>;
+  private revision = 0;
+  private lastFlushedRevision = 0;
 
   /**
    * Create a new AnalyticsAggregator
@@ -44,6 +51,7 @@ export class AnalyticsAggregator {
    */
   constructor(config: AggregatorConfig = {}) {
     this.maxLatencyWindow = config.maxLatencyWindow ?? 1000;
+    this.persistenceWriter = config.persistenceWriter;
     this.dimensions = {
       total: this.createEmptyMetrics(),
       hourly: new Map(),
@@ -52,6 +60,13 @@ export class AnalyticsAggregator {
       provider: new Map(),
       model: new Map(),
     };
+
+    if (this.persistenceWriter) {
+      this.flushInterval = setInterval(() => {
+        void this.flush().catch(() => {});
+      }, config.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS);
+      this.flushInterval.unref();
+    }
   }
 
   /**
@@ -67,6 +82,7 @@ export class AnalyticsAggregator {
     model: string,
     metrics: RecordInput
   ): void {
+    this.revision += 1;
     const timestamp = metrics.timestamp ?? Date.now();
 
     // Update total dimension
@@ -162,14 +178,60 @@ export class AnalyticsAggregator {
   }
 
   /**
-   * Flush aggregated data to database and clear in-memory data
+   * Flush durable hourly/daily aggregates to the configured writer.
    *
-   * @param db - Database instance with analytics interface
+   * The in-memory read path stays intact; persisted data is an absolute snapshot,
+   * so successful flushes do not clear live state.
+   *
+   * @param writer - Optional writer override for tests/manual flushes
    */
-  async flush(db: Database): Promise<void> {
-    const flushData = this.prepareFlushData();
-    await db.analytics.insert(flushData);
-    this.clear();
+  async flush(writer: AnalyticsPersistenceWriter | undefined = this.persistenceWriter): Promise<void> {
+    if (!writer) {
+      return;
+    }
+
+    if (this.lastFlushedRevision === this.revision) {
+      return;
+    }
+
+    if (this.flushPromise) {
+      return this.flushPromise;
+    }
+
+    const targetRevision = this.revision;
+    const flushData = this.preparePersistenceData();
+    if (flushData.hourly.length === 0 && flushData.daily.length === 0) {
+      this.lastFlushedRevision = targetRevision;
+      return;
+    }
+
+    this.flushPromise = Promise.resolve(writer.upsert(flushData))
+      .then(() => {
+        this.lastFlushedRevision = targetRevision;
+      })
+      .finally(() => {
+        this.flushPromise = undefined;
+      });
+
+    return this.flushPromise;
+  }
+
+  /**
+   * Stop periodic flushes and persist remaining durable aggregates.
+   */
+  async destroy(): Promise<void> {
+    if (this.flushInterval) {
+      clearInterval(this.flushInterval);
+      this.flushInterval = undefined;
+    }
+
+    if (!this.persistenceWriter) {
+      return;
+    }
+
+    while (this.lastFlushedRevision < this.revision) {
+      await this.flush();
+    }
   }
 
   /**
@@ -182,6 +244,8 @@ export class AnalyticsAggregator {
     this.dimensions.channel.clear();
     this.dimensions.provider.clear();
     this.dimensions.model.clear();
+    this.revision += 1;
+    this.lastFlushedRevision = this.revision;
   }
 
   // Private helper methods
@@ -359,12 +423,11 @@ export class AnalyticsAggregator {
   }
 
   /**
-   * Prepare data for database flush
+   * Prepare the durable subset that is safe to upsert repeatedly.
    */
-  private prepareFlushData(): AnalyticsFlushData {
+  private preparePersistenceData(): AnalyticsPersistenceData {
     return {
       flushedAt: Date.now(),
-      total: this.toDataPoint(0, this.dimensions.total),
       hourly: Array.from(this.dimensions.hourly.entries()).map(
         ([timestamp, metrics]) => ({
           timestamp,
@@ -375,24 +438,6 @@ export class AnalyticsAggregator {
         ([timestamp, metrics]) => ({
           timestamp,
           data: this.toDataPoint(timestamp, metrics),
-        })
-      ),
-      channel: Array.from(this.dimensions.channel.entries()).map(
-        ([id, metrics]) => ({
-          id,
-          data: this.toDataPoint(0, metrics, { channelId: id }),
-        })
-      ),
-      provider: Array.from(this.dimensions.provider.entries()).map(
-        ([name, metrics]) => ({
-          name,
-          data: this.toDataPoint(0, metrics, { provider: name }),
-        })
-      ),
-      model: Array.from(this.dimensions.model.entries()).map(
-        ([name, metrics]) => ({
-          name,
-          data: this.toDataPoint(0, metrics, { model: name }),
         })
       ),
     };

@@ -117,6 +117,29 @@ export interface RecordInput {
 export interface AggregatorConfig {
   /** Maximum number of latencies to keep in sliding window (default: 1000) */
   maxLatencyWindow?: number;
+  /** Optional persistence writer for durable hourly/daily aggregates */
+  persistenceWriter?: AnalyticsPersistenceWriter;
+  /** Background flush interval in milliseconds when persistence is enabled */
+  flushIntervalMs?: number;
+}
+
+/**
+ * Durable hourly/daily data flushed from the in-memory aggregator
+ */
+export interface AnalyticsPersistenceData {
+  /** Timestamp when flush occurred */
+  flushedAt: number;
+  /** Hourly metrics array */
+  hourly: Array<{ timestamp: number; data: AggregatedDataPoint }>;
+  /** Daily metrics array */
+  daily: Array<{ timestamp: number; data: AggregatedDataPoint }>;
+}
+
+/**
+ * Persistence adapter for durable analytics dimensions
+ */
+export interface AnalyticsPersistenceWriter {
+  upsert(data: AnalyticsPersistenceData): Promise<void> | void;
 }
 
 /**

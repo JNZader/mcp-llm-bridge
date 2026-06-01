@@ -10,6 +10,7 @@ import {
 } from "../../src/bootstrap/core-services.js";
 import { Vault } from "../../src/vault/vault.js";
 import type { GatewayConfig } from "../../src/core/types.js";
+import { migrate } from "../../src/db/migrate.js";
 
 const dbPath = `/tmp/test-core-services-${Date.now()}.db`;
 
@@ -32,7 +33,9 @@ after(() => {
 });
 
 describe("createCoreServices", () => {
-	it("constructs the passive service graph without starting session cleanup", () => {
+	it("constructs the passive service graph without starting session cleanup", async () => {
+		await migrate({ dbPath });
+
 		const coreServices = createCoreServices({
 			db: vault.getDb(),
 			dbPath,
@@ -62,6 +65,7 @@ describe("createCoreServices", () => {
 
 		coreServices.compressor.destroy();
 		coreServices.costTracker.destroy();
+		await coreServices.analyticsAggregator.destroy();
 		coreServices.groupStore.close();
 		coreServices.sessionManager.destroy();
 		toolingServices.pageIndex.service.close();

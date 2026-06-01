@@ -37,6 +37,7 @@ await setupGracefulShutdown({
 	latencyMeasurer: runtime.latencyMeasurer,
 	freeModelRouter: runtime.freeModelRouter,
 	costTracker: runtime.costTracker,
+	analyticsAggregator: runtime.analyticsAggregator,
 	groupStore: runtime.groupStore,
 	sessionManager: runtime.sessionManager,
 	pageIndexService: runtime.pageIndex.service,

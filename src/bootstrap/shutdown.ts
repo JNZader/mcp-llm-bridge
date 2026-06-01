@@ -5,7 +5,7 @@ const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM"] as const;
 type ShutdownSignal = (typeof SHUTDOWN_SIGNALS)[number];
 
 interface Destroyable {
-	destroy(): void;
+	destroy(): void | Promise<void>;
 }
 
 interface Closable {
@@ -32,6 +32,7 @@ export interface ShutdownDeps {
 	latencyMeasurer: LatencyMeasurer;
 	freeModelRouter: Destroyable;
 	costTracker: Destroyable;
+	analyticsAggregator: Destroyable;
 	groupStore: Closable;
 	sessionManager: Destroyable;
 	pageIndexService?: Closable;
@@ -55,6 +56,7 @@ export async function setupGracefulShutdown({
 	latencyMeasurer,
 	freeModelRouter,
 	costTracker,
+	analyticsAggregator,
 	groupStore,
 	sessionManager,
 	pageIndexService,
@@ -90,6 +92,7 @@ export async function setupGracefulShutdown({
 			);
 			await runStep("freeModelRouter.destroy", () => freeModelRouter.destroy());
 			await runStep("costTracker.destroy", () => costTracker.destroy());
+			await runStep("analyticsAggregator.destroy", () => analyticsAggregator.destroy());
 			await runStep("groupStore.close", () => groupStore.close());
 			await runStep("sessionManager.destroy", () => sessionManager.destroy());
 			await runStep("pageIndexService.close", () => pageIndexService?.close());

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { ApprovalStore } from "../approval/index.js";
-import { AnalyticsAggregator } from "../analytics/index.js";
+import { AnalyticsAggregator, SQLiteAnalyticsWriter } from "../analytics/index.js";
 import { CodeSearchService } from "../code-search/index.js";
 import { ComparisonStore } from "../comparison/persistence.js";
 import { CompressorService } from "../context-compression/index.js";
@@ -42,7 +42,11 @@ export interface ComparisonServices {
 export function createCoreServices(options: CoreServicesOptions): CoreServices {
 	const requestLogger = new RequestLogger(options.db);
 	const costTracker = new CostTracker({ dbPath: options.dbPath });
-	const analyticsAggregator = new AnalyticsAggregator();
+	const analyticsWriter = new SQLiteAnalyticsWriter(options.db);
+	const analyticsAggregator = new AnalyticsAggregator({
+		persistenceWriter: analyticsWriter,
+		flushIntervalMs: 5000,
+	});
 	const groupStore = new GroupStore(options.dbPath);
 	const sessionManager = new SessionManager();
 	const compressor = new CompressorService();

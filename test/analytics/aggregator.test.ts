@@ -10,21 +10,13 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { AnalyticsAggregator } from '../../src/analytics/index.js';
+import type { AnalyticsPersistenceData, AnalyticsPersistenceWriter } from '../../src/analytics/index.js';
 
-// Mock database interface for flush tests
-interface MockDatabase {
-  analytics: {
-    insert: (data: unknown) => Promise<void>;
-    query: (sql: string, params: unknown[]) => Promise<unknown[]>;
-  };
-}
-
-function createMockDb(): MockDatabase {
+function createMockWriter(
+  upsert: (data: AnalyticsPersistenceData) => Promise<void> | void = async () => {}
+): AnalyticsPersistenceWriter {
   return {
-    analytics: {
-      insert: async () => {},
-      query: async () => [],
-    },
+    upsert,
   };
 }
 
@@ -560,7 +552,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
   });
 
   describe('flush() - Database Persistence', () => {
-    it('should flush total dimension to database', async () => {
+    it('should flush only hourly and daily aggregates to the writer', async () => {
       aggregator.record('openai', 'gpt-4o', {
         inputTokens: 100,
         outputTokens: 50,
@@ -569,19 +561,19 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
         channel: 'default',
       });
 
-      const mockDb = createMockDb();
       let insertedData: unknown = null;
-      mockDb.analytics.insert = async (data) => {
+      const writer = createMockWriter(async (data) => {
         insertedData = data;
-      };
+      });
 
-      await aggregator.flush(mockDb as unknown as import('../../src/analytics/types.js').Database);
+      await aggregator.flush(writer);
 
       assert.notStrictEqual(insertedData, null);
-      assert.deepStrictEqual((insertedData as { provider: Array<unknown> }).provider.length, 1);
+      assert.strictEqual((insertedData as AnalyticsPersistenceData).hourly.length, 1);
+      assert.strictEqual((insertedData as AnalyticsPersistenceData).daily.length, 1);
     });
 
-    it('should clear in-memory data after flush', async () => {
+    it('keeps in-memory analytics available after a successful flush', async () => {
       aggregator.record('openai', 'gpt-4o', {
         inputTokens: 100,
         outputTokens: 50,
@@ -590,11 +582,81 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
         channel: 'default',
       });
 
-      const mockDb = createMockDb();
-      await aggregator.flush(mockDb as unknown as import('../../src/analytics/types.js').Database);
+      await aggregator.flush(createMockWriter());
 
       const total = aggregator.query({ dimension: 'total' });
-      assert.strictEqual(total[0]!.requests, (0));
+      assert.strictEqual(total[0]!.requests, (1));
+    });
+
+    it('periodically flushes when persistence is configured', async () => {
+      let flushCount = 0;
+      const periodicAggregator = new AnalyticsAggregator({
+        persistenceWriter: createMockWriter(async () => {
+          flushCount += 1;
+        }),
+        flushIntervalMs: 20,
+      });
+
+      periodicAggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        channel: 'default',
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      await periodicAggregator.destroy();
+
+      assert.ok(flushCount >= 1);
+      assert.strictEqual(periodicAggregator.query({ dimension: 'total' })[0]!.requests, 1);
+    });
+
+    it('keeps state when flush fails', async () => {
+      aggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        channel: 'default',
+      });
+
+      await assert.rejects(
+        aggregator.flush(
+          createMockWriter(async () => {
+            throw new Error('flush failed');
+          })
+        ),
+        /flush failed/
+      );
+
+      const total = aggregator.query({ dimension: 'total' });
+      assert.strictEqual(total[0]!.requests, 1);
+      assert.strictEqual(aggregator.query({ dimension: 'hourly' }).length, 1);
+    });
+
+    it('flushes pending data on destroy', async () => {
+      let flushCount = 0;
+      const persistentAggregator = new AnalyticsAggregator({
+        persistenceWriter: createMockWriter(async (data) => {
+          flushCount += 1;
+          assert.strictEqual(data.hourly.length, 1);
+          assert.strictEqual(data.daily.length, 1);
+        }),
+        flushIntervalMs: 10_000,
+      });
+
+      persistentAggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        channel: 'default',
+      });
+
+      await persistentAggregator.destroy();
+
+      assert.strictEqual(flushCount, 1);
     });
   });
 

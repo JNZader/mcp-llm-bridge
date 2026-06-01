@@ -15,6 +15,8 @@ export type {
   AnalyticsQuery,
   RecordInput,
   AggregatorConfig,
+  AnalyticsPersistenceData,
+  AnalyticsPersistenceWriter,
   Database,
   AnalyticsFlushData,
 } from './types.js';
@@ -28,3 +30,6 @@ export {
 
 // Export AnalyticsAggregator class
 export { AnalyticsAggregator } from './aggregator.js';
+
+// Export persistence adapters
+export { SQLiteAnalyticsWriter } from './sqlite-writer.js';

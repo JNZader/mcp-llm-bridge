@@ -17,6 +17,7 @@ describe("setupGracefulShutdown", () => {
 			latencyMeasurer: { stopBackgroundTask() {} },
 			freeModelRouter: { destroy() {} },
 			costTracker: { destroy() {} },
+			analyticsAggregator: { destroy() {} },
 			groupStore: { close() {} },
 			sessionManager: { destroy() {} },
 			pageIndexService: { close() {} },
@@ -37,17 +38,18 @@ describe("setupGracefulShutdown", () => {
 		const listeners = new Map<string, () => void | Promise<void>>();
 
 		await setupGracefulShutdown({
-			compressor: { destroy: () => events.push("compressor.destroy") },
+			compressor: { destroy: () => void events.push("compressor.destroy") },
 			latencyMeasurer: {
-				stopBackgroundTask: () => events.push("latencyMeasurer.stopBackgroundTask"),
+				stopBackgroundTask: () => void events.push("latencyMeasurer.stopBackgroundTask"),
 			},
-			freeModelRouter: { destroy: () => events.push("freeModelRouter.destroy") },
-			costTracker: { destroy: () => events.push("costTracker.destroy") },
-			groupStore: { close: () => events.push("groupStore.close") },
-			sessionManager: { destroy: () => events.push("sessionManager.destroy") },
-			pageIndexService: { close: () => events.push("pageIndexService.close") },
-			vault: { destroy: () => events.push("vault.destroy") },
-			cleanupAllProviderHomes: () => events.push("cleanupAllProviderHomes"),
+			freeModelRouter: { destroy: () => void events.push("freeModelRouter.destroy") },
+			costTracker: { destroy: () => void events.push("costTracker.destroy") },
+			analyticsAggregator: { destroy: () => void events.push("analyticsAggregator.destroy") },
+			groupStore: { close: () => void events.push("groupStore.close") },
+			sessionManager: { destroy: () => void events.push("sessionManager.destroy") },
+			pageIndexService: { close: () => void events.push("pageIndexService.close") },
+			vault: { destroy: () => void events.push("vault.destroy") },
+			cleanupAllProviderHomes: () => void events.push("cleanupAllProviderHomes"),
 			shutdownTracing: async () => {
 				events.push("shutdownTracing.start");
 				events.push("shutdownTracing.end");
@@ -70,6 +72,7 @@ describe("setupGracefulShutdown", () => {
 			"latencyMeasurer.stopBackgroundTask",
 			"freeModelRouter.destroy",
 			"costTracker.destroy",
+			"analyticsAggregator.destroy",
 			"groupStore.close",
 			"sessionManager.destroy",
 			"pageIndexService.close",
@@ -86,17 +89,18 @@ describe("setupGracefulShutdown", () => {
 		const listeners = new Map<string, () => void | Promise<void>>();
 
 		await setupGracefulShutdown({
-			compressor: { destroy: () => events.push("compressor.destroy") },
+			compressor: { destroy: () => void events.push("compressor.destroy") },
 			latencyMeasurer: {
-				stopBackgroundTask: () => events.push("latencyMeasurer.stopBackgroundTask"),
+				stopBackgroundTask: () => void events.push("latencyMeasurer.stopBackgroundTask"),
 			},
-			freeModelRouter: { destroy: () => events.push("freeModelRouter.destroy") },
-			costTracker: { destroy: () => events.push("costTracker.destroy") },
-			groupStore: { close: () => events.push("groupStore.close") },
-			sessionManager: { destroy: () => events.push("sessionManager.destroy") },
-			pageIndexService: { close: () => events.push("pageIndexService.close") },
-			vault: { destroy: () => events.push("vault.destroy") },
-			cleanupAllProviderHomes: () => events.push("cleanupAllProviderHomes"),
+			freeModelRouter: { destroy: () => void events.push("freeModelRouter.destroy") },
+			costTracker: { destroy: () => void events.push("costTracker.destroy") },
+			analyticsAggregator: { destroy: () => void events.push("analyticsAggregator.destroy") },
+			groupStore: { close: () => void events.push("groupStore.close") },
+			sessionManager: { destroy: () => void events.push("sessionManager.destroy") },
+			pageIndexService: { close: () => void events.push("pageIndexService.close") },
+			vault: { destroy: () => void events.push("vault.destroy") },
+			cleanupAllProviderHomes: () => void events.push("cleanupAllProviderHomes"),
 			shutdownTracing: async () => {
 				events.push("shutdownTracing.start");
 				events.push("shutdownTracing.end");
@@ -122,6 +126,7 @@ describe("setupGracefulShutdown", () => {
 			"latencyMeasurer.stopBackgroundTask",
 			"freeModelRouter.destroy",
 			"costTracker.destroy",
+			"analyticsAggregator.destroy",
 			"groupStore.close",
 			"sessionManager.destroy",
 			"pageIndexService.close",
@@ -145,15 +150,16 @@ describe("setupGracefulShutdown", () => {
 				},
 			},
 			latencyMeasurer: {
-				stopBackgroundTask: () => events.push("latencyMeasurer.stopBackgroundTask"),
+				stopBackgroundTask: () => void events.push("latencyMeasurer.stopBackgroundTask"),
 			},
-			freeModelRouter: { destroy: () => events.push("freeModelRouter.destroy") },
-			costTracker: { destroy: () => events.push("costTracker.destroy") },
-			groupStore: { close: () => events.push("groupStore.close") },
-			sessionManager: { destroy: () => events.push("sessionManager.destroy") },
-			pageIndexService: { close: () => events.push("pageIndexService.close") },
-			vault: { destroy: () => events.push("vault.destroy") },
-			cleanupAllProviderHomes: () => events.push("cleanupAllProviderHomes"),
+			freeModelRouter: { destroy: () => void events.push("freeModelRouter.destroy") },
+			costTracker: { destroy: () => void events.push("costTracker.destroy") },
+			analyticsAggregator: { destroy: () => void events.push("analyticsAggregator.destroy") },
+			groupStore: { close: () => void events.push("groupStore.close") },
+			sessionManager: { destroy: () => void events.push("sessionManager.destroy") },
+			pageIndexService: { close: () => void events.push("pageIndexService.close") },
+			vault: { destroy: () => void events.push("vault.destroy") },
+			cleanupAllProviderHomes: () => void events.push("cleanupAllProviderHomes"),
 			shutdownTracing: async () => {
 				events.push("shutdownTracing.start");
 				events.push("shutdownTracing.end");
@@ -176,6 +182,7 @@ describe("setupGracefulShutdown", () => {
 			"latencyMeasurer.stopBackgroundTask",
 			"freeModelRouter.destroy",
 			"costTracker.destroy",
+			"analyticsAggregator.destroy",
 			"groupStore.close",
 			"sessionManager.destroy",
 			"pageIndexService.close",
@@ -192,17 +199,18 @@ describe("setupGracefulShutdown", () => {
 		const listeners = new Map<string, () => void | Promise<void>>();
 
 		await setupGracefulShutdown({
-			compressor: { destroy: () => events.push("compressor.destroy") },
+			compressor: { destroy: () => void events.push("compressor.destroy") },
 			latencyMeasurer: {
-				stopBackgroundTask: () => events.push("latencyMeasurer.stopBackgroundTask"),
+				stopBackgroundTask: () => void events.push("latencyMeasurer.stopBackgroundTask"),
 			},
-			freeModelRouter: { destroy: () => events.push("freeModelRouter.destroy") },
-			costTracker: { destroy: () => events.push("costTracker.destroy") },
-			groupStore: { close: () => events.push("groupStore.close") },
-			sessionManager: { destroy: () => events.push("sessionManager.destroy") },
-			pageIndexService: { close: () => events.push("pageIndexService.close") },
-			vault: { destroy: () => events.push("vault.destroy") },
-			cleanupAllProviderHomes: () => events.push("cleanupAllProviderHomes"),
+			freeModelRouter: { destroy: () => void events.push("freeModelRouter.destroy") },
+			costTracker: { destroy: () => void events.push("costTracker.destroy") },
+			analyticsAggregator: { destroy: () => void events.push("analyticsAggregator.destroy") },
+			groupStore: { close: () => void events.push("groupStore.close") },
+			sessionManager: { destroy: () => void events.push("sessionManager.destroy") },
+			pageIndexService: { close: () => void events.push("pageIndexService.close") },
+			vault: { destroy: () => void events.push("vault.destroy") },
+			cleanupAllProviderHomes: () => void events.push("cleanupAllProviderHomes"),
 			shutdownTracing: async () => {
 				events.push("shutdownTracing.start");
 				throw new Error("tracing failed");
@@ -225,6 +233,7 @@ describe("setupGracefulShutdown", () => {
 			"latencyMeasurer.stopBackgroundTask",
 			"freeModelRouter.destroy",
 			"costTracker.destroy",
+			"analyticsAggregator.destroy",
 			"groupStore.close",
 			"sessionManager.destroy",
 			"pageIndexService.close",
@@ -240,9 +249,9 @@ describe("setupGracefulShutdown", () => {
 		const listeners = new Map<string, () => void | Promise<void>>();
 
 		await setupGracefulShutdown({
-			compressor: { destroy: () => events.push("compressor.destroy") },
+			compressor: { destroy: () => void events.push("compressor.destroy") },
 			latencyMeasurer: {
-				stopBackgroundTask: () => events.push("latencyMeasurer.stopBackgroundTask"),
+				stopBackgroundTask: () => void events.push("latencyMeasurer.stopBackgroundTask"),
 			},
 			freeModelRouter: {
 				destroy: () => {
@@ -250,12 +259,13 @@ describe("setupGracefulShutdown", () => {
 					throw new Error("router failed");
 				},
 			},
-			costTracker: { destroy: () => events.push("costTracker.destroy") },
-			groupStore: { close: () => events.push("groupStore.close") },
-			sessionManager: { destroy: () => events.push("sessionManager.destroy") },
-			pageIndexService: { close: () => events.push("pageIndexService.close") },
-			vault: { destroy: () => events.push("vault.destroy") },
-			cleanupAllProviderHomes: () => events.push("cleanupAllProviderHomes"),
+			costTracker: { destroy: () => void events.push("costTracker.destroy") },
+			analyticsAggregator: { destroy: () => void events.push("analyticsAggregator.destroy") },
+			groupStore: { close: () => void events.push("groupStore.close") },
+			sessionManager: { destroy: () => void events.push("sessionManager.destroy") },
+			pageIndexService: { close: () => void events.push("pageIndexService.close") },
+			vault: { destroy: () => void events.push("vault.destroy") },
+			cleanupAllProviderHomes: () => void events.push("cleanupAllProviderHomes"),
 			shutdownTracing: async () => {
 				events.push("shutdownTracing.start");
 				events.push("shutdownTracing.end");
@@ -281,6 +291,7 @@ describe("setupGracefulShutdown", () => {
 			"latencyMeasurer.stopBackgroundTask",
 			"freeModelRouter.destroy",
 			"costTracker.destroy",
+			"analyticsAggregator.destroy",
 			"groupStore.close",
 			"sessionManager.destroy",
 			"pageIndexService.close",
