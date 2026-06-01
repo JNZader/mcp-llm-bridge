@@ -9,16 +9,12 @@ import {
 	type ToolingServices,
 } from "./core-services.js";
 import { createComparisonContext } from "./comparison.js";
-import { bootstrapFreeModels } from "./free-models.js";
-import { bootstrapLatencyRouting } from "./latency.js";
 import { bootstrapLocalLLM } from "./local-llm.js";
-import { bootstrapModelRouting } from "./model-routing.js";
-import { bootstrapBridge } from "./bridge.js";
 import { type GatewayConfig } from "../core/types.js";
 import type { FreeModelRouter } from "../free-models/router.js";
 import type { LatencyMeasurer } from "../latency/index.js";
 import { Vault } from "../vault/index.js";
-import { bootstrapRouterBaseline } from "./router-baseline.js";
+import { bootstrapRouterFeatures } from "./router-features.js";
 import { createRuntimeFoundation } from "./runtime-foundation.js";
 
 export interface RuntimeContext
@@ -41,14 +37,13 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
 	const { config, vault, router, db, coreServices } =
 		await createRuntimeFoundation();
 
-	bootstrapRouterBaseline(router, vault, coreServices);
-
-	const { freeModelEnabled, freeModelRouter } = bootstrapFreeModels(router);
-	const latencyMeasurer = bootstrapLatencyRouting(router);
-
-	await bootstrapModelRouting(router);
-
-	const { bridgeConfig, bridge } = bootstrapBridge(router);
+	const {
+		freeModelEnabled,
+		freeModelRouter,
+		latencyMeasurer,
+		bridgeConfig,
+		bridge,
+	} = await bootstrapRouterFeatures(router, vault, coreServices);
 
 	const toolingServices = createToolingServices({
 		db,
