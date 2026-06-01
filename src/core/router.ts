@@ -9,10 +9,10 @@
  * InternalLLMRequest payloads and use the transformer pipeline
  * for outbound conversion and response normalization.
  *
- * When a GroupStore is configured, the router checks for group-based
- * routing first: if a group matches the requested model (via modelPattern),
- * it uses the group's balancer strategy to order providers. Session
- * stickiness is checked before balancing when enabled.
+ * The legacy `generate()` path focuses on explicit provider/model routing,
+ * ModelRouter/local-offload precedence, and fallback execution.
+ * Richer group/session-aware routing is applied in the internal/streaming
+ * paths built around `InternalLLMRequest`.
  */
 
 import type {
@@ -227,13 +227,12 @@ export class Router {
   /**
    * Generate text by routing the request to the best available provider.
    *
-   * Precedence stack (highest to lowest):
-   * 1. Session stickiness
-   * 2. Group-based routing
-   * 3. ModelRouter (when enabled)
-   * 4. Local-LLM offloading (when enabled)
-   * 5. Standard resolution
-   * 6. Latency reordering
+   * Precedence stack for the legacy `GenerateRequest` path (highest to lowest):
+   * 1. Explicit provider/model intent
+   * 2. ModelRouter (when enabled and no explicit provider)
+   * 3. Local-LLM offloading (when enabled and ModelRouter does not win)
+   * 4. Standard resolution
+   * 5. Latency reordering
    *
    * Tries each candidate in resolution order and falls back to the next
    * on failure. Throws if all providers fail.
