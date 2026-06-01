@@ -179,6 +179,7 @@ export function registerObservabilityRoutes(
 			return c.json({
 				data,
 				dimension,
+				flushStatus: analyticsAggregator.getFlushStatus(),
 				summary: {
 					totalRequests,
 					successfulRequests,

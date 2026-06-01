@@ -624,6 +624,34 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       assert.strictEqual(total[0]!.requests, (1));
     });
 
+    it('reports successful flush status with cleared pending data', async () => {
+      const persistentAggregator = new AnalyticsAggregator({
+        persistenceWriter: createMockWriter(async () => {}),
+      });
+
+      persistentAggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        channel: 'default',
+      });
+
+      assert.strictEqual(persistentAggregator.getFlushStatus().hasUnflushedData, true);
+
+      await persistentAggregator.flush();
+
+      const status = persistentAggregator.getFlushStatus();
+      assert.strictEqual(status.persistenceEnabled, true);
+      assert.ok(typeof status.lastFlushAt === 'number');
+      assert.strictEqual(status.lastFlushSucceededAt, status.lastFlushAt);
+      assert.strictEqual(status.lastFlushError, null);
+      assert.strictEqual(status.pendingInMemoryBuckets, 0);
+      assert.strictEqual(status.hasUnflushedData, false);
+
+      await persistentAggregator.destroy();
+    });
+
     it('periodically flushes when persistence is configured', async () => {
       let flushCount = 0;
       const periodicAggregator = new AnalyticsAggregator({
@@ -649,7 +677,13 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
     });
 
     it('keeps state when flush fails', async () => {
-      aggregator.record('openai', 'gpt-4o', {
+      const persistentAggregator = new AnalyticsAggregator({
+        persistenceWriter: createMockWriter(async () => {
+          throw new Error('flush failed');
+        }),
+      });
+
+      persistentAggregator.record('openai', 'gpt-4o', {
         inputTokens: 100,
         outputTokens: 50,
         cost: 0.0025,
@@ -658,17 +692,20 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       });
 
       await assert.rejects(
-        aggregator.flush(
-          createMockWriter(async () => {
-            throw new Error('flush failed');
-          })
-        ),
+        persistentAggregator.flush(),
         /flush failed/
       );
 
-      const total = aggregator.query({ dimension: 'total' });
+      const total = persistentAggregator.query({ dimension: 'total' });
       assert.strictEqual(total[0]!.requests, 1);
-      assert.strictEqual(aggregator.query({ dimension: 'hourly' }).length, 1);
+      assert.strictEqual(persistentAggregator.query({ dimension: 'hourly' }).length, 1);
+
+      const status = persistentAggregator.getFlushStatus();
+      assert.ok(typeof status.lastFlushAt === 'number');
+      assert.strictEqual(status.lastFlushSucceededAt, null);
+      assert.strictEqual(status.lastFlushError, 'flush failed');
+      assert.strictEqual(status.pendingInMemoryBuckets, 2);
+      assert.strictEqual(status.hasUnflushedData, true);
     });
 
     it('flushes pending data on destroy', async () => {

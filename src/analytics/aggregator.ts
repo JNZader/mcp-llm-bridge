@@ -22,6 +22,7 @@ import type {
   AnalyticsDimensions,
   AggregatedDataPoint,
   AnalyticsQuery,
+  AnalyticsFlushStatus,
   RecordInput,
   AggregatorConfig,
   AnalyticsPersistenceData,
@@ -44,6 +45,9 @@ export class AnalyticsAggregator {
   private flushPromise?: Promise<void>;
   private revision = 0;
   private lastFlushedRevision = 0;
+  private lastFlushAt: number | null = null;
+  private lastFlushSucceededAt: number | null = null;
+  private lastFlushError: string | null = null;
 
   /**
    * Create a new AnalyticsAggregator
@@ -178,6 +182,23 @@ export class AnalyticsAggregator {
   }
 
   /**
+   * Report current flush visibility for operators.
+   */
+  getFlushStatus(): AnalyticsFlushStatus {
+    const persistenceEnabled = this.persistenceWriter !== undefined;
+    const hasUnflushedData = persistenceEnabled && this.lastFlushedRevision < this.revision;
+
+    return {
+      persistenceEnabled,
+      lastFlushAt: this.lastFlushAt,
+      lastFlushSucceededAt: this.lastFlushSucceededAt,
+      lastFlushError: this.lastFlushError,
+      pendingInMemoryBuckets: hasUnflushedData ? this.dimensions.hourly.size + this.dimensions.daily.size : 0,
+      hasUnflushedData,
+    };
+  }
+
+  /**
    * Flush durable hourly/daily aggregates to the configured writer.
    *
    * The in-memory read path stays intact; persisted data is an absolute snapshot,
@@ -199,15 +220,25 @@ export class AnalyticsAggregator {
     }
 
     const targetRevision = this.revision;
-    const flushData = this.preparePersistenceData();
+    const flushStartedAt = Date.now();
+    this.lastFlushAt = flushStartedAt;
+    const flushData = this.preparePersistenceData(flushStartedAt);
     if (flushData.hourly.length === 0 && flushData.daily.length === 0) {
       this.lastFlushedRevision = targetRevision;
+      this.lastFlushSucceededAt = flushStartedAt;
+      this.lastFlushError = null;
       return;
     }
 
     this.flushPromise = Promise.resolve(writer.upsert(flushData))
       .then(() => {
         this.lastFlushedRevision = targetRevision;
+        this.lastFlushSucceededAt = flushStartedAt;
+        this.lastFlushError = null;
+      })
+      .catch((error: unknown) => {
+        this.lastFlushError = this.toFlushError(error);
+        throw error;
       })
       .finally(() => {
         this.flushPromise = undefined;
@@ -438,9 +469,9 @@ export class AnalyticsAggregator {
   /**
    * Prepare the durable subset that is safe to upsert repeatedly.
    */
-  private preparePersistenceData(): AnalyticsPersistenceData {
+  private preparePersistenceData(flushedAt: number): AnalyticsPersistenceData {
     return {
-      flushedAt: Date.now(),
+      flushedAt,
       hourly: Array.from(this.dimensions.hourly.entries()).map(
         ([timestamp, metrics]) => ({
           timestamp,
@@ -454,5 +485,9 @@ export class AnalyticsAggregator {
         })
       ),
     };
+  }
+
+  private toFlushError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
   }
 }

@@ -144,6 +144,24 @@ export interface AggregatorConfig {
 }
 
 /**
+ * Operator-visible status for background analytics flushes.
+ */
+export interface AnalyticsFlushStatus {
+  /** Whether the aggregator has a configured persistence writer */
+  persistenceEnabled: boolean;
+  /** Timestamp of the most recent flush attempt */
+  lastFlushAt: number | null;
+  /** Timestamp of the most recent successful flush */
+  lastFlushSucceededAt: number | null;
+  /** Message from the most recent flush failure */
+  lastFlushError: string | null;
+  /** Count of durable hourly/daily buckets still only in memory */
+  pendingInMemoryBuckets: number;
+  /** Whether there is live durable data not yet persisted */
+  hasUnflushedData: boolean;
+}
+
+/**
  * Durable hourly/daily data flushed from the in-memory aggregator
  */
 export interface AnalyticsPersistenceData {

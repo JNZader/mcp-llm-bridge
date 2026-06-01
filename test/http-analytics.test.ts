@@ -236,6 +236,31 @@ describe('GET /v1/analytics', () => {
       assert.ok(typeof (res.data as any).summary === 'object', 'Response should have summary object');
     });
 
+    it('should expose additive flush status in the analytics response', async () => {
+      const res = await request('GET', '/v1/analytics');
+
+      assert.equal(res.status, 200);
+      const data = res.data as {
+        flushStatus: {
+          persistenceEnabled: boolean;
+          lastFlushAt: number | null;
+          lastFlushSucceededAt: number | null;
+          lastFlushError: string | null;
+          pendingInMemoryBuckets: number;
+          hasUnflushedData: boolean;
+        };
+      };
+
+      assert.deepEqual(data.flushStatus, {
+        persistenceEnabled: false,
+        lastFlushAt: null,
+        lastFlushSucceededAt: null,
+        lastFlushError: null,
+        pendingInMemoryBuckets: 0,
+        hasUnflushedData: false,
+      });
+    });
+
     it('should return summary with correct calculations', async () => {
       const res = await request('GET', '/v1/analytics');
 
@@ -1214,6 +1239,56 @@ describe('GET /v1/analytics', () => {
 				} finally {
 					runner.close();
 				}
+			});
+
+			it('surfaces failed flush status for operators', async () => {
+				const aggregatorWithFailure = new AnalyticsAggregator({
+					persistenceWriter: {
+						async upsert() {
+							throw new Error('sqlite busy');
+						},
+					},
+					flushIntervalMs: 10_000,
+				});
+
+				aggregatorWithFailure.record('openai', 'gpt-4o', {
+					inputTokens: 50,
+					outputTokens: 25,
+					cost: 0.075,
+					latencyMs: 400,
+					channel: 'fast',
+				});
+
+				await assert.rejects(aggregatorWithFailure.flush(), /sqlite busy/);
+
+				const app = new Hono();
+				registerObservabilityRoutes(app, {
+					router: new Router(),
+					analyticsAggregator: aggregatorWithFailure,
+				});
+
+				const res = await app.request('/v1/analytics?dimension=hourly');
+				assert.equal(res.status, 200);
+
+				const body = await res.json() as {
+					flushStatus: {
+						persistenceEnabled: boolean;
+						lastFlushAt: number | null;
+						lastFlushSucceededAt: number | null;
+						lastFlushError: string | null;
+						pendingInMemoryBuckets: number;
+						hasUnflushedData: boolean;
+					};
+				};
+
+				assert.strictEqual(body.flushStatus.persistenceEnabled, true);
+				assert.ok(typeof body.flushStatus.lastFlushAt === 'number');
+				assert.strictEqual(body.flushStatus.lastFlushSucceededAt, null);
+				assert.strictEqual(body.flushStatus.lastFlushError, 'sqlite busy');
+				assert.strictEqual(body.flushStatus.pendingInMemoryBuckets, 2);
+				assert.strictEqual(body.flushStatus.hasUnflushedData, true);
+
+				await aggregatorWithFailure.destroy().catch(() => {});
 			});
 	});
 });
