@@ -117,7 +117,7 @@ export function registerObservabilityRoutes(
 
 			const totalRequests = data.reduce((sum, item) => sum + item.requests, 0);
 			const totalTokens = data.reduce(
-				(sum, item) => sum + item.inputTokens + item.outputTokens,
+				(sum, item) => sum + item.totalTokens,
 				0,
 			);
 			const totalCost =

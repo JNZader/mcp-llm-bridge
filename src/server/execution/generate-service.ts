@@ -38,7 +38,7 @@ export async function executeGenerateRequest(
 			await requestLogger.captureEnd(logCtx, {
 				provider: result.resolvedProvider,
 				model: result.resolvedModel,
-				outputTokens: result.tokensUsed || 0,
+				totalTokens: result.tokensUsed,
 				responseData: JSON.stringify(result),
 			});
 		}

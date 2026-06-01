@@ -70,6 +70,7 @@ export interface ResolvedStreamingProvider {
   onSuccess?: () => void;
   recordResult: (input: {
     model?: string;
+    totalTokens?: number;
     tokensIn?: number;
     tokensOut?: number;
     latencyMs: number;

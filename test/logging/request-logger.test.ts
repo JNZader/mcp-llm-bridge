@@ -36,9 +36,10 @@ function createTestDatabase(): Database.Database {
       timestamp INTEGER NOT NULL,
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
-      input_tokens INTEGER NOT NULL DEFAULT 0,
-      output_tokens INTEGER NOT NULL DEFAULT 0,
-      cost REAL NOT NULL DEFAULT 0.0,
+      total_tokens INTEGER,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cost REAL,
       latency_ms INTEGER NOT NULL,
       error TEXT,
       attempts INTEGER NOT NULL DEFAULT 1,
@@ -130,6 +131,7 @@ describe('RequestLogger', () => {
       assert.ok(row, 'Log entry should be stored in database');
       assert.strictEqual(row.provider, 'openai', 'Provider should match');
       assert.strictEqual(row.model, 'gpt-4', 'Model should match');
+      assert.strictEqual(row.total_tokens, 150, 'Total tokens should be derived from exact splits');
       assert.strictEqual(row.input_tokens, 100, 'Input tokens should match');
       assert.strictEqual(row.output_tokens, 50, 'Output tokens should match');
       assert.strictEqual(row.cost, 0.0025, 'Cost should match');
@@ -244,6 +246,7 @@ describe('RequestLogger', () => {
       assert.ok(row, 'Log entry should use the resolved provider');
       assert.strictEqual(row.provider, 'resolved-provider');
       assert.strictEqual(row.model, 'resolved-model');
+      assert.strictEqual(row.total_tokens, null);
       assert.strictEqual(row.output_tokens, 12);
     });
 
@@ -263,8 +266,25 @@ describe('RequestLogger', () => {
       assert.ok(row, 'Log entry should use the start context when no override is provided');
       assert.strictEqual(row.provider, 'openai');
       assert.strictEqual(row.model, 'gpt-4o-mini');
+      assert.strictEqual(row.total_tokens, null);
       assert.strictEqual(row.output_tokens, 4);
-    });
+		});
+
+		it('should preserve total-only usage without fabricating splits', async () => {
+			await logger.capture({
+				provider: 'openai',
+				model: 'gpt-4.1-mini',
+				totalTokens: 33,
+				latencyMs: 250,
+			});
+
+			const row = db.prepare('SELECT * FROM request_logs WHERE model = ?').get('gpt-4.1-mini') as Record<string, unknown>;
+
+			assert.ok(row, 'Log entry should exist');
+			assert.strictEqual(row.total_tokens, 33);
+			assert.strictEqual(row.input_tokens, null);
+			assert.strictEqual(row.output_tokens, null);
+		});
   });
 
   describe('Query operations', () => {

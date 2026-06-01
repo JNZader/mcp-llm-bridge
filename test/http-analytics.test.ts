@@ -43,7 +43,7 @@ let analyticsAggregator: AnalyticsAggregator;
 async function request(
   method: string,
   path: string,
-  opts?: { body?: object; auth?: string | null },
+  opts?: { body?: object; auth?: string | null; portOverride?: number },
 ): Promise<{ status: number; data: unknown; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const bodyStr = opts?.body ? JSON.stringify(opts.body) : undefined;
@@ -51,11 +51,11 @@ async function request(
     const authToken = opts && 'auth' in opts ? opts.auth : config.authToken;
 
     const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port,
-        path,
-        method,
+        {
+          hostname: '127.0.0.1',
+          port: opts?.portOverride ?? port,
+          path,
+          method,
         headers: {
           'Content-Type': 'application/json',
           ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
@@ -584,6 +584,7 @@ describe('GET /v1/analytics', () => {
         data: Array<{
           timestamp: number;
           requests: number;
+          totalTokens: number;
           inputTokens: number;
           outputTokens: number;
           cost: number;
@@ -603,6 +604,7 @@ describe('GET /v1/analytics', () => {
       // Verify all required fields
       assert.ok(typeof point.timestamp === 'number', 'Should have timestamp');
       assert.ok(typeof point.requests === 'number', 'Should have requests');
+      assert.ok(typeof point.totalTokens === 'number', 'Should have totalTokens');
       assert.ok(typeof point.inputTokens === 'number', 'Should have inputTokens');
       assert.ok(typeof point.outputTokens === 'number', 'Should have outputTokens');
       assert.ok(typeof point.cost === 'number', 'Should have cost');
@@ -656,6 +658,7 @@ describe('GET /v1/analytics', () => {
       const data = res.data as {
         data: Array<{
           requests: number;
+          totalTokens: number;
           inputTokens: number;
           outputTokens: number;
           cost: number;
@@ -670,9 +673,55 @@ describe('GET /v1/analytics', () => {
       // Summary should match sum of data
       const dataPoint = data.data[0]!;
       assert.equal(data.summary.totalRequests, dataPoint.requests);
-      assert.equal(data.summary.totalTokens, dataPoint.inputTokens + dataPoint.outputTokens);
+      assert.equal(data.summary.totalTokens, dataPoint.totalTokens);
       assert.equal(data.summary.totalCost, dataPoint.cost);
-    });
+		});
+
+		it('uses totalTokens for summary when splits are unknown', async () => {
+			const freshAggregator = new AnalyticsAggregator();
+			freshAggregator.record('openai', 'gpt-4o-mini', {
+				totalTokens: 17,
+				latencyMs: 321,
+				channel: 'default',
+			});
+
+			const testServer = startHttpServer({
+				router,
+				vault,
+				config: { ...config, httpPort: 0 },
+				analyticsAggregator: freshAggregator,
+			}) as unknown as http.Server;
+
+			let testPort = 0;
+			await new Promise<void>((resolve) => {
+				testServer.on('listening', () => {
+					const address = testServer.address();
+					if (address && typeof address === 'object') {
+						testPort = address.port;
+					}
+					resolve();
+				});
+			});
+
+			try {
+				const res = await request('GET', '/v1/analytics?dimension=total', {
+					portOverride: testPort,
+				});
+
+				assert.equal(res.status, 200);
+				const data = res.data as {
+					data: Array<{ totalTokens: number; inputTokens: number; outputTokens: number }>;
+					summary: { totalTokens: number };
+				};
+
+				assert.equal(data.data[0]?.totalTokens, 17);
+				assert.equal(data.data[0]?.inputTokens, 0);
+				assert.equal(data.data[0]?.outputTokens, 0);
+				assert.equal(data.summary.totalTokens, 17);
+			} finally {
+				await new Promise<void>((resolve) => testServer.close(() => resolve()));
+			}
+		});
 
     it('should handle empty results gracefully', async () => {
       // Create fresh aggregator with no data

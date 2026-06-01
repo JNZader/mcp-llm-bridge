@@ -16,6 +16,7 @@ import type { LogContext, LogQuery, LogsResponse, LogEntryPublic } from './types
 export interface DirectCaptureInput {
   provider: string;
   model: string;
+  totalTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
   cost?: number;
@@ -41,6 +42,7 @@ export interface CaptureStartInput {
 export interface CaptureEndInput {
   provider?: string;
   model?: string;
+  totalTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
   cost?: number;
@@ -62,6 +64,26 @@ export interface CleanupOptions {
  */
 export class RequestLogger {
   private db: Database.Database;
+
+  private normalizeOptionalNumber(value: number | null | undefined): number | undefined {
+    return typeof value === 'number' ? value : undefined;
+  }
+
+  private resolveTotalTokens(input: {
+    totalTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+  }): number | undefined {
+    if (typeof input.totalTokens === 'number') {
+      return input.totalTokens;
+    }
+
+    if (typeof input.inputTokens === 'number' && typeof input.outputTokens === 'number') {
+      return input.inputTokens + input.outputTokens;
+    }
+
+    return undefined;
+  }
 
   /**
    * Create a new RequestLogger instance
@@ -124,13 +146,15 @@ export class RequestLogger {
     const provider = input.provider ?? context.provider;
     const model = input.model ?? context.model;
 
+    const totalTokens = this.resolveTotalTokens(input);
     const logEntry = {
       timestamp: context.startTime,
       provider,
       model,
-      input_tokens: input.inputTokens || 0,
-      output_tokens: input.outputTokens || 0,
-      cost: input.cost || 0,
+      total_tokens: totalTokens ?? null,
+      input_tokens: input.inputTokens ?? null,
+      output_tokens: input.outputTokens ?? null,
+      cost: input.cost ?? null,
       latency_ms: latencyMs,
       error: input.error?.message || null,
       attempts,
@@ -143,15 +167,16 @@ export class RequestLogger {
       try {
         const stmt = this.db.prepare(`
           INSERT INTO request_logs (
-            timestamp, provider, model, input_tokens, output_tokens,
+            timestamp, provider, model, total_tokens, input_tokens, output_tokens,
             cost, latency_ms, error, attempts, request_data, response_data
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const result = stmt.run(
           logEntry.timestamp,
           logEntry.provider,
           logEntry.model,
+          logEntry.total_tokens,
           logEntry.input_tokens,
           logEntry.output_tokens,
           logEntry.cost,
@@ -167,9 +192,10 @@ export class RequestLogger {
           timestamp: logEntry.timestamp,
           provider: logEntry.provider,
           model: logEntry.model,
-          inputTokens: logEntry.input_tokens,
-          outputTokens: logEntry.output_tokens,
-          cost: logEntry.cost,
+          totalTokens: this.normalizeOptionalNumber(logEntry.total_tokens),
+          inputTokens: this.normalizeOptionalNumber(logEntry.input_tokens),
+          outputTokens: this.normalizeOptionalNumber(logEntry.output_tokens),
+          cost: this.normalizeOptionalNumber(logEntry.cost),
           latencyMs: logEntry.latency_ms,
           error: logEntry.error || undefined,
           attempts: logEntry.attempts,
@@ -186,13 +212,15 @@ export class RequestLogger {
    * @returns Promise with created log entry data
    */
   async capture(input: DirectCaptureInput): Promise<LogEntryPublic> {
+    const totalTokens = this.resolveTotalTokens(input);
     const logEntry = {
       timestamp: Date.now(),
       provider: input.provider,
       model: input.model,
-      input_tokens: input.inputTokens || 0,
-      output_tokens: input.outputTokens || 0,
-      cost: input.cost || 0,
+      total_tokens: totalTokens ?? null,
+      input_tokens: input.inputTokens ?? null,
+      output_tokens: input.outputTokens ?? null,
+      cost: input.cost ?? null,
       latency_ms: input.latencyMs,
       error: input.error || null,
       attempts: input.attempts || 1,
@@ -204,15 +232,16 @@ export class RequestLogger {
       try {
         const stmt = this.db.prepare(`
           INSERT INTO request_logs (
-            timestamp, provider, model, input_tokens, output_tokens,
+            timestamp, provider, model, total_tokens, input_tokens, output_tokens,
             cost, latency_ms, error, attempts, request_data, response_data
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const result = stmt.run(
           logEntry.timestamp,
           logEntry.provider,
           logEntry.model,
+          logEntry.total_tokens,
           logEntry.input_tokens,
           logEntry.output_tokens,
           logEntry.cost,
@@ -228,9 +257,10 @@ export class RequestLogger {
           timestamp: logEntry.timestamp,
           provider: logEntry.provider,
           model: logEntry.model,
-          inputTokens: logEntry.input_tokens,
-          outputTokens: logEntry.output_tokens,
-          cost: logEntry.cost,
+          totalTokens: this.normalizeOptionalNumber(logEntry.total_tokens),
+          inputTokens: this.normalizeOptionalNumber(logEntry.input_tokens),
+          outputTokens: this.normalizeOptionalNumber(logEntry.output_tokens),
+          cost: this.normalizeOptionalNumber(logEntry.cost),
           latencyMs: logEntry.latency_ms,
           error: logEntry.error || undefined,
           attempts: logEntry.attempts,
@@ -293,6 +323,7 @@ export class RequestLogger {
             timestamp,
             provider,
             model,
+            total_tokens as totalTokens,
             input_tokens as inputTokens,
             output_tokens as outputTokens,
             cost,
@@ -309,9 +340,13 @@ export class RequestLogger {
         const dataStmt = this.db.prepare(dataSql);
         const logs = dataStmt.all(...dataParams) as LogEntryPublic[];
 
-        // Convert null errors to undefined
+        // Convert nullable columns to undefined for the public contract.
         const sanitizedLogs = logs.map(log => ({
           ...log,
+          totalTokens: this.normalizeOptionalNumber(log.totalTokens),
+          inputTokens: this.normalizeOptionalNumber(log.inputTokens),
+          outputTokens: this.normalizeOptionalNumber(log.outputTokens),
+          cost: this.normalizeOptionalNumber(log.cost),
           error: log.error || undefined,
         }));
 

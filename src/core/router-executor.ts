@@ -10,8 +10,12 @@ import { logger } from './logger.js';
 type RecordUsageFn = (
   provider: string,
   model: string,
-  tokensIn: number,
-  tokensOut: number,
+  usage: {
+    totalTokens?: number;
+    tokensIn?: number;
+    tokensOut?: number;
+    costUsd?: number;
+  },
   latencyMs: number,
   success: boolean,
   project?: string,
@@ -157,8 +161,11 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         recordUsage(
           provider.id,
           response.model,
-          response.usage.inputTokens,
-          response.usage.outputTokens,
+          {
+            totalTokens: response.usage.totalTokens,
+            tokensIn: response.usage.inputTokens,
+            tokensOut: response.usage.outputTokens,
+          },
           latencyMs,
           true,
         );
@@ -170,7 +177,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - startTime;
-        recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
+        recordUsage(provider.id, attemptedModel, {}, latencyMs, false, undefined, message);
         if (classification) {
           recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
         }
@@ -217,7 +224,13 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       },
     };
 
-    recordUsage(provider.id, result.model, response.usage.inputTokens, response.usage.outputTokens, latencyMs, true);
+    recordUsage(
+      provider.id,
+      result.model,
+      { totalTokens: result.tokensUsed },
+      latencyMs,
+      true,
+    );
     if (classification) {
       recordModelFeedback(feedbackEndpointId, classification, true, latencyMs, routedEndpoint?.id);
     }
@@ -226,7 +239,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
     const message = error instanceof Error ? error.message : String(error);
     const latencyMs = Date.now() - startTime;
-    recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, undefined, message);
+    recordUsage(provider.id, attemptedModel, {}, latencyMs, false, undefined, message);
     if (classification) {
       recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
     }
@@ -262,8 +275,7 @@ export async function executeGenerateAttempt(
     recordUsage(
       provider.id,
       resolvedModel,
-      result.tokensUsed ?? 0,
-      0,
+      { totalTokens: result.tokensUsed },
       latencyMs,
       true,
       request.project,
@@ -282,7 +294,7 @@ export async function executeGenerateAttempt(
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
     const message = error instanceof Error ? error.message : String(error);
     const latencyMs = Date.now() - startTime;
-    recordUsage(provider.id, attemptedModel, 0, 0, latencyMs, false, request.project, message);
+    recordUsage(provider.id, attemptedModel, {}, latencyMs, false, request.project, message);
     if (classification) {
       recordModelFeedback(
         resolveFeedbackEndpointId(provider, attemptedModel, routedEndpoint),

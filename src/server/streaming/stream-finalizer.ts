@@ -16,6 +16,7 @@ interface StreamingAttemptTelemetryInput {
 	resolvedModel: string;
 	streamStartTime: number;
 	project?: string;
+	totalTokens?: number;
 	inputTokens?: number;
 	outputTokens?: number;
 	streamRecorder?: StreamRecorder;
@@ -68,6 +69,7 @@ export async function finalizeStreamingAttemptSuccess(
 		resolvedModel,
 		streamStartTime,
 		project,
+		totalTokens,
 		inputTokens,
 		outputTokens,
 		streamRecorder,
@@ -80,6 +82,7 @@ export async function finalizeStreamingAttemptSuccess(
 	streamRecorder?.finish();
 	recordResult?.({
 		model: resolvedModel,
+		totalTokens,
 		tokensIn: inputTokens,
 		tokensOut: outputTokens,
 		latencyMs: Date.now() - streamStartTime,
@@ -89,6 +92,7 @@ export async function finalizeStreamingAttemptSuccess(
 	await finalizeRequestLog({
 		provider: providerId,
 		model: responseModel ?? resolvedModel,
+		totalTokens,
 		inputTokens,
 		outputTokens,
 		responseData: {
@@ -107,6 +111,7 @@ export async function finalizeStreamingAttemptFailure(
 		resolvedModel,
 		streamStartTime,
 		project,
+		totalTokens,
 		inputTokens,
 		outputTokens,
 		streamRecorder,
@@ -122,6 +127,7 @@ export async function finalizeStreamingAttemptFailure(
 	streamRecorder?.finish(message);
 	recordResult?.({
 		model: resolvedModel,
+		totalTokens,
 		tokensIn: inputTokens,
 		tokensOut: outputTokens,
 		latencyMs: Date.now() - streamStartTime,
@@ -134,6 +140,7 @@ export async function finalizeStreamingAttemptFailure(
 		await finalizeRequestLog({
 			provider: providerId,
 			model: resolvedModel,
+			totalTokens,
 			inputTokens,
 			outputTokens,
 			error: resolvedError,

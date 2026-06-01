@@ -20,8 +20,10 @@ export interface RouterTelemetryContext {
 export interface RouterUsageRecordInput {
   provider: string;
   model: string;
-  tokensIn: number;
-  tokensOut: number;
+  totalTokens?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number;
   latencyMs: number;
   success: boolean;
   project?: string;
@@ -47,6 +49,7 @@ export interface RouterStreamingRecordResultInput {
   model?: string;
   tokensIn?: number;
   tokensOut?: number;
+  totalTokens?: number;
   latencyMs: number;
   success: boolean;
   project?: string;
@@ -62,8 +65,12 @@ export interface RouterAttemptTelemetryCallbacks {
   recordUsage: (
     provider: string,
     model: string,
-    tokensIn: number,
-    tokensOut: number,
+    usage: {
+      totalTokens?: number;
+      tokensIn?: number;
+      tokensOut?: number;
+      costUsd?: number;
+    },
     latencyMs: number,
     success: boolean,
     project?: string,
@@ -105,8 +112,19 @@ export function recordUsage(
 ): void {
   if (telemetry.analyticsAggregator) {
     try {
-      const cost = calculateCost(input.model, input.tokensIn, input.tokensOut);
+      const totalTokens = input.totalTokens ?? (
+        typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
+          ? input.tokensIn + input.tokensOut
+          : undefined
+      );
+      const cost = input.costUsd ?? (
+        typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
+          ? calculateCost(input.model, input.tokensIn, input.tokensOut)
+          : undefined
+      );
+
       telemetry.analyticsAggregator.record(input.provider, input.model, {
+        totalTokens,
         inputTokens: input.tokensIn,
         outputTokens: input.tokensOut,
         cost,
@@ -119,6 +137,10 @@ export function recordUsage(
   }
 
   if (!telemetry.costTracker) return;
+
+  if (typeof input.tokensIn !== 'number' || typeof input.tokensOut !== 'number') {
+    return;
+  }
 
   try {
     telemetry.costTracker.record({
@@ -187,8 +209,7 @@ export function createAttemptTelemetryCallbacks(
     recordUsage: (
       provider,
       model,
-      tokensIn,
-      tokensOut,
+      usage,
       latencyMs,
       success,
       project,
@@ -197,8 +218,10 @@ export function createAttemptTelemetryCallbacks(
       recordUsage(telemetry, {
         provider,
         model,
-        tokensIn,
-        tokensOut,
+        totalTokens: usage.totalTokens,
+        tokensIn: usage.tokensIn,
+        tokensOut: usage.tokensOut,
+        costUsd: usage.costUsd,
         latencyMs,
         success,
         project,
@@ -222,8 +245,9 @@ export function createStreamingRecordResult(
 ): (input: RouterStreamingRecordResultInput) => void {
   return ({
     model,
-    tokensIn = 0,
-    tokensOut = 0,
+    tokensIn,
+    tokensOut,
+    totalTokens,
     latencyMs,
     success,
     project,
@@ -237,6 +261,7 @@ export function createStreamingRecordResult(
     recordUsage(options.telemetry, {
       provider: options.provider.id,
       model: resolvedModel,
+      totalTokens,
       tokensIn,
       tokensOut,
       latencyMs,

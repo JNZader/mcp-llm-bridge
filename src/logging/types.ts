@@ -20,14 +20,17 @@ export interface LogEntry {
   /** Model name used */
   model: string;
   
-  /** Input tokens consumed */
-  inputTokens: number;
+  /** Total tokens consumed when known exactly */
+  totalTokens?: number;
+
+  /** Input tokens consumed when known exactly */
+  inputTokens?: number;
   
-  /** Output tokens generated */
-  outputTokens: number;
+  /** Output tokens generated when known exactly */
+  outputTokens?: number;
   
-  /** Cost in currency units (e.g., USD) */
-  cost: number;
+  /** Cost in currency units (e.g., USD) when known exactly */
+  cost?: number;
   
   /** Total latency in milliseconds */
   latencyMs: number;
@@ -64,14 +67,17 @@ export interface LogEntryPublic {
   /** Model name */
   model: string;
   
-  /** Input tokens */
-  inputTokens: number;
+  /** Total tokens consumed when known exactly */
+  totalTokens?: number;
+
+  /** Input tokens when known exactly */
+  inputTokens?: number;
   
-  /** Output tokens */
-  outputTokens: number;
+  /** Output tokens when known exactly */
+  outputTokens?: number;
   
-  /** Cost in currency units */
-  cost: number;
+  /** Cost in currency units when known exactly */
+  cost?: number;
   
   /** Total latency in milliseconds */
   latencyMs: number;
@@ -148,6 +154,9 @@ export interface LogCaptureInput {
   /** Context from request start */
   context: LogContext;
   
+  /** Total tokens (if available) */
+  totalTokens?: number;
+
   /** Input tokens (if available) */
   inputTokens?: number;
   

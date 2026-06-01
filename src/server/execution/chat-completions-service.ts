@@ -152,7 +152,7 @@ async function finalizeNonStreamingSuccess(
 	await logger.requestLogger.captureEnd(logger.logCtx, {
 		provider: result.resolvedProvider,
 		model: result.resolvedModel,
-		outputTokens: result.tokensUsed || 0,
+		totalTokens: result.tokensUsed,
 		responseData: JSON.stringify(result),
 	});
 }

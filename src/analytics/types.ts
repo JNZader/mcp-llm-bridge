@@ -11,11 +11,13 @@
 export interface AnalyticsMetrics {
   /** Number of requests */
   requests: number;
-  /** Total input tokens across all requests */
+  /** Total tokens across all requests when known exactly */
+  totalTokens: number;
+  /** Total input tokens across requests with exact input splits */
   inputTokens: number;
-  /** Total output tokens across all requests */
+  /** Total output tokens across requests with exact output splits */
   outputTokens: number;
-  /** Total cost in USD */
+  /** Total cost in USD across requests with exact cost data */
   cost: number;
   /** Total latency in milliseconds (for calculating average) */
   totalLatencyMs: number;
@@ -51,9 +53,11 @@ export interface AggregatedDataPoint {
   model?: string;
   /** Number of requests */
   requests: number;
-  /** Total input tokens */
+  /** Total tokens when known exactly */
+  totalTokens: number;
+  /** Total input tokens from exact split data */
   inputTokens: number;
-  /** Total output tokens */
+  /** Total output tokens from exact split data */
   outputTokens: number;
   /** Total cost in USD */
   cost: number;
@@ -85,12 +89,14 @@ export interface AnalyticsQuery {
  * Input data for recording a request
  */
 export interface RecordInput {
-  /** Number of input tokens */
-  inputTokens: number;
-  /** Number of output tokens */
-  outputTokens: number;
-  /** Cost in USD */
-  cost: number;
+  /** Number of total tokens when only aggregate usage is known */
+  totalTokens?: number;
+  /** Number of input tokens when known exactly */
+  inputTokens?: number;
+  /** Number of output tokens when known exactly */
+  outputTokens?: number;
+  /** Cost in USD when known exactly */
+  cost?: number;
   /** Latency in milliseconds */
   latencyMs: number;
   /** Channel ID (required for channel dimension tracking) */
@@ -150,6 +156,7 @@ export function isAnalyticsMetrics(value: unknown): value is AnalyticsMetrics {
 
   return (
     typeof metrics.requests === 'number' &&
+    typeof metrics.totalTokens === 'number' &&
     typeof metrics.inputTokens === 'number' &&
     typeof metrics.outputTokens === 'number' &&
     typeof metrics.cost === 'number' &&
@@ -190,6 +197,7 @@ export function isAggregatedDataPoint(value: unknown): value is AggregatedDataPo
   return (
     typeof point.timestamp === 'number' &&
     typeof point.requests === 'number' &&
+    typeof point.totalTokens === 'number' &&
     typeof point.inputTokens === 'number' &&
     typeof point.outputTokens === 'number' &&
     typeof point.cost === 'number' &&

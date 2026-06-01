@@ -58,6 +58,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 	let inputTokens: number | undefined;
 	let outputTokens: number | undefined;
+	let totalTokens: number | undefined;
 	let aborted = abortSignal?.aborted ?? false;
 	let abortFinalization: Promise<void> | undefined;
 
@@ -88,6 +89,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		}
 
 		abortFinalization ??= finalizeRequestLog({
+			totalTokens,
 			inputTokens,
 			outputTokens,
 			error: new Error("Stream aborted by client"),
@@ -132,16 +134,16 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 					}
 
 					if (aborted) {
-						outputTokens = result.tokensUsed || 0;
+						totalTokens = result.tokensUsed;
 						await finalizeAbort();
 						return;
 					}
 
-					outputTokens = result.tokensUsed || 0;
+					totalTokens = result.tokensUsed;
 					await finalizeRequestLog({
 						provider: result.resolvedProvider,
 						model: result.resolvedModel,
-						outputTokens,
+						totalTokens,
 						responseData: result,
 					});
 					await output.writeFallbackResult(result);
@@ -227,6 +229,10 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 						inputTokens = attemptInputTokens;
 						outputTokens = attemptOutputTokens;
+						totalTokens =
+							typeof attemptInputTokens === "number" && typeof attemptOutputTokens === "number"
+								? attemptInputTokens + attemptOutputTokens
+								: undefined;
 
 						if (aborted) {
 							await finalizeAbort();
@@ -239,6 +245,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							resolvedModel: breakerModel,
 							streamStartTime,
 							project,
+							totalTokens,
 							inputTokens,
 							outputTokens,
 							streamRecorder,
@@ -252,6 +259,10 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						if (aborted || isAbortError(error)) {
 							inputTokens = attemptInputTokens;
 							outputTokens = attemptOutputTokens;
+							totalTokens =
+								typeof attemptInputTokens === "number" && typeof attemptOutputTokens === "number"
+									? attemptInputTokens + attemptOutputTokens
+									: undefined;
 							await finalizeAbort();
 							return;
 						}
@@ -261,6 +272,10 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							resolvedModel: breakerModel,
 							streamStartTime,
 							project,
+							totalTokens:
+								typeof attemptInputTokens === "number" && typeof attemptOutputTokens === "number"
+									? attemptInputTokens + attemptOutputTokens
+									: undefined,
 							inputTokens: attemptInputTokens,
 							outputTokens: attemptOutputTokens,
 							streamRecorder,
@@ -277,6 +292,10 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 						inputTokens = attemptInputTokens;
 						outputTokens = attemptOutputTokens;
+						totalTokens =
+							typeof attemptInputTokens === "number" && typeof attemptOutputTokens === "number"
+								? attemptInputTokens + attemptOutputTokens
+								: undefined;
 						await output.writeTerminalError(resolvedError);
 						return;
 					}

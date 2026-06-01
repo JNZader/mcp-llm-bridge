@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 
 import type { BridgeOrchestrator, BridgeConfig } from "../bridge/index.js";
 import { ComparisonService } from "../comparison/service.js";
+import type { Router } from "../core/router.js";
 import {
 	type ComparisonServices,
 	type CoreServices,

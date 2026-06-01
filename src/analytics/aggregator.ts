@@ -177,6 +177,7 @@ export class AnalyticsAggregator {
   private createEmptyMetrics(): AnalyticsMetrics {
     return {
       requests: 0,
+      totalTokens: 0,
       inputTokens: 0,
       outputTokens: 0,
       cost: 0,
@@ -207,10 +208,17 @@ export class AnalyticsAggregator {
     metrics: AnalyticsMetrics,
     data: RecordInput
   ): void {
+    const totalTokens = typeof data.totalTokens === 'number'
+      ? data.totalTokens
+      : typeof data.inputTokens === 'number' && typeof data.outputTokens === 'number'
+        ? data.inputTokens + data.outputTokens
+        : 0;
+
     metrics.requests += 1;
-    metrics.inputTokens += data.inputTokens;
-    metrics.outputTokens += data.outputTokens;
-    metrics.cost += data.cost;
+    metrics.totalTokens += totalTokens;
+    metrics.inputTokens += data.inputTokens ?? 0;
+    metrics.outputTokens += data.outputTokens ?? 0;
+    metrics.cost += data.cost ?? 0;
     metrics.totalLatencyMs += data.latencyMs;
 
     // Add to sliding window
@@ -261,6 +269,7 @@ export class AnalyticsAggregator {
       ...(identifiers?.channelId ? { channelId: identifiers.channelId } : {}),
       ...(identifiers?.model ? { model: identifiers.model } : {}),
       requests: metrics.requests,
+      totalTokens: metrics.totalTokens,
       inputTokens: metrics.inputTokens,
       outputTokens: metrics.outputTokens,
       cost: Math.round(metrics.cost * 1000000) / 1000000, // Round to 6 decimals

@@ -170,9 +170,10 @@ describe('GET /v1/logs', () => {
         timestamp INTEGER NOT NULL,
         provider TEXT NOT NULL,
         model TEXT NOT NULL,
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        cost REAL NOT NULL DEFAULT 0.0,
+        total_tokens INTEGER,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cost REAL,
         latency_ms INTEGER NOT NULL,
         error TEXT,
         attempts INTEGER NOT NULL DEFAULT 1,
@@ -672,18 +673,20 @@ describe('GET /v1/logs', () => {
 
         const data = logsRes.data as {
           total: number;
-          logs: Array<{
-            provider: string;
-            model: string;
-            outputTokens: number;
-            error?: string;
-          }>;
-        };
+			logs: Array<{
+				provider: string;
+				model: string;
+				totalTokens?: number;
+				outputTokens?: number;
+				error?: string;
+			}>;
+		};
 
 			assert.equal(data.total, 1);
 			assert.equal(data.logs[0]?.provider, 'mock-fallback');
 			assert.equal(data.logs[0]?.model, resolvedModel);
-			assert.equal(data.logs[0]?.outputTokens, 5);
+			assert.equal(data.logs[0]?.totalTokens, 5);
+			assert.equal(data.logs[0]?.outputTokens, undefined);
 			assert.equal(data.logs[0]?.error, undefined);
 		} finally {
 			(router as any).resolveStreamingProviders = originalResolveStreamingProviders;

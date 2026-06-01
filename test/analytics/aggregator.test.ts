@@ -40,6 +40,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       const total = aggregator.query({ dimension: 'total' });
       assert.strictEqual(total.length, (1));
       assert.strictEqual(total[0]!.requests, (0));
+      assert.strictEqual(total[0]!.totalTokens, (0));
       assert.strictEqual(total[0]!.inputTokens, (0));
       assert.strictEqual(total[0]!.outputTokens, (0));
       assert.strictEqual(total[0]!.cost, (0));
@@ -64,6 +65,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       const total = aggregator.query({ dimension: 'total' });
       assert.strictEqual(total.length, (1));
       assert.strictEqual(total[0]!.requests, (1));
+      assert.strictEqual(total[0]!.totalTokens, (150));
       assert.strictEqual(total[0]!.inputTokens, (100));
       assert.strictEqual(total[0]!.outputTokens, (50));
       assert.strictEqual(total[0]!.cost, (0.0025));
@@ -153,6 +155,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       const total = aggregator.query({ dimension: 'total' });
       assert.strictEqual(total[0]!.requests, (2));
+      assert.strictEqual(total[0]!.totalTokens, (450));
       assert.strictEqual(total[0]!.inputTokens, (300));
       assert.strictEqual(total[0]!.outputTokens, (150));
       assert.strictEqual(total[0]!.cost, (0.0075));
@@ -224,7 +227,21 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       const total = aggregator.query({ dimension: 'total' });
       assert.strictEqual(total[0]!.avgLatency, (1500));
-    });
+		});
+
+		it('tracks total tokens even when input/output splits are unknown', () => {
+			aggregator.record('openai', 'gpt-4o', {
+				totalTokens: 42,
+				latencyMs: 900,
+				channel: 'default',
+			});
+
+			const total = aggregator.query({ dimension: 'total' });
+			assert.strictEqual(total[0]!.requests, (1));
+			assert.strictEqual(total[0]!.totalTokens, (42));
+			assert.strictEqual(total[0]!.inputTokens, (0));
+			assert.strictEqual(total[0]!.outputTokens, (0));
+		});
 
     it('should calculate p95 latency', () => {
       // Add 20 requests with varying latencies
