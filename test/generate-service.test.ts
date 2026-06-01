@@ -119,7 +119,7 @@ describe("generate-service", () => {
 			req: {
 				header: () => undefined,
 			},
-		} as Context;
+		} as unknown as Context;
 
 		await assert.rejects(
 			() =>

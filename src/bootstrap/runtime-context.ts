@@ -4,19 +4,18 @@ import { createAllAdapters } from "../adapters/index.js";
 import type { BridgeOrchestrator, BridgeConfig } from "../bridge/index.js";
 import { ComparisonService } from "../comparison/service.js";
 import {
-	createComparisonServices,
 	createCoreServices,
 	createToolingServices,
 	type ComparisonServices,
 	type CoreServices,
 	type ToolingServices,
 } from "./core-services.js";
+import { createComparisonContext } from "./comparison.js";
 import { bootstrapFreeModels } from "./free-models.js";
 import { bootstrapLatencyRouting } from "./latency.js";
 import { bootstrapLocalLLM } from "./local-llm.js";
 import { bootstrapModelRouting } from "./model-routing.js";
 import { bootstrapBridge } from "./bridge.js";
-import { getMaxComparisonCostUsdFromEnv } from "../core/comparison-config.js";
 import { loadConfig } from "../core/config.js";
 import { Router } from "../core/router.js";
 import { type GatewayConfig } from "../core/types.js";
@@ -82,16 +81,12 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
 
 	await bootstrapLocalLLM(router, db);
 
-	const comparisonServices = createComparisonServices({
+	const comparisonContext = createComparisonContext({
 		db,
 		dbPath: config.dbPath,
-	});
-	const comparisonService = new ComparisonService(router, {
-		freeModelRegistry: freeModelEnabled
-			? freeModelRouter.getRegistry()
-			: undefined,
-		store: comparisonServices.comparisonStore,
-		maxCostCeiling: getMaxComparisonCostUsdFromEnv(),
+		router,
+		freeModelEnabled,
+		freeModelRouter,
 	});
 
 	return {
@@ -104,9 +99,8 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
 		freeModelEnabled,
 		freeModelRouter,
 		latencyMeasurer,
-		comparisonService,
 		...coreServices,
 		...toolingServices,
-		...comparisonServices,
+		...comparisonContext,
 	};
 }
