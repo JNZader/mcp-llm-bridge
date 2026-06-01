@@ -51,6 +51,9 @@ export function AppLayout() {
           <span className="text-sm font-semibold text-foreground">
             MCP LLM Bridge
           </span>
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+            React admin app
+          </span>
           <button
             className="ml-auto md:hidden"
             onClick={() => setSidebarOpen(false)}
@@ -100,6 +103,9 @@ export function AppLayout() {
           </button>
           <span className="ml-3 text-sm font-semibold text-foreground">
             MCP LLM Bridge
+          </span>
+          <span className="ml-2 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+            React admin app
           </span>
         </header>
 

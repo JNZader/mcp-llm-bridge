@@ -135,10 +135,15 @@ curl -X POST http://localhost:3456/v1/generate \
 
 ## Dashboard
 
-The gateway includes a web dashboard for managing credentials, auth files, providers, models, and test generation.
+The repo currently has **two dashboard surfaces**:
+
+- **Local inline shell** at `http://localhost:3456/` — legacy local ops surface served directly by the bridge. This remains the source of truth for local credential/auth-file management and quick test generation.
+- **React admin app** under `dashboard/` (built into `docs/`) — admin/observability surface for overview, providers, usage, groups, circuit breakers, settings, and related views.
+
+They intentionally coexist for now and do **not** have full feature parity.
 
 - Hosted demo: [https://gateway.javierzader.com](https://gateway.javierzader.com)
-- Local dashboard: `http://localhost:3456`
+- Local inline shell: `http://localhost:3456`
 
 ### First-Time Setup
 
@@ -148,13 +153,19 @@ The gateway includes a web dashboard for managing credentials, auth files, provi
 4. Enter the bearer token if `LLM_GATEWAY_AUTH_TOKEN` is configured.
 5. Test the connection and save.
 
-### Dashboard Capabilities
+### Local Inline Shell Capabilities
 
 - Add, list, filter, and delete encrypted API keys.
 - Upload auth files for CLI-backed providers.
 - Inspect provider availability and available models.
 - Send test prompts and inspect returned provider/model metadata.
 - Work with project-scoped credentials without exposing raw secrets.
+
+### React Admin App Capabilities
+
+- Overview / provider status / usage / groups / circuit breakers / settings
+- Admin-facing operational visibility over bridge subsystems
+- Hosted separately from the inline shell via the `dashboard/` app
 
 Recommended auth-file mappings in the UI and API:
 

@@ -12,7 +12,7 @@ export function dashboardHtml(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LLM Gateway — Admin</title>
+  <title>LLM Gateway — Legacy Local Ops Shell</title>
   <style>
     /* ── Reset & Base ────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -87,6 +87,20 @@ export function dashboardHtml(): string {
 
     .health-badge.ok { color: var(--green); background: rgba(63, 185, 80, 0.12); }
     .health-badge.err { color: var(--red); background: rgba(248, 81, 73, 0.12); }
+
+    .surface-note {
+      margin-bottom: 20px;
+      padding: 12px 14px;
+      border: 1px solid var(--orange);
+      border-radius: var(--radius);
+      background: rgba(210, 153, 34, 0.10);
+      color: var(--text);
+      font-size: 0.92rem;
+    }
+
+    .surface-note strong {
+      color: var(--orange);
+    }
 
     /* ── Sections ─────────────────────────────────── */
     section {
@@ -659,13 +673,19 @@ export function dashboardHtml(): string {
     <header>
       <h1>
         <span class="icon">\u26A1</span> LLM Gateway
-        <span class="version">v0.3.1</span>
+        <span class="version">Legacy Local Ops Shell</span>
       </h1>
       <div style="display:flex;align-items:center;gap:10px">
         <span id="health" class="health-badge">checking\u2026</span>
         <button id="logout-btn" class="btn-logout" style="display:none" onclick="doLogout()">\uD83D\uDD12 Logout</button>
       </div>
     </header>
+
+    <div class="surface-note">
+      <strong>Surface note:</strong> this inline dashboard is the legacy local ops shell served directly by the bridge.
+      It remains the source of truth for local credential and auth-file workflows. The separate React dashboard under <code>dashboard/</code>
+      is a different admin/observability surface and does not yet provide full feature parity.
+    </div>
 
     <!-- ── Credentials ────────────────────────── -->
     <section id="sec-credentials">

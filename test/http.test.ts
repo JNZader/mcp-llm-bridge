@@ -144,6 +144,7 @@ describe('GET /', () => {
     assert.match(String(res.headers['content-type']), /text\/html/);
     assert.match(res.body, /<!DOCTYPE html>/);
     assert.match(res.body, /LLM Gateway/);
+    assert.match(res.body, /Legacy Local Ops Shell/);
   });
 });
 

@@ -70,6 +70,13 @@ Admin route modules live under `src/server/routes/admin/`.
 - `discovery.ts`
 - `operations.ts`
 
+### Dashboard surfaces
+
+- `src/server/dashboard.ts` — legacy inline local ops shell served at `GET /`
+- `dashboard/` — separate React admin/observability app, built into `docs/`
+
+These two surfaces intentionally coexist for now and do not have full feature parity.
+
 ---
 
 ## Core Runtime Modules

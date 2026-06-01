@@ -76,7 +76,7 @@ export function Login() {
           <Server className="h-10 w-10 text-primary" />
           <h1 className="text-xl font-bold text-foreground">MCP LLM Bridge</h1>
           <p className="text-sm text-muted-foreground text-center">
-            Sign in to access the gateway dashboard.
+            Sign in to access the React admin/observability dashboard. For local credential and file operations, the inline legacy shell is still served by the bridge at <code>/</code>.
           </p>
         </div>
 
