@@ -39,6 +39,8 @@ export interface CaptureStartInput {
  * Input for captureEnd method
  */
 export interface CaptureEndInput {
+  provider?: string;
+  model?: string;
   inputTokens?: number;
   outputTokens?: number;
   cost?: number;
@@ -119,11 +121,13 @@ export class RequestLogger {
   async captureEnd(context: LogContext, input: CaptureEndInput): Promise<LogEntryPublic> {
     const latencyMs = Date.now() - context.startTime;
     const attempts = 1; // Default attempts
+    const provider = input.provider ?? context.provider;
+    const model = input.model ?? context.model;
 
     const logEntry = {
       timestamp: context.startTime,
-      provider: context.provider,
-      model: context.model,
+      provider,
+      model,
       input_tokens: input.inputTokens || 0,
       output_tokens: input.outputTokens || 0,
       cost: input.cost || 0,

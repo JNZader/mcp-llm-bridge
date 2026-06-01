@@ -87,6 +87,8 @@ export async function finalizeStreamingAttemptSuccess(
 		project,
 	});
 	await finalizeRequestLog({
+		provider: providerId,
+		model: responseModel ?? resolvedModel,
 		inputTokens,
 		outputTokens,
 		responseData: {
@@ -130,6 +132,8 @@ export async function finalizeStreamingAttemptFailure(
 
 	if (emittedMeaningfulContent) {
 		await finalizeRequestLog({
+			provider: providerId,
+			model: resolvedModel,
 			inputTokens,
 			outputTokens,
 			error: resolvedError,

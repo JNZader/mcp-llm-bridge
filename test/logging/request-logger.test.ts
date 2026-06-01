@@ -225,6 +225,46 @@ describe('RequestLogger', () => {
       assert.ok(row, 'Log entry should exist');
       assert.strictEqual(row.latency_ms, 150, 'Latency should equal endTime - startTime');
     });
+
+    it('should allow completion-time provider and model overrides', async () => {
+      const context = logger.captureStart({
+        provider: 'unknown',
+        model: 'requested-model',
+        startTime: mockTimeCounter,
+      });
+
+      await logger.captureEnd(context, {
+        provider: 'resolved-provider',
+        model: 'resolved-model',
+        outputTokens: 12,
+      });
+
+      const row = db.prepare('SELECT * FROM request_logs WHERE provider = ?').get('resolved-provider') as Record<string, unknown>;
+
+      assert.ok(row, 'Log entry should use the resolved provider');
+      assert.strictEqual(row.provider, 'resolved-provider');
+      assert.strictEqual(row.model, 'resolved-model');
+      assert.strictEqual(row.output_tokens, 12);
+    });
+
+    it('should preserve start context when completion overrides are absent', async () => {
+      const context = logger.captureStart({
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        startTime: mockTimeCounter,
+      });
+
+      await logger.captureEnd(context, {
+        outputTokens: 4,
+      });
+
+      const row = db.prepare('SELECT * FROM request_logs WHERE provider = ?').get('openai') as Record<string, unknown>;
+
+      assert.ok(row, 'Log entry should use the start context when no override is provided');
+      assert.strictEqual(row.provider, 'openai');
+      assert.strictEqual(row.model, 'gpt-4o-mini');
+      assert.strictEqual(row.output_tokens, 4);
+    });
   });
 
   describe('Query operations', () => {

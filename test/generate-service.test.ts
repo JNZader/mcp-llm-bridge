@@ -43,6 +43,8 @@ describe("generate-service", () => {
 				captureEnd: async (
 					_ctx: unknown,
 					input?: {
+						provider?: string;
+						model?: string;
 						outputTokens?: number;
 						responseData?: string;
 						error?: Error;
@@ -88,6 +90,8 @@ describe("generate-service", () => {
 			},
 			{
 				phase: "end",
+				provider: "mock-provider",
+				model: "gpt-4o-mini",
 				outputTokens: 9,
 				responseData: JSON.stringify({
 					text: "Strict mode catches more bugs.",
@@ -140,10 +144,12 @@ describe("generate-service", () => {
 						},
 						captureEnd: async (
 							_ctx: unknown,
-							input?: {
-								outputTokens?: number;
-								responseData?: string;
-								error?: Error;
+					input?: {
+						provider?: string;
+						model?: string;
+						outputTokens?: number;
+						responseData?: string;
+						error?: Error;
 							},
 						) => {
 							captured.push({ phase: "end", error: input?.error?.message });

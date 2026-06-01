@@ -36,6 +36,8 @@ export async function executeGenerateRequest(
 
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
+				provider: result.resolvedProvider,
+				model: result.resolvedModel,
 				outputTokens: result.tokensUsed || 0,
 				responseData: JSON.stringify(result),
 			});

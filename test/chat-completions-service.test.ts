@@ -61,10 +61,12 @@ describe("chat-completions-service", () => {
 				},
 				captureEnd: async (
 					_ctx: unknown,
-					input?: {
-						outputTokens?: number;
-						responseData?: string;
-						error?: Error;
+				input?: {
+					provider?: string;
+					model?: string;
+					outputTokens?: number;
+					responseData?: string;
+					error?: Error;
 					},
 				) => {
 					captured.push({ phase: "end", ...input });
@@ -108,6 +110,8 @@ describe("chat-completions-service", () => {
 			},
 			{
 				phase: "end",
+				provider: "mock-provider",
+				model: "gpt-4o-mini",
 				outputTokens: 9,
 				responseData: JSON.stringify({
 					text: "Strict mode catches more bugs.",

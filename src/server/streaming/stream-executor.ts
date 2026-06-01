@@ -139,6 +139,8 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 					outputTokens = result.tokensUsed || 0;
 					await finalizeRequestLog({
+						provider: result.resolvedProvider,
+						model: result.resolvedModel,
 						outputTokens,
 						responseData: result,
 					});

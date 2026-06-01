@@ -616,11 +616,12 @@ describe('GET /v1/logs', () => {
       }
     });
 
-    it('logs streaming fallback completions', async () => {
-      const streamModel = 'stream-fallback-model';
-      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
-      const originalGenerate = router.generate.bind(router);
-      let observedRequest: Record<string, unknown> | undefined;
+	it('logs streaming fallback completions', async () => {
+		const requestedModel = 'stream-fallback-requested-model';
+		const resolvedModel = 'stream-fallback-resolved-model';
+		const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
+		const originalGenerate = router.generate.bind(router);
+		let observedRequest: Record<string, unknown> | undefined;
 
       const messages = [
         { role: 'system', content: 'You are terse.' },
@@ -629,43 +630,45 @@ describe('GET /v1/logs', () => {
         { role: 'user', content: 'Second question' },
       ];
 
-      (router as any).resolveStreamingProviders = async () => [];
-      (router as any).generate = async (request: Record<string, unknown>) => {
-        observedRequest = request;
-        return {
-          text: 'Fallback response',
-          model: streamModel,
-          tokensUsed: 5,
-          requestedProvider: 'mock-fallback',
-          requestedModel: streamModel,
-          resolvedProvider: 'mock-fallback',
-          resolvedModel: streamModel,
-        };
-      };
+		(router as any).resolveStreamingProviders = async () => [];
+		(router as any).generate = async (request: Record<string, unknown>) => {
+			observedRequest = request;
+			return {
+				text: 'Fallback response',
+				provider: 'mock-fallback',
+				model: resolvedModel,
+				tokensUsed: 5,
+				requestedProvider: 'mock-fallback',
+				requestedModel: requestedModel,
+				resolvedProvider: 'mock-fallback',
+				resolvedModel: resolvedModel,
+				fallbackUsed: true,
+			};
+		};
 
       try {
         const res = await requestText('POST', '/v1/chat/completions', {
-          body: {
-            model: streamModel,
-            messages,
-            stream: true,
-          },
+			body: {
+				model: requestedModel,
+				messages,
+				stream: true,
+			},
         });
 
         assert.equal(res.status, 200);
         assert.match(res.data, /"object":"chat\.completion\.chunk"/);
         assert.match(res.data, /Fallback response/);
         assert.match(res.data, /data: \[DONE\]/);
-        assert.deepEqual(observedRequest, {
-          prompt: 'user: First question\nassistant: First answer\nuser: Second question',
-          system: 'You are terse.',
-          model: streamModel,
-          maxTokens: undefined,
-          project: undefined,
-        });
+			assert.deepEqual(observedRequest, {
+				prompt: 'user: First question\nassistant: First answer\nuser: Second question',
+				system: 'You are terse.',
+				model: requestedModel,
+				maxTokens: undefined,
+				project: undefined,
+			});
 
-        const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
-        assert.equal(logsRes.status, 200);
+			const logsRes = await request('GET', `/v1/logs?model=${resolvedModel}`);
+			assert.equal(logsRes.status, 200);
 
         const data = logsRes.data as {
           total: number;
@@ -677,17 +680,18 @@ describe('GET /v1/logs', () => {
           }>;
         };
 
-        assert.equal(data.total, 1);
-        assert.equal(data.logs[0]?.provider, 'unknown');
-        assert.equal(data.logs[0]?.model, streamModel);
-        assert.equal(data.logs[0]?.outputTokens, 5);
-        assert.equal(data.logs[0]?.error, undefined);
-      } finally {
-        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
-        (router as any).generate = originalGenerate;
-        deleteLogsByModel(streamModel);
-      }
-    });
+			assert.equal(data.total, 1);
+			assert.equal(data.logs[0]?.provider, 'mock-fallback');
+			assert.equal(data.logs[0]?.model, resolvedModel);
+			assert.equal(data.logs[0]?.outputTokens, 5);
+			assert.equal(data.logs[0]?.error, undefined);
+		} finally {
+			(router as any).resolveStreamingProviders = originalResolveStreamingProviders;
+			(router as any).generate = originalGenerate;
+			deleteLogsByModel(requestedModel);
+			deleteLogsByModel(resolvedModel);
+		}
+	});
 
     it('retries the next streaming-capable provider when failure happens before content', async () => {
       const streamModel = 'stream-prestart-fallback-model';
