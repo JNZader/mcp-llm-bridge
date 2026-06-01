@@ -126,4 +126,15 @@ describe('requiresApproval', () => {
 		assert.equal('requireApproveFor' in DEFAULT_CONFIG, false);
 		assert.equal('requireApprovalFor' in DEFAULT_CONFIG, true);
 	});
+
+	it('explicitRequirement overrides heuristic matching', () => {
+		assert.equal(
+			requiresApproval('dynamic_read_tool', DEFAULT_CONFIG, { explicitRequirement: true }),
+			true,
+		);
+		assert.equal(
+			requiresApproval('vault_store', DEFAULT_CONFIG, { explicitRequirement: false }),
+			false,
+		);
+	});
 });

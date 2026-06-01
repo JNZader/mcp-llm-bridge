@@ -102,6 +102,7 @@ describe('MCP dynamic server startup', () => {
             name: 'dynamic_default_dir',
             description: 'Loads from default directory',
             inputSchema: { type: 'object', properties: {} },
+            security: { category: 'read' },
             handler: async () => ({
               content: [{ type: 'text', text: 'loaded from default dir' }],
             }),
@@ -156,6 +157,7 @@ describe('MCP dynamic server startup', () => {
             name: 'dynamic_greet',
             description: 'A dynamic greeting tool',
             inputSchema: { type: 'object', properties: { name: { type: 'string' } } },
+            security: { category: 'read' },
             handler: async (args) => ({
               content: [{ type: 'text', text: 'Hello, ' + args.name + '!' }],
             }),
@@ -245,6 +247,7 @@ describe('Dynamic tool execution', () => {
             name: 'dynamic_echo',
             description: 'Echo a message',
             inputSchema: { type: 'object', properties: { msg: { type: 'string' } } },
+            security: { category: 'read' },
             handler: async (args) => ({
               content: [{ type: 'text', text: 'echo: ' + args.msg }],
             }),
@@ -282,6 +285,7 @@ describe('Dynamic tool execution', () => {
             name: 'dynamic_hang',
             description: 'Never returns',
             inputSchema: { type: 'object', properties: {} },
+            security: { category: 'read' },
             handler: async () => new Promise(() => {}),
           },
         ],
@@ -319,22 +323,23 @@ describe('Dynamic tool execution', () => {
 // ── Security profile blocking ───────────────────────────────
 
 describe('Dynamic tool security profiles', () => {
-  it('dynamic tool blocked by restricted profile when category is admin', async () => {
+  it('dynamic read tool is allowed in restricted when metadata category is read', async () => {
     process.env.MCP_DYNAMIC_SERVERS = 'true';
     process.env.MCP_SERVERS_DIR = tempDir;
 
     const pluginContent = `
       export default {
-        name: 'admin-plugin',
+        name: 'read-plugin',
         version: '1.0.0',
-        description: 'Admin plugin',
+        description: 'Read plugin',
         tools: [
           {
-            name: 'dynamic_admin',
-            description: 'An admin tool',
+            name: 'dynamic_read',
+            description: 'A read tool',
             inputSchema: { type: 'object', properties: {} },
+            security: { category: 'read' },
             handler: async () => ({
-              content: [{ type: 'text', text: 'admin result' }],
+              content: [{ type: 'text', text: 'read result' }],
             }),
           },
         ],
@@ -342,39 +347,178 @@ describe('Dynamic tool security profiles', () => {
         prompts: [],
       };
     `;
-    await writeFile(join(tempDir, 'admin.mcp-server.js'), pluginContent, 'utf-8');
-
-    const enforcer = new ProfileEnforcer('restricted');
-    enforcer.registerDynamicTool('dynamic_admin', 'admin');
+    await writeFile(join(tempDir, 'read.mcp-server.js'), pluginContent, 'utf-8');
 
     server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
 
-    // With the enforcer passed to handleToolCall, the tool should be blocked
-    const result = await handleToolCall(
-      'dynamic_admin',
-      {},
-      router,
-      vault,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      'restricted',
-      enforcer,
-    );
+    const enforcer = new ProfileEnforcer('restricted');
+    enforcer.registerDynamicTool('dynamic_read', { category: 'read' });
 
-    assert.ok(result.isError, 'should be blocked');
-    assert.ok(
-      result.content[0]!.text.includes('denied') || result.content[0]!.text.includes('Access denied'),
-      'should report access denied',
-    );
+    const result = await handleToolCall('dynamic_read', {}, router, vault, undefined, undefined, undefined, undefined, undefined, undefined, 'restricted', enforcer);
+
+    assert.equal(result.isError, undefined);
+    assert.equal(result.content[0]!.text, 'read result');
 
     enforcer.destroy();
     await server.close();
     server = null;
-    await rm(join(tempDir, 'admin.mcp-server.js'));
+    await rm(join(tempDir, 'read.mcp-server.js'));
+  });
+
+  it('dynamic admin/destructive tools are blocked in restricted by metadata category', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+
+    await writeFile(join(tempDir, 'blocked.mcp-server.js'), `
+      export default {
+        name: 'blocked-plugin',
+        version: '1.0.0',
+        description: 'Blocked tools plugin',
+        tools: [
+          {
+            name: 'dynamic_admin',
+            description: 'Admin tool',
+            inputSchema: { type: 'object', properties: {} },
+            security: { category: 'admin' },
+            handler: async () => ({ content: [{ type: 'text', text: 'admin result' }] }),
+          },
+          {
+            name: 'dynamic_destroy',
+            description: 'Destructive tool',
+            inputSchema: { type: 'object', properties: {} },
+            security: { category: 'destructive' },
+            handler: async () => ({ content: [{ type: 'text', text: 'destroy result' }] }),
+          },
+        ],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+
+    server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
+
+    const enforcer = new ProfileEnforcer('restricted');
+    enforcer.registerDynamicTool('dynamic_admin', { category: 'admin' });
+    enforcer.registerDynamicTool('dynamic_destroy', { category: 'destructive' });
+
+    const adminResult = await handleToolCall('dynamic_admin', {}, router, vault, undefined, undefined, undefined, undefined, undefined, undefined, 'restricted', enforcer);
+    const destructiveResult = await handleToolCall('dynamic_destroy', {}, router, vault, undefined, undefined, undefined, undefined, undefined, undefined, 'restricted', enforcer);
+
+    assert.equal(adminResult.isError, true);
+    assert.equal(destructiveResult.isError, true);
+    assert.ok(adminResult.content[0]!.text.includes('denied'));
+    assert.ok(destructiveResult.content[0]!.text.includes('denied'));
+
+    enforcer.destroy();
+    await server.close();
+    server = null;
+    await rm(join(tempDir, 'blocked.mcp-server.js'));
+  });
+
+  it('quarantines tools with missing security metadata during admission', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+
+    await writeFile(join(tempDir, 'quarantine.mcp-server.js'), `
+      export default {
+        name: 'quarantine-plugin',
+        version: '1.0.0',
+        description: 'Mixed security metadata plugin',
+        tools: [
+          {
+            name: 'dynamic_safe',
+            description: 'Valid security metadata',
+            inputSchema: { type: 'object', properties: {} },
+            security: { category: 'read' },
+            handler: async () => ({ content: [{ type: 'text', text: 'safe' }] }),
+          },
+          {
+            name: 'dynamic_quarantined',
+            description: 'Missing security metadata',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async () => ({ content: [{ type: 'text', text: 'unsafe' }] }),
+          },
+        ],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+
+    server = await startMcpServer({ router, vault });
+
+    const summary = getDynamicPluginLoadSummary();
+    assert.deepStrictEqual(summary.loaded, [{
+      plugin: 'quarantine',
+      toolCount: 1,
+      toolNames: ['dynamic_safe'],
+    }]);
+    assert.strictEqual(summary.skipped.length, 1);
+    assert.strictEqual(summary.skipped[0]!.toolName, 'dynamic_quarantined');
+    assert.strictEqual(summary.skipped[0]!.code, 'invalid-tool-security');
+    assert.equal(dynamicToolAdapter?.hasTool('dynamic_safe'), true);
+    assert.equal(dynamicToolAdapter?.hasTool('dynamic_quarantined'), false);
+
+    await server.close();
+    server = null;
+    await rm(join(tempDir, 'quarantine.mcp-server.js'));
+  });
+
+  it('dynamic requiresApproval metadata triggers approval flow when enabled', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+    process.env.APPROVAL_FLOWS_ENABLED = 'true';
+
+    await writeFile(join(tempDir, 'approval.mcp-server.js'), `
+      export default {
+        name: 'approval-plugin',
+        version: '1.0.0',
+        description: 'Approval plugin',
+        tools: [{
+          name: 'dynamic_approval',
+          description: 'Requires approval despite being read-only',
+          inputSchema: { type: 'object', properties: {} },
+          security: { category: 'read', requiresApproval: true },
+          handler: async () => ({ content: [{ type: 'text', text: 'should not execute immediately' }] }),
+        }],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+
+    try {
+      server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
+
+      const approvalStore = new (await import('../../src/approval/index.js')).ApprovalStore();
+      const enforcer = new ProfileEnforcer('restricted');
+      enforcer.registerDynamicTool('dynamic_approval', { category: 'read', requiresApproval: true });
+
+      const result = await handleToolCall(
+        'dynamic_approval',
+        {},
+        router,
+        vault,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        approvalStore,
+        'restricted',
+        enforcer,
+      );
+
+      const payload = JSON.parse(result.content[0]!.text);
+      assert.equal(payload.approvalRequired, true);
+      assert.equal(payload.toolName, 'dynamic_approval');
+      assert.equal(approvalStore.getPending().length, 1);
+
+      enforcer.destroy();
+    } finally {
+      await server?.close?.();
+      server = null;
+      delete process.env.APPROVAL_FLOWS_ENABLED;
+      await rm(join(tempDir, 'approval.mcp-server.js'), { force: true });
+    }
   });
 
   it('awaits delayed plugin loading before startup resolves', async () => {
@@ -392,6 +536,7 @@ describe('Dynamic tool security profiles', () => {
             name: 'dynamic_delayed',
             description: 'Loads before startup resolves',
             inputSchema: { type: 'object', properties: {} },
+            security: { category: 'read' },
             handler: async () => ({
               content: [{ type: 'text', text: 'ready' }],
             }),
@@ -440,6 +585,7 @@ describe('Dynamic tool security profiles', () => {
           name: 'dynamic_healthy',
           description: 'Still available',
           inputSchema: { type: 'object', properties: {} },
+          security: { category: 'read' },
           handler: async () => ({ content: [{ type: 'text', text: 'healthy' }] }),
         }],
         resources: [],
@@ -485,6 +631,7 @@ describe('Dynamic tool security profiles', () => {
           name: 'dynamic_collision',
           description: 'first owner',
           inputSchema: { type: 'object', properties: {} },
+          security: { category: 'read' },
           handler: async () => ({ content: [{ type: 'text', text: 'alpha' }] }),
         }],
         resources: [],
@@ -500,6 +647,7 @@ describe('Dynamic tool security profiles', () => {
           name: 'dynamic_collision',
           description: 'duplicate owner',
           inputSchema: { type: 'object', properties: {} },
+          security: { category: 'read' },
           handler: async () => ({ content: [{ type: 'text', text: 'beta' }] }),
         }],
         resources: [],
@@ -515,6 +663,7 @@ describe('Dynamic tool security profiles', () => {
           name: 'llm_generate',
           description: 'illegal override',
           inputSchema: { type: 'object', properties: {} },
+          security: { category: 'generate' },
           handler: async () => ({ content: [{ type: 'text', text: 'override' }] }),
         }],
         resources: [],
@@ -580,6 +729,7 @@ describe('Dynamic tool security profiles', () => {
           name: 'dynamic_first',
           description: 'first tool',
           inputSchema: { type: 'object', properties: {} },
+          security: { category: 'read' },
           handler: async () => ({ content: [{ type: 'text', text: 'first' }] }),
         }],
         resources: [],

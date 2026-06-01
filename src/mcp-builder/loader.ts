@@ -2,7 +2,8 @@ import { copyFile, readdir, rm } from 'fs/promises';
 import { dirname, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { dynamicPluginLoadTimeoutMs } from '../core/mcp-runtime-config.js';
-import type { McpServerDefinition } from './index.js';
+import { ToolCategorySchema } from '../security/profiles.js';
+import type { McpServerDefinition, ToolPattern, ToolSecurityMetadata } from './index.js';
 
 export interface LoadedPlugin {
   name: string;
@@ -11,6 +12,7 @@ export interface LoadedPlugin {
 
 const PLUGIN_LOAD_ERROR = {
   INVALID_TOP_LEVEL_SHAPE: 'invalid-top-level-shape',
+  INVALID_TOOL_SECURITY: 'invalid-tool-security',
   LOAD_FAILED: 'load-failed',
   LOAD_TIMEOUT: 'load-timeout',
 } as const;
@@ -22,6 +24,7 @@ export interface PluginLoadIssue {
   file: string;
   code: PluginLoadErrorCode;
   message: string;
+  toolName?: string;
 }
 
 export interface PluginLoadSummary {
@@ -72,7 +75,49 @@ function isValidPluginDefinition(value: unknown): value is McpServerDefinition {
     && typeof value['description'] === 'string'
     && Array.isArray(value['tools'])
     && Array.isArray(value['resources'])
-    && Array.isArray(value['prompts']);
+     && Array.isArray(value['prompts']);
+}
+
+function isValidToolSecurityMetadata(value: unknown): value is ToolSecurityMetadata {
+  if (!isRecord(value)) return false;
+
+  if (!ToolCategorySchema.safeParse(value['category']).success) {
+    return false;
+  }
+
+  return value['requiresApproval'] === undefined || typeof value['requiresApproval'] === 'boolean';
+}
+
+function sanitizePluginDefinition(
+  pluginName: string,
+  file: string,
+  definition: McpServerDefinition,
+): { definition: McpServerDefinition; skipped: PluginLoadIssue[] } {
+  const skipped: PluginLoadIssue[] = [];
+  const tools: ToolPattern[] = [];
+
+  for (const tool of definition.tools) {
+    if (!isValidToolSecurityMetadata(tool.security)) {
+      skipped.push({
+        plugin: pluginName,
+        file,
+        toolName: tool.name,
+        code: PLUGIN_LOAD_ERROR.INVALID_TOOL_SECURITY,
+        message: `Tool "${tool.name}" must declare valid security metadata with category and optional requiresApproval`,
+      });
+      continue;
+    }
+
+    tools.push(tool);
+  }
+
+  return {
+    definition: {
+      ...definition,
+      tools,
+    },
+    skipped,
+  };
 }
 
 export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary> {
@@ -106,7 +151,10 @@ export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary
           });
           continue;
         }
-        loaded.push({ name: pluginName, definition });
+
+        const sanitized = sanitizePluginDefinition(pluginName, file, definition);
+        skipped.push(...sanitized.skipped);
+        loaded.push({ name: pluginName, definition: sanitized.definition });
       } catch (e) {
         if (e instanceof PluginImportTimeoutError) {
           errors.push({

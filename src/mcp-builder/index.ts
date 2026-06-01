@@ -22,8 +22,24 @@ export interface ToolPattern {
   inputSchema: Record<string, unknown>;
   /** Handler function — receives validated args, returns content. */
   handler: ToolHandler;
+  /** Security metadata required for dynamic plugin admission. */
+  security?: ToolSecurityMetadata;
   /** Optional examples of valid inputs for documentation. */
   examples?: ToolExample[];
+}
+
+export const TOOL_SECURITY_CATEGORY = {
+  READ: 'read',
+  GENERATE: 'generate',
+  DESTRUCTIVE: 'destructive',
+  ADMIN: 'admin',
+} as const;
+
+export type ToolSecurityCategory = (typeof TOOL_SECURITY_CATEGORY)[keyof typeof TOOL_SECURITY_CATEGORY];
+
+export interface ToolSecurityMetadata {
+  category: ToolSecurityCategory;
+  requiresApproval?: boolean;
 }
 
 export interface ToolExample {

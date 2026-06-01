@@ -152,6 +152,12 @@ describe('ProfileEnforcer.authorize', () => {
     assert.equal(enforcer.authorize('dynamic_read_tool'), true);
   });
 
+  it('allows registered dynamic read tools in restricted', () => {
+    const enforcer = createEnforcer('restricted');
+    enforcer.registerDynamicTool('dynamic_read_tool', { category: 'read' });
+    assert.equal(enforcer.authorize('dynamic_read_tool'), true);
+  });
+
   it('blocks dynamic tools in restricted when category is blocked', () => {
     const enforcer = createEnforcer('restricted');
     enforcer.registerDynamicTool('dynamic_admin_tool', 'admin');

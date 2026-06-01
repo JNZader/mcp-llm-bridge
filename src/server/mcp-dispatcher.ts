@@ -54,7 +54,7 @@ function approvalRequiredResult(
     toolName,
     toolArgs: args,
     requester: 'mcp-client',
-    reason: `Destructive tool "${toolName}" requires approval under "${securityProfile}" profile`,
+    reason: `Tool "${toolName}" requires approval under "${securityProfile}" profile`,
   });
 
   return {
@@ -128,8 +128,12 @@ export async function dispatchToolCall(
 
   try {
     if (approvalFlowsEnabled() && approvalStore && securityProfile && securityProfile !== 'local-dev') {
-      const category = TOOL_CATEGORIES[toolName];
-      if (category === 'destructive' && requiresApproval(toolName, APPROVAL_DEFAULT_CONFIG)) {
+      const dynamicSecurity = enforcer?.getToolSecurity(toolName);
+      const category = dynamicSecurity?.category ?? TOOL_CATEGORIES[toolName];
+      const needsApproval = requiresApproval(toolName, APPROVAL_DEFAULT_CONFIG, {
+        explicitRequirement: dynamicSecurity?.requiresApproval,
+      });
+      if (category && needsApproval) {
         return approvalRequiredResult(toolName, args, approvalStore, securityProfile);
       }
     }

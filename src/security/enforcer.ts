@@ -14,6 +14,7 @@ import {
 import { RateLimiter } from '../server/rate-limit.js';
 import { logger } from '../core/logger.js';
 import type { TrustLevel } from '../core/types.js';
+import type { ToolSecurityMetadata } from '../mcp-builder/index.js';
 import {
   PROFILES,
   TOOL_CATEGORIES,
@@ -48,7 +49,7 @@ export class ProfileEnforcer {
   private readonly rateLimiter: RateLimiter | null;
   private readonly allowedCategories: Set<ToolCategory>;
   private readonly _resolver: ProfileResolver | null;
-  private readonly dynamicToolCategories: Map<string, ToolCategory> = new Map();
+  private readonly dynamicToolSecurity: Map<string, ToolSecurityMetadata> = new Map();
 
   /** Get the set of allowed categories for the active profile. */
   get allowedCategoriesSet(): Set<ToolCategory> {
@@ -105,8 +106,25 @@ export class ProfileEnforcer {
    * Register a dynamically loaded tool with its security category.
    * This makes async-loaded tools visible to filterTools() and authorize().
    */
-  registerDynamicTool(name: string, category: ToolCategory): void {
-    this.dynamicToolCategories.set(name, category);
+  registerDynamicTool(name: string, security: ToolCategory | ToolSecurityMetadata): void {
+    this.dynamicToolSecurity.set(
+      name,
+      typeof security === 'string' ? { category: security } : security,
+    );
+  }
+
+  getToolSecurity(toolName: string): ToolSecurityMetadata | undefined {
+    const dynamicSecurity = this.dynamicToolSecurity.get(toolName);
+    if (dynamicSecurity) {
+      return dynamicSecurity;
+    }
+
+    const category = TOOL_CATEGORIES[toolName];
+    if (!category) {
+      return undefined;
+    }
+
+    return { category };
   }
 
   /**
@@ -128,7 +146,7 @@ export class ProfileEnforcer {
    */
   filterTools(tools: readonly ToolDef[]): ToolDef[] {
     return tools.filter((tool) => {
-      const category = TOOL_CATEGORIES[tool.name] ?? this.dynamicToolCategories.get(tool.name);
+      const category = this.getToolSecurity(tool.name)?.category;
       if (!category) {
         // Unknown tools are blocked by default (safe-by-default)
         logger.warn(
@@ -146,7 +164,7 @@ export class ProfileEnforcer {
    * Returns true if allowed, false if denied.
    */
   authorize(toolName: string): boolean {
-    const category = TOOL_CATEGORIES[toolName] ?? this.dynamicToolCategories.get(toolName);
+    const category = this.getToolSecurity(toolName)?.category;
 
     if (!category || !this.allowedCategories.has(category)) {
       logger.warn(

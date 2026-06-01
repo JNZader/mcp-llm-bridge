@@ -113,6 +113,7 @@ function admitDynamicPlugins(
   server: Server,
   plugins: LoadedPlugin[],
   adapter: McpDefinitionAdapter,
+  enforcer?: ProfileEnforcer,
 ): Pick<DynamicPluginLoadSummary, 'loaded' | 'collisions'> {
   const builtInToolNames = new Set<string>(TOOLS.map((tool) => tool.name));
   const admittedToolOwners = new Map<string, string>();
@@ -160,8 +161,12 @@ function admitDynamicPlugins(
     }
 
     adapter.register(server, plugin.definition, plugin.name);
-    for (const toolName of pluginToolNames) {
+    for (const tool of plugin.definition.tools) {
+      const toolName = tool.name;
       admittedToolOwners.set(toolName, plugin.name);
+      if (enforcer && tool.security) {
+        enforcer.registerDynamicTool(toolName, tool.security);
+      }
     }
     loaded.push({
       plugin: plugin.name,
@@ -271,7 +276,7 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
   if (dynamicServersEnabled) {
     dynamicToolAdapter = new McpDefinitionAdapter();
     const pluginLoadSummary = await loadPlugins(pluginsDir);
-    const admissionSummary = admitDynamicPlugins(server, pluginLoadSummary.loaded, dynamicToolAdapter);
+    const admissionSummary = admitDynamicPlugins(server, pluginLoadSummary.loaded, dynamicToolAdapter, enforcer);
 
     dynamicPluginLoadSummary = {
       enabled: true,
@@ -283,8 +288,6 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
     };
 
     if (enforcer && dynamicToolAdapter) {
-      // Safe-by-default: dynamic tools remain unknown to restricted profiles
-      // unless a future explicit categorization step is added.
       server.setRequestHandler(ListToolsRequestSchema, async () => ({
         tools: enforcer.filterTools(getRuntimeMcpTools()),
       }));

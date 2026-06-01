@@ -29,6 +29,10 @@ export interface ApprovalConfig {
 	autoApproveFor: string[]; // trusted tool patterns
 }
 
+export interface ApprovalRequirementOptions {
+	explicitRequirement?: boolean;
+}
+
 // ── Defaults ──
 
 export const DEFAULT_CONFIG: ApprovalConfig = {
@@ -124,7 +128,12 @@ export class ApprovalStore {
 export function requiresApproval(
 	toolName: string,
 	config: ApprovalConfig = DEFAULT_CONFIG,
+	options?: ApprovalRequirementOptions,
 ): boolean {
+	if (typeof options?.explicitRequirement === 'boolean') {
+		return options.explicitRequirement;
+	}
+
 	// Check auto-approve first
 	if (config.autoApproveFor.some((p) => toolName.includes(p))) {
 		return false;

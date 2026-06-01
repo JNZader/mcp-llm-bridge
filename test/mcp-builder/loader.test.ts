@@ -29,6 +29,7 @@ function makeDefinition(name: string): McpServerDefinition {
         name: 'test_tool',
         description: 'A test tool',
         inputSchema: { type: 'object', properties: {} },
+        security: { category: 'read' },
         handler: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
       },
     ],
@@ -137,6 +138,31 @@ describe('loadPlugins', () => {
     assert.strictEqual(result.errors.length, 1);
     assert.strictEqual(result.errors[0]!.plugin, 'broken');
     assert.strictEqual(result.errors[0]!.code, 'load-failed');
+  });
+
+  it('quarantines tools with missing security metadata', async () => {
+    await writePluginFile('missing-security', `export default {
+      name: 'missing-security',
+      version: '1.0.0',
+      description: 'Missing tool security',
+      tools: [{
+        name: 'unsafe_tool',
+        description: 'Missing security block',
+        inputSchema: { type: 'object', properties: {} },
+        handler: async () => ({ content: [{ type: 'text', text: 'nope' }] }),
+      }],
+      resources: [],
+      prompts: [],
+    };`);
+
+    const result = await loadPlugins(tempDir);
+
+    assert.strictEqual(result.loaded.length, 1);
+    assert.deepStrictEqual(result.loaded[0]!.definition.tools, []);
+    assert.strictEqual(result.skipped.length, 1);
+    assert.strictEqual(result.skipped[0]!.plugin, 'missing-security');
+    assert.strictEqual(result.skipped[0]!.toolName, 'unsafe_tool');
+    assert.strictEqual(result.skipped[0]!.code, 'invalid-tool-security');
   });
 
   it('quarantines plugin import timeouts with structured summary', async () => {
