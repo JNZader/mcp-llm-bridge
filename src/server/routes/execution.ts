@@ -9,7 +9,6 @@ import { createCanonicalResponse } from "../../protocol-converter/index.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { Vault } from "../../vault/vault.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
-import type { LogContext } from "../../logging/types.js";
 import {
 	getValidationIssue,
 	jsonChatInvalidRequestError,
@@ -19,11 +18,11 @@ import {
 import {
 	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
 } from "../http-helpers/chat-request.js";
-import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 import {
 	executeNonStreamingChatCompletions,
 	prepareChatCompletionsRequest,
 } from "../execution/chat-completions-service.js";
+import { executeGenerateRequest } from "../execution/generate-service.js";
 import { createStreamExecutor } from "../streaming/stream-executor.js";
 
 export interface ExecutionRouteDeps {
@@ -164,7 +163,6 @@ export function registerExecutionRoutes(
 	const { router, vault, costTracker, requestLogger } = deps;
 
 	app.post("/v1/generate", async (c) => {
-		let logCtx: LogContext | undefined;
 		try {
 			const body = await c.req.json();
 
@@ -179,30 +177,15 @@ export function registerExecutionRoutes(
 				throw error;
 			}
 
-			const generateRequest = prepareGenerateRequest(validated, c);
-
-			logCtx = requestLogger?.captureStart({
-				provider: validated.provider || "unknown",
-				model: validated.model || "unknown",
-				startTime: Date.now(),
-			});
-
-			const result = await router.generate(generateRequest);
-
-			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, {
-					outputTokens: result.tokensUsed || 0,
-					responseData: JSON.stringify(result),
-				});
-			}
-
-			return c.json(result);
+			return c.json(
+				await executeGenerateRequest({
+					validated,
+					context: c,
+					router,
+					requestLogger,
+				}),
+			);
 		} catch (error) {
-			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, {
-					error: error instanceof Error ? error : new Error(String(error)),
-				});
-			}
 			const message = error instanceof Error ? error.message : String(error);
 			return c.json({ error: message }, 500);
 		}
