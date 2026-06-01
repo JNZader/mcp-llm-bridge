@@ -397,6 +397,82 @@ describe('GET /v1/logs', () => {
     });
   });
 
+  describe('Incident triage filters', () => {
+    it('should filter failed, retried, and successful logs', async () => {
+      await requestLogger.capture({
+        provider: 'openai',
+        model: 'triage-failed-model',
+        latencyMs: 100,
+        error: 'boom',
+        attempts: 2,
+      });
+      await requestLogger.capture({
+        provider: 'openai',
+        model: 'triage-retried-model',
+        latencyMs: 200,
+        attempts: 3,
+      });
+      await requestLogger.capture({
+        provider: 'openai',
+        model: 'triage-success-model',
+        latencyMs: 300,
+        attempts: 1,
+      });
+
+      try {
+        const failedRes = await request('GET', '/v1/logs?status=failed');
+        const retriedRes = await request('GET', '/v1/logs?status=retried');
+        const successfulRes = await request('GET', '/v1/logs?status=successful');
+
+        assert.equal(failedRes.status, 200);
+        assert.equal(retriedRes.status, 200);
+        assert.equal(successfulRes.status, 200);
+
+        const failedLogs = (failedRes.data as { logs: Array<{ model: string }> }).logs;
+        const retriedLogs = (retriedRes.data as { logs: Array<{ model: string }> }).logs;
+        const successfulLogs = (successfulRes.data as { logs: Array<{ model: string }> }).logs;
+
+        assert.ok(failedLogs.some((log) => log.model === 'triage-failed-model'));
+        assert.ok(!failedLogs.some((log) => log.model === 'triage-retried-model'));
+        assert.ok(retriedLogs.some((log) => log.model === 'triage-retried-model'));
+        assert.ok(!retriedLogs.some((log) => log.model === 'triage-failed-model'));
+        assert.ok(successfulLogs.some((log) => log.model === 'triage-success-model'));
+        assert.ok(!successfulLogs.some((log) => log.model === 'triage-retried-model'));
+      } finally {
+        deleteLogsByModel('triage-failed-model');
+        deleteLogsByModel('triage-retried-model');
+        deleteLogsByModel('triage-success-model');
+      }
+    });
+
+    it('should filter logs by minimum latency', async () => {
+      await requestLogger.capture({
+        provider: 'openai',
+        model: 'triage-latency-fast',
+        latencyMs: 120,
+      });
+      await requestLogger.capture({
+        provider: 'openai',
+        model: 'triage-latency-slow',
+        latencyMs: 950,
+      });
+
+      try {
+        const res = await request('GET', '/v1/logs?minLatencyMs=900');
+
+        assert.equal(res.status, 200);
+        const data = res.data as { logs: Array<{ model: string; latencyMs: number }> };
+
+        assert.ok(data.logs.some((log) => log.model === 'triage-latency-slow'));
+        assert.ok(!data.logs.some((log) => log.model === 'triage-latency-fast'));
+        assert.ok(data.logs.every((log) => log.latencyMs >= 900));
+      } finally {
+        deleteLogsByModel('triage-latency-fast');
+        deleteLogsByModel('triage-latency-slow');
+      }
+    });
+  });
+
   describe('Invalid query parameters', () => {
     it('should return 400 for invalid date range (from > to)', async () => {
       const res = await request('GET', '/v1/logs?from=1000&to=500');
@@ -425,6 +501,18 @@ describe('GET /v1/logs', () => {
 
     it('should return 400 for non-numeric timestamp', async () => {
       const res = await request('GET', '/v1/logs?from=invalid');
+
+      assert.equal(res.status, 400);
+    });
+
+    it('should return 400 for invalid status', async () => {
+      const res = await request('GET', '/v1/logs?status=degraded');
+
+      assert.equal(res.status, 400);
+    });
+
+    it('should return 400 for negative minLatencyMs', async () => {
+      const res = await request('GET', '/v1/logs?minLatencyMs=-1');
 
       assert.equal(res.status, 400);
     });

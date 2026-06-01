@@ -92,6 +92,14 @@ export interface LogEntryPublic {
 /**
  * Query parameters for GET /v1/logs
  */
+export const LOG_QUERY_STATUS = {
+  FAILED: 'failed',
+  RETRIED: 'retried',
+  SUCCESSFUL: 'successful',
+} as const;
+
+export type LogQueryStatus = (typeof LOG_QUERY_STATUS)[keyof typeof LOG_QUERY_STATUS];
+
 export interface LogQuery {
   /** Start timestamp (Unix) - inclusive */
   from?: number;
@@ -104,6 +112,12 @@ export interface LogQuery {
   
   /** Filter by model */
   model?: string;
+
+  /** Filter by incident-triage status */
+  status?: LogQueryStatus;
+
+  /** Filter by minimum latency in milliseconds */
+  minLatencyMs?: number;
   
   /** Maximum results (default: 100, max: 1000) */
   limit?: number;

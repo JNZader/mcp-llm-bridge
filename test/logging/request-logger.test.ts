@@ -13,6 +13,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import Database from 'better-sqlite3';
 import { RequestLogger } from '../../src/logging/request-logger.js';
+import { LOG_QUERY_STATUS } from '../../src/logging/types.js';
 
 // Mock crypto.randomUUID for deterministic tests
 let mockUuidCounter = 0;
@@ -426,6 +427,43 @@ describe('RequestLogger', () => {
       assert.strictEqual(page2.offset, 10, 'Page 2 should report offset 10');
       
       assert.strictEqual(page3.logs.length, 5, 'Page 3 should have 5 items');
+    });
+
+    it('should filter logs by incident-triage status', async () => {
+      const now = 1704067200000;
+      const stmt = db.prepare(`
+        INSERT INTO request_logs (timestamp, provider, model, latency_ms, error, attempts)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+
+      stmt.run(now, 'openai', 'failed-model', 100, 'upstream failure', 2);
+      stmt.run(now + 1, 'openai', 'retried-model', 200, null, 3);
+      stmt.run(now + 2, 'openai', 'successful-model', 300, null, 1);
+
+      const failed = await logger.getLogs({ status: LOG_QUERY_STATUS.FAILED });
+      const retried = await logger.getLogs({ status: LOG_QUERY_STATUS.RETRIED });
+      const successful = await logger.getLogs({ status: LOG_QUERY_STATUS.SUCCESSFUL });
+
+      assert.deepStrictEqual(failed.logs.map((log: any) => log.model), ['failed-model']);
+      assert.deepStrictEqual(retried.logs.map((log: any) => log.model), ['retried-model']);
+      assert.deepStrictEqual(successful.logs.map((log: any) => log.model), ['successful-model']);
+    });
+
+    it('should filter logs by minimum latency', async () => {
+      const now = 1704067200000;
+      const stmt = db.prepare(`
+        INSERT INTO request_logs (timestamp, provider, model, latency_ms, attempts)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+
+      stmt.run(now, 'openai', 'fast-model', 150, 1);
+      stmt.run(now + 1, 'openai', 'slow-model', 800, 1);
+      stmt.run(now + 2, 'openai', 'slowest-model', 1200, 1);
+
+      const result = await logger.getLogs({ minLatencyMs: 800 });
+
+      assert.deepStrictEqual(result.logs.map((log: any) => log.model), ['slowest-model', 'slow-model']);
+      assert.strictEqual(result.total, 2);
     });
   });
 

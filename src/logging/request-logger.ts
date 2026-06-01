@@ -8,7 +8,7 @@
  */
 
 import type Database from 'better-sqlite3';
-import type { LogContext, LogQuery, LogsResponse, LogEntryPublic } from './types.js';
+import { LOG_QUERY_STATUS, type LogContext, type LogQuery, type LogsResponse, type LogEntryPublic } from './types.js';
 
 /**
  * Input for capture method (direct logging)
@@ -303,6 +303,25 @@ export class RequestLogger {
     if (query.model !== undefined) {
       whereConditions.push('model = ?');
       params.push(query.model);
+    }
+
+    if (query.status === LOG_QUERY_STATUS.FAILED) {
+      whereConditions.push('error IS NOT NULL');
+    }
+
+    if (query.status === LOG_QUERY_STATUS.RETRIED) {
+      whereConditions.push('error IS NULL');
+      whereConditions.push('attempts > 1');
+    }
+
+    if (query.status === LOG_QUERY_STATUS.SUCCESSFUL) {
+      whereConditions.push('error IS NULL');
+      whereConditions.push('attempts = 1');
+    }
+
+    if (query.minLatencyMs !== undefined) {
+      whereConditions.push('latency_ms >= ?');
+      params.push(query.minLatencyMs);
     }
 
     const whereClause = whereConditions.length > 0

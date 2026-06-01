@@ -6,6 +6,8 @@
 
 import { z } from 'zod';
 
+import { LOG_QUERY_STATUS } from './types.js';
+
 /**
  * Schema for LogEntry
  */
@@ -49,6 +51,12 @@ export const LogQuerySchema = z.object({
   to: z.coerce.number().int().positive().optional(),
   provider: z.string().min(1).max(100).optional(),
   model: z.string().min(1).max(200).optional(),
+  status: z.enum([
+    LOG_QUERY_STATUS.FAILED,
+    LOG_QUERY_STATUS.RETRIED,
+    LOG_QUERY_STATUS.SUCCESSFUL,
+  ]).optional(),
+  minLatencyMs: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(100),
   offset: z.coerce.number().int().nonnegative().default(0),
 }).refine(
