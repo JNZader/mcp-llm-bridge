@@ -42,6 +42,67 @@ function createProvider(id: string, modelId = "test-model"): LLMProvider {
 }
 
 describe("createStreamExecutor", () => {
+	it("falls back cleanly with a bare Router and no transformer registry", async () => {
+		const router = new Router();
+		const logged: Array<{ error?: Error; responseData?: unknown }> = [];
+
+		router.register({
+			...createProvider("mock", "test-model"),
+			async generate(request) {
+				assert.equal(request.model, "test-model");
+				assert.equal(request.strict, true);
+				return {
+					text: "fallback",
+					provider: "mock",
+					model: "test-model",
+					resolvedProvider: "mock",
+					resolvedModel: "test-model",
+					fallbackUsed: false,
+					tokensUsed: 3,
+				};
+			},
+		});
+
+		const events: string[] = [];
+		const executor = createStreamExecutor({
+			canonical: {
+				...createCanonicalRequest(),
+				strict: true,
+			},
+			router,
+			requestLogger: {
+				captureStart: () => ({}) as never,
+				captureEnd: async (_ctx: unknown, input?: { error?: Error; responseData?: unknown }) => {
+					logged.push({ error: input?.error, responseData: input?.responseData });
+				},
+			} as never,
+		});
+
+		await executor.execute({
+			writeChunk: async () => {
+				assert.fail("should not write streaming chunks during fallback");
+			},
+			writeFallbackResult: async (result) => {
+				events.push(`fallback:${result.text}`);
+			},
+			writeTerminalError: async (error) => {
+				assert.fail(`unexpected terminal error: ${error.message}`);
+			},
+			writeDone: async () => {
+				events.push("done");
+			},
+		});
+
+		assert.deepEqual(events, ["fallback:fallback", "done"]);
+		assert.equal(logged.length, 1);
+		assert.equal(logged[0]?.error, undefined);
+		assert.equal((logged[0]?.responseData as GenerateResponse | undefined)?.text, "fallback");
+		assert.equal(
+			(logged[0]?.responseData as GenerateResponse | undefined)?.resolvedProvider,
+			"mock",
+		);
+	});
+
 	it("falls back to router.generate when no streaming providers resolve", async () => {
 		const events: string[] = [];
 		const canonical = {

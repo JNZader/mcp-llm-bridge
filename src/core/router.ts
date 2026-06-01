@@ -600,7 +600,7 @@ export class Router {
     request: InternalLLMRequest,
   ): Promise<ResolvedStreamingProvider[]> {
     if (!this._transformerRegistry) {
-      throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
+      return [];
     }
 
     const registry = this._transformerRegistry;

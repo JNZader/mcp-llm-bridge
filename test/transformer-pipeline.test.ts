@@ -424,6 +424,17 @@ describe('Transformer Pipeline Integration', () => {
       );
     });
 
+    it('returns no streaming providers when registry is absent', async () => {
+      const router = new Router();
+      router.register(createMockApiProvider({ id: 'mock-api' }));
+
+      const resolved = await router.resolveStreamingProviders({
+        messages: [{ role: 'user', content: 'Hello' }],
+      });
+
+      assert.deepEqual(resolved, []);
+    });
+
     it('setTransformerRegistry makes registry available', () => {
       const registry = createRegistry();
       const router = new Router();
