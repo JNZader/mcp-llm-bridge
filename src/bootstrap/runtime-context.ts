@@ -1,11 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { createAllAdapters } from "../adapters/index.js";
-import {
-	BridgeOrchestrator,
-	loadBridgeConfig,
-	type BridgeConfig,
-} from "../bridge/index.js";
+import type { BridgeOrchestrator, BridgeConfig } from "../bridge/index.js";
 import { ComparisonService } from "../comparison/service.js";
 import {
 	createComparisonServices,
@@ -19,9 +15,9 @@ import { bootstrapFreeModels } from "./free-models.js";
 import { bootstrapLatencyRouting } from "./latency.js";
 import { bootstrapLocalLLM } from "./local-llm.js";
 import { bootstrapModelRouting } from "./model-routing.js";
+import { bootstrapBridge } from "./bridge.js";
 import { getMaxComparisonCostUsdFromEnv } from "../core/comparison-config.js";
 import { loadConfig } from "../core/config.js";
-import { logger } from "../core/logger.js";
 import { Router } from "../core/router.js";
 import { type GatewayConfig } from "../core/types.js";
 import { registry } from "../core/transformer.js";
@@ -77,13 +73,7 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
 
 	await bootstrapModelRouting(router);
 
-	const bridgeConfig = loadBridgeConfig();
-	const bridge = bridgeConfig
-		? new BridgeOrchestrator(router, bridgeConfig)
-		: null;
-	if (bridge) {
-		logger.info("Bridge orchestrator enabled — task-aware routing active");
-	}
+	const { bridgeConfig, bridge } = bootstrapBridge(router);
 
 	const toolingServices = createToolingServices({
 		db,
