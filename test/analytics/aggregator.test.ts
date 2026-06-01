@@ -129,6 +129,21 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       assert.strictEqual(model[0]!.model, ('gpt-4o'));
       assert.strictEqual(model[0]!.requests, (1));
     });
+
+    it('should record a request to provider dimension', () => {
+      aggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        channel: 'default',
+      });
+
+      const provider = aggregator.query({ dimension: 'provider' });
+      assert.strictEqual(provider.length, (1));
+      assert.strictEqual(provider[0]!.provider, ('openai'));
+      assert.strictEqual(provider[0]!.requests, (1));
+    });
   });
 
   describe('record() - Multiple Requests Aggregation', () => {
@@ -204,6 +219,27 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       const channel = aggregator.query({ dimension: 'channel' });
       assert.strictEqual(channel.length, (2));
+    });
+
+    it('should track different providers separately', () => {
+      aggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        channel: 'fast',
+      });
+
+      aggregator.record('anthropic', 'claude-3-5-sonnet', {
+        inputTokens: 200,
+        outputTokens: 100,
+        cost: 0.005,
+        latencyMs: 800,
+        channel: 'fast',
+      });
+
+      const provider = aggregator.query({ dimension: 'provider' });
+      assert.strictEqual(provider.length, (2));
     });
   });
 
@@ -468,6 +504,33 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       assert.strictEqual(modelQuery[0]!.requests, (1));
     });
 
+    it('should filter by provider', () => {
+      aggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        channel: 'default',
+      });
+
+      aggregator.record('anthropic', 'claude-3.5-sonnet', {
+        inputTokens: 200,
+        outputTokens: 100,
+        cost: 0.005,
+        latencyMs: 800,
+        channel: 'default',
+      });
+
+      const providerQuery = aggregator.query({
+        dimension: 'provider',
+        provider: 'openai',
+      });
+
+      assert.strictEqual(providerQuery.length, (1));
+      assert.strictEqual(providerQuery[0]!.provider, ('openai'));
+      assert.strictEqual(providerQuery[0]!.requests, (1));
+    });
+
     it('should return empty array for non-existent channel', () => {
       const result = aggregator.query({
         dimension: 'channel',
@@ -481,6 +544,15 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       const result = aggregator.query({
         dimension: 'model',
         model: 'non-existent',
+      });
+
+      assert.strictEqual(result.length, (0));
+    });
+
+    it('should return empty array for non-existent provider', () => {
+      const result = aggregator.query({
+        dimension: 'provider',
+        provider: 'non-existent',
       });
 
       assert.strictEqual(result.length, (0));
@@ -506,6 +578,7 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       await aggregator.flush(mockDb as unknown as import('../../src/analytics/types.js').Database);
 
       assert.notStrictEqual(insertedData, null);
+      assert.deepStrictEqual((insertedData as { provider: Array<unknown> }).provider.length, 1);
     });
 
     it('should clear in-memory data after flush', async () => {

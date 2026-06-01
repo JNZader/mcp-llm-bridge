@@ -49,6 +49,7 @@ export class AnalyticsAggregator {
       hourly: new Map(),
       daily: new Map(),
       channel: new Map(),
+      provider: new Map(),
       model: new Map(),
     };
   }
@@ -62,7 +63,7 @@ export class AnalyticsAggregator {
    * @param metrics - Request metrics
    */
   record(
-    _provider: string,
+    provider: string,
     model: string,
     metrics: RecordInput
   ): void {
@@ -88,6 +89,10 @@ export class AnalyticsAggregator {
     );
     this.updateMetrics(channelMetrics, metrics);
 
+    // Update provider dimension
+    const providerMetrics = this.getOrCreateMetrics(this.dimensions.provider, provider);
+    this.updateMetrics(providerMetrics, metrics);
+
     // Update model dimension
     const modelMetrics = this.getOrCreateMetrics(this.dimensions.model, model);
     this.updateMetrics(modelMetrics, metrics);
@@ -100,7 +105,7 @@ export class AnalyticsAggregator {
    * @returns Array of aggregated data points
    */
   query(query: AnalyticsQuery): AggregatedDataPoint[] {
-    const { dimension, from, to, channelId, model: modelFilter } = query;
+    const { dimension, from, to, channelId, provider: providerFilter, model: modelFilter } = query;
 
     switch (dimension) {
       case 'total':
@@ -129,6 +134,15 @@ export class AnalyticsAggregator {
         // Return all channels
         return Array.from(this.dimensions.channel.entries()).map(
           ([id, metrics]) => this.toDataPoint(0, metrics, { channelId: id })
+        );
+
+      case 'provider':
+        if (providerFilter) {
+          const metrics = this.dimensions.provider.get(providerFilter);
+          return metrics ? [this.toDataPoint(0, metrics, { provider: providerFilter })] : [];
+        }
+        return Array.from(this.dimensions.provider.entries()).map(
+          ([name, metrics]) => this.toDataPoint(0, metrics, { provider: name })
         );
 
       case 'model':
@@ -166,6 +180,7 @@ export class AnalyticsAggregator {
     this.dimensions.hourly.clear();
     this.dimensions.daily.clear();
     this.dimensions.channel.clear();
+    this.dimensions.provider.clear();
     this.dimensions.model.clear();
   }
 
@@ -256,6 +271,7 @@ export class AnalyticsAggregator {
     metrics: AnalyticsMetrics,
     identifiers?: {
       channelId?: string;
+      provider?: string;
       model?: string;
     }
   ): AggregatedDataPoint {
@@ -267,6 +283,7 @@ export class AnalyticsAggregator {
     const result: AggregatedDataPoint = {
       timestamp,
       ...(identifiers?.channelId ? { channelId: identifiers.channelId } : {}),
+      ...(identifiers?.provider ? { provider: identifiers.provider } : {}),
       ...(identifiers?.model ? { model: identifiers.model } : {}),
       requests: metrics.requests,
       totalTokens: metrics.totalTokens,
@@ -364,6 +381,12 @@ export class AnalyticsAggregator {
         ([id, metrics]) => ({
           id,
           data: this.toDataPoint(0, metrics, { channelId: id }),
+        })
+      ),
+      provider: Array.from(this.dimensions.provider.entries()).map(
+        ([name, metrics]) => ({
+          name,
+          data: this.toDataPoint(0, metrics, { provider: name }),
         })
       ),
       model: Array.from(this.dimensions.model.entries()).map(

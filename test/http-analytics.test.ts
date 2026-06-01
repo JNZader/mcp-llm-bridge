@@ -312,6 +312,17 @@ describe('GET /v1/analytics', () => {
       assert.ok(data.data.every((row) => typeof row.model === 'string' && row.model.length > 0));
     });
 
+    it('should filter by provider dimension', async () => {
+      const res = await request('GET', '/v1/analytics?dimension=provider');
+
+      assert.equal(res.status, 200);
+      const data = res.data as { data: Array<{ provider?: string }> };
+
+      assert.ok(Array.isArray(data.data), 'Should return provider data array');
+      assert.ok(data.data.length > 0, 'Should have provider data');
+      assert.ok(data.data.every((row) => typeof row.provider === 'string' && row.provider.length > 0));
+    });
+
     it('should filter by total dimension', async () => {
       const res = await request('GET', '/v1/analytics?dimension=total');
 
@@ -427,6 +438,32 @@ describe('GET /v1/analytics', () => {
       const data = res.data as { data: Array<unknown> };
 
       // Should return empty array for non-existent model
+      assert.equal(data.data.length, 0);
+    });
+  });
+
+  describe('Provider filtering', () => {
+    it('should filter by specific provider dimension', async () => {
+      const res = await request('GET', '/v1/analytics?dimension=provider');
+
+      assert.equal(res.status, 200);
+      const data = res.data as {
+        data: Array<{ requests: number; provider?: string }>;
+        summary: { totalRequests: number };
+      };
+
+      assert.ok(data.data.length > 0, 'Should have provider data');
+      assert.ok(data.data.some((row) => row.provider === 'openai'), 'Should expose provider identity');
+      const totalFromData = data.data.reduce((sum, d) => sum + d.requests, 0);
+      assert.equal(totalFromData, data.summary.totalRequests);
+    });
+
+    it('should return empty for non-existent provider', async () => {
+      const res = await request('GET', '/v1/analytics?dimension=provider&provider=nonexistent');
+
+      assert.equal(res.status, 200);
+      const data = res.data as { data: Array<unknown> };
+
       assert.equal(data.data.length, 0);
     });
   });

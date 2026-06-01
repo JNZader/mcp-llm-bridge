@@ -6,7 +6,7 @@ import type { Router } from "../../core/router.js";
 import { LogQuerySchema } from "../../logging/schemas.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 
-const VALID_ANALYTICS_DIMENSIONS = ["total", "hourly", "daily", "channel", "model"] as const;
+const VALID_ANALYTICS_DIMENSIONS = ["total", "hourly", "daily", "channel", "provider", "model"] as const;
 
 type AnalyticsDimension = (typeof VALID_ANALYTICS_DIMENSIONS)[number];
 
@@ -68,6 +68,7 @@ export function registerObservabilityRoutes(
 			const fromStr = c.req.query("from");
 			const toStr = c.req.query("to");
 			const channelId = c.req.query("channelId") || undefined;
+			const provider = c.req.query("provider") || undefined;
 			const model = c.req.query("model") || undefined;
 
 			if (!VALID_ANALYTICS_DIMENSIONS.includes(dimension)) {
@@ -112,6 +113,7 @@ export function registerObservabilityRoutes(
 				from,
 				to,
 				channelId,
+				provider,
 				model,
 			});
 

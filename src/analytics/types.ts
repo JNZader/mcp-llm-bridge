@@ -37,6 +37,8 @@ export interface AnalyticsDimensions {
   daily: Map<number, AnalyticsMetrics>;
   /** Per-channel metrics: channel_id -> metrics */
   channel: Map<string, AnalyticsMetrics>;
+  /** Per-provider metrics: provider name -> metrics */
+  provider: Map<string, AnalyticsMetrics>;
   /** Per-model metrics: model name -> metrics */
   model: Map<string, AnalyticsMetrics>;
 }
@@ -49,6 +51,8 @@ export interface AggregatedDataPoint {
   timestamp: number;
   /** Channel identifier when grouped by channel */
   channelId?: string;
+  /** Provider identifier when grouped by provider */
+  provider?: string;
   /** Model identifier when grouped by model */
   model?: string;
   /** Number of requests */
@@ -73,14 +77,16 @@ export interface AggregatedDataPoint {
  * Query parameters for retrieving aggregated analytics
  */
 export interface AnalyticsQuery {
-  /** Dimension to query: total, hourly, daily, channel, or model */
-  dimension: 'total' | 'hourly' | 'daily' | 'channel' | 'model';
+  /** Dimension to query: total, hourly, daily, channel, provider, or model */
+  dimension: 'total' | 'hourly' | 'daily' | 'channel' | 'provider' | 'model';
   /** Start of time range (unix timestamp in ms, inclusive) */
   from?: number;
   /** End of time range (unix timestamp in ms, inclusive) */
   to?: number;
   /** Filter by channel ID (required when dimension is 'channel') */
   channelId?: string;
+  /** Filter by provider name (required when dimension is 'provider') */
+  provider?: string;
   /** Filter by model name (required when dimension is 'model') */
   model?: string;
 }
@@ -141,6 +147,8 @@ export interface AnalyticsFlushData {
   daily: Array<{ timestamp: number; data: AggregatedDataPoint }>;
   /** Per-channel metrics array */
   channel: Array<{ id: string; data: AggregatedDataPoint }>;
+  /** Per-provider metrics array */
+  provider: Array<{ name: string; data: AggregatedDataPoint }>;
   /** Per-model metrics array */
   model: Array<{ name: string; data: AggregatedDataPoint }>;
 }
@@ -174,7 +182,7 @@ export function isAnalyticsQuery(value: unknown): value is AnalyticsQuery {
 
   // Check required dimension field
   if (!query.dimension) return false;
-  if (!['total', 'hourly', 'daily', 'channel', 'model'].includes(query.dimension)) {
+  if (!['total', 'hourly', 'daily', 'channel', 'provider', 'model'].includes(query.dimension)) {
     return false;
   }
 
@@ -182,6 +190,7 @@ export function isAnalyticsQuery(value: unknown): value is AnalyticsQuery {
   if (query.from !== undefined && typeof query.from !== 'number') return false;
   if (query.to !== undefined && typeof query.to !== 'number') return false;
   if (query.channelId !== undefined && typeof query.channelId !== 'string') return false;
+  if (query.provider !== undefined && typeof query.provider !== 'string') return false;
   if (query.model !== undefined && typeof query.model !== 'string') return false;
 
   return true;
