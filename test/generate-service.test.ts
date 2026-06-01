@@ -46,6 +46,7 @@ describe("generate-service", () => {
 						provider?: string;
 						model?: string;
 						totalTokens?: number;
+						attempts?: number;
 						responseData?: string;
 						error?: Error;
 					},
@@ -64,6 +65,10 @@ describe("generate-service", () => {
 						resolvedProvider: "mock-provider",
 						resolvedModel: "gpt-4o-mini",
 						fallbackUsed: false,
+						routing: {
+							strategy: "mock",
+							attemptedProviders: ["first-provider", "mock-provider"],
+						},
 					};
 				},
 			} as never,
@@ -93,6 +98,7 @@ describe("generate-service", () => {
 				provider: "mock-provider",
 				model: "gpt-4o-mini",
 				totalTokens: 9,
+				attempts: 2,
 				responseData: JSON.stringify({
 					text: "Strict mode catches more bugs.",
 					provider: "mock-provider",
@@ -101,6 +107,10 @@ describe("generate-service", () => {
 					resolvedProvider: "mock-provider",
 					resolvedModel: "gpt-4o-mini",
 					fallbackUsed: false,
+					routing: {
+						strategy: "mock",
+						attemptedProviders: ["first-provider", "mock-provider"],
+					},
 				}),
 			},
 		]);
@@ -113,6 +123,10 @@ describe("generate-service", () => {
 			resolvedProvider: "mock-provider",
 			resolvedModel: "gpt-4o-mini",
 			fallbackUsed: false,
+			routing: {
+				strategy: "mock",
+				attemptedProviders: ["first-provider", "mock-provider"],
+			},
 		});
 	});
 
@@ -144,16 +158,17 @@ describe("generate-service", () => {
 						},
 						captureEnd: async (
 							_ctx: unknown,
-						input?: {
-							provider?: string;
-							model?: string;
-							totalTokens?: number;
-							responseData?: string;
-							error?: Error;
-							},
-						) => {
-							captured.push({ phase: "end", error: input?.error?.message });
+					input?: {
+						provider?: string;
+						model?: string;
+						totalTokens?: number;
+						attempts?: number;
+						responseData?: string;
+						error?: Error;
 						},
+				) => {
+						captured.push({ phase: "end", attempts: input?.attempts, error: input?.error?.message });
+					},
 					} as never,
 					router: {
 						generate: async () => {
@@ -173,6 +188,7 @@ describe("generate-service", () => {
 			},
 			{
 				phase: "end",
+				attempts: 1,
 				error: "router blew up",
 			},
 		]);

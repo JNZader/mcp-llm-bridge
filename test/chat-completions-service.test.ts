@@ -65,6 +65,7 @@ describe("chat-completions-service", () => {
 						provider?: string;
 						model?: string;
 						totalTokens?: number;
+						attempts?: number;
 						responseData?: string;
 						error?: Error;
 					},
@@ -113,6 +114,7 @@ describe("chat-completions-service", () => {
 				provider: "mock-provider",
 				model: "gpt-4o-mini",
 				totalTokens: 9,
+				attempts: 1,
 				responseData: JSON.stringify({
 					text: "Strict mode catches more bugs.",
 					provider: "mock-provider",
@@ -158,5 +160,39 @@ describe("chat-completions-service", () => {
 				routing: { strategy: "mock", attemptedProviders: ["mock-provider"] },
 			},
 		});
+	});
+
+	it("logs attempted provider count for non-stream chat retries", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+		const captured: Array<Record<string, unknown>> = [];
+
+		await executeNonStreamingChatCompletions({
+			prepared,
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "gpt-4o-mini", startTime: 0 }) as never,
+				captureEnd: async (_ctx: unknown, input?: { attempts?: number }) => {
+					captured.push({ phase: "end", attempts: input?.attempts });
+				},
+			} as never,
+			router: {
+				generate: async () => ({
+					text: "done",
+					provider: "mock-provider",
+					model: "gpt-4o-mini",
+					resolvedProvider: "mock-provider",
+					resolvedModel: "gpt-4o-mini",
+					fallbackUsed: true,
+					routing: {
+						strategy: "mock",
+						attemptedProviders: ["first-provider", "second-provider", "mock-provider"],
+					},
+				}),
+			} as never,
+		});
+
+		assert.deepEqual(captured, [{ phase: "end", attempts: 3 }]);
 	});
 });

@@ -5,6 +5,12 @@ import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 
+function resolveAttemptsFromRouting(result: {
+	routing?: { attemptedProviders?: string[] };
+}): number {
+	return result.routing?.attemptedProviders?.length ?? 1;
+}
+
 export interface ExecuteGenerateRequestInput {
 	validated: ValidatedGenerateRequest;
 	context: Context;
@@ -39,6 +45,7 @@ export async function executeGenerateRequest(
 				provider: result.resolvedProvider,
 				model: result.resolvedModel,
 				totalTokens: result.tokensUsed,
+				attempts: resolveAttemptsFromRouting(result),
 				responseData: JSON.stringify(result),
 			});
 		}
@@ -47,6 +54,7 @@ export async function executeGenerateRequest(
 	} catch (error) {
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
+				attempts: 1,
 				error: error instanceof Error ? error : new Error(String(error)),
 			});
 		}

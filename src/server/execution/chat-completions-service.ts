@@ -25,6 +25,12 @@ interface GatewayMetadataInput {
 	routing?: unknown;
 }
 
+function resolveAttemptsFromRouting(result: {
+	routing?: { attemptedProviders?: string[] };
+}): number {
+	return result.routing?.attemptedProviders?.length ?? 1;
+}
+
 interface NonStreamingChatLogger {
 	requestLogger?: RequestLogger;
 	startTimeMs: number;
@@ -153,6 +159,7 @@ async function finalizeNonStreamingSuccess(
 		provider: result.resolvedProvider,
 		model: result.resolvedModel,
 		totalTokens: result.tokensUsed,
+		attempts: resolveAttemptsFromRouting(result),
 		responseData: JSON.stringify(result),
 	});
 }
@@ -166,6 +173,7 @@ async function finalizeNonStreamingFailure(
 	}
 
 	await logger.requestLogger.captureEnd(logger.logCtx, {
+		attempts: 1,
 		error: error instanceof Error ? error : new Error(String(error)),
 	});
 }

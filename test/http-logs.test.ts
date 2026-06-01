@@ -550,23 +550,25 @@ describe('GET /v1/logs', () => {
         const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
         assert.equal(logsRes.status, 200);
 
-        const data = logsRes.data as {
-          total: number;
-          logs: Array<{
-            provider: string;
-            model: string;
-            inputTokens: number;
-            outputTokens: number;
-            error?: string;
-          }>;
-        };
+         const data = logsRes.data as {
+           total: number;
+           logs: Array<{
+             provider: string;
+             model: string;
+             inputTokens: number;
+             outputTokens: number;
+             attempts: number;
+             error?: string;
+           }>;
+         };
 
         assert.equal(data.total, 1);
         assert.equal(data.logs[0]?.provider, 'mock-stream-provider');
-        assert.equal(data.logs[0]?.model, streamModel);
-        assert.equal(data.logs[0]?.inputTokens, 7);
-        assert.equal(data.logs[0]?.outputTokens, 11);
-        assert.equal(data.logs[0]?.error, undefined);
+         assert.equal(data.logs[0]?.model, streamModel);
+         assert.equal(data.logs[0]?.inputTokens, 7);
+         assert.equal(data.logs[0]?.outputTokens, 11);
+         assert.equal(data.logs[0]?.attempts, 1);
+         assert.equal(data.logs[0]?.error, undefined);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);
@@ -747,6 +749,7 @@ describe('GET /v1/logs', () => {
           logs: Array<{
             provider: string;
             model: string;
+            attempts: number;
             error?: string;
           }>;
         };
@@ -754,6 +757,7 @@ describe('GET /v1/logs', () => {
         assert.equal(data.total, 1);
         assert.equal(data.logs[0]?.provider, 'recovery-stream-provider');
         assert.equal(data.logs[0]?.model, streamModel);
+        assert.equal(data.logs[0]?.attempts, 2);
         assert.equal(data.logs[0]?.error, undefined);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
@@ -806,12 +810,13 @@ describe('GET /v1/logs', () => {
 
         const data = logsRes.data as {
           total: number;
-          logs: Array<{ provider: string; model: string; error?: string }>;
+          logs: Array<{ provider: string; model: string; attempts: number; error?: string }>;
         };
 
         assert.equal(data.total, 1);
         assert.equal(data.logs[0]?.provider, 'last-failing-provider');
         assert.equal(data.logs[0]?.model, streamModel);
+        assert.equal(data.logs[0]?.attempts, 2);
         assert.equal(data.logs[0]?.error, 'last startup failure');
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
@@ -870,12 +875,13 @@ describe('GET /v1/logs', () => {
 
         const data = logsRes.data as {
           total: number;
-          logs: Array<{ provider: string; model: string; error?: string }>;
+          logs: Array<{ provider: string; model: string; attempts: number; error?: string }>;
         };
 
         assert.equal(data.total, 1);
         assert.equal(data.logs[0]?.provider, 'primary-stream-provider');
         assert.equal(data.logs[0]?.model, streamModel);
+        assert.equal(data.logs[0]?.attempts, 1);
         assert.equal(data.logs[0]?.error, 'mid-stream failure');
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;

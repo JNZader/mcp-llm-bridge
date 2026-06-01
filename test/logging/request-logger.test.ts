@@ -270,6 +270,24 @@ describe('RequestLogger', () => {
       assert.strictEqual(row.output_tokens, 4);
 		});
 
+		it('should persist completion-time attempts when provided', async () => {
+			const context = logger.captureStart({
+				provider: 'openai',
+				model: 'gpt-4o-mini',
+				startTime: mockTimeCounter,
+			});
+
+			await logger.captureEnd(context, {
+				outputTokens: 4,
+				attempts: 3,
+			});
+
+			const row = db.prepare('SELECT * FROM request_logs WHERE provider = ?').get('openai') as Record<string, unknown>;
+
+			assert.ok(row, 'Log entry should exist');
+			assert.strictEqual(row.attempts, 3);
+		});
+
 		it('should preserve total-only usage without fabricating splits', async () => {
 			await logger.capture({
 				provider: 'openai',

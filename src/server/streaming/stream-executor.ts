@@ -59,6 +59,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 	let inputTokens: number | undefined;
 	let outputTokens: number | undefined;
 	let totalTokens: number | undefined;
+	let attempts = 0;
 	let aborted = abortSignal?.aborted ?? false;
 	let abortFinalization: Promise<void> | undefined;
 
@@ -89,6 +90,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		}
 
 		abortFinalization ??= finalizeRequestLog({
+			attempts,
 			totalTokens,
 			inputTokens,
 			outputTokens,
@@ -128,6 +130,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						}
 
 						await finalizeRequestLog({
+							attempts,
 							error: normalizeStreamingError(error),
 						});
 						throw error;
@@ -143,6 +146,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 					await finalizeRequestLog({
 						provider: result.resolvedProvider,
 						model: result.resolvedModel,
+						attempts,
 						totalTokens,
 						responseData: result,
 					});
@@ -154,6 +158,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 				let lastStreamingError: Error | undefined;
 
 				for (const resolved of resolvedCandidates) {
+					attempts += 1;
 					if (aborted) {
 						await finalizeAbort();
 						return;
@@ -245,6 +250,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							resolvedModel: breakerModel,
 							streamStartTime,
 							project,
+							attempts,
 							totalTokens,
 							inputTokens,
 							outputTokens,
@@ -272,6 +278,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							resolvedModel: breakerModel,
 							streamStartTime,
 							project,
+							attempts,
 							totalTokens:
 								typeof attemptInputTokens === "number" && typeof attemptOutputTokens === "number"
 									? attemptInputTokens + attemptOutputTokens
@@ -303,7 +310,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 				const resolvedError =
 					lastStreamingError ?? new Error("No streaming providers available");
-				await finalizeRequestLog({ error: resolvedError });
+				await finalizeRequestLog({ attempts, error: resolvedError });
 				await output.writeTerminalError(resolvedError);
 			} finally {
 				if (abortSignal) {
