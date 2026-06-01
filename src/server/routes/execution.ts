@@ -24,49 +24,13 @@ import {
 } from "../execution/chat-completions-service.js";
 import { executeGenerateRequest } from "../execution/generate-service.js";
 import { createStreamExecutor } from "../streaming/stream-executor.js";
+import { buildSSEChunkEvent } from "../../transformers/streaming.js";
 
 export interface ExecutionRouteDeps {
 	router: Router;
 	vault: Vault;
 	costTracker?: CostTracker;
 	requestLogger?: RequestLogger;
-}
-
-function buildStreamingChunkPayload(
-	chatId: string,
-	model: string,
-	chunk: {
-		content: string;
-		done: boolean;
-		model?: string;
-		finishReason?: string | null;
-		tokensIn?: number;
-		tokensOut?: number;
-	},
-): string {
-	return JSON.stringify({
-		id: chatId,
-		object: "chat.completion.chunk",
-		created: Math.floor(Date.now() / 1000),
-		model: chunk.model || model,
-		choices: [
-			{
-				index: 0,
-				delta: chunk.content ? { content: chunk.content } : {},
-				finish_reason: chunk.done ? (chunk.finishReason ?? "stop") : null,
-			},
-		],
-		...(chunk.done &&
-		(chunk.tokensIn !== undefined || chunk.tokensOut !== undefined)
-			? {
-				usage: {
-					prompt_tokens: chunk.tokensIn ?? 0,
-					completion_tokens: chunk.tokensOut ?? 0,
-					total_tokens: (chunk.tokensIn ?? 0) + (chunk.tokensOut ?? 0),
-				},
-			}
-			: {}),
-	});
 }
 
 /**
@@ -108,7 +72,7 @@ function handleStreamingRequest(
 			await executor.execute({
 				writeChunk: async (chunk) => {
 					await stream.writeSSE({
-						data: buildStreamingChunkPayload(chatId, model, chunk),
+						data: JSON.stringify(buildSSEChunkEvent(chunk, chatId, model)),
 					});
 				},
 				writeFallbackResult: async (result) => {

@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildSSEChunkEvent,
   serializeSSEChunk,
   SSE_DONE,
   StreamTokenAccumulator,
@@ -27,6 +28,22 @@ function tempDbPath(): string {
 // ── SSE Serialization ───────────────────────────────────────
 
 describe('serializeSSEChunk', () => {
+  it('serializes the same payload returned by buildSSEChunkEvent', () => {
+    const chunk: InternalLLMChunk = {
+      content: 'Hello',
+      done: true,
+      model: 'chunk-model',
+      finishReason: 'stop',
+      tokensIn: 2,
+      tokensOut: 3,
+    };
+
+    const event = buildSSEChunkEvent(chunk, 'chatcmpl-123', 'fallback-model');
+    const result = serializeSSEChunk(chunk, 'chatcmpl-123', 'fallback-model');
+
+    assert.deepEqual(JSON.parse(result.slice(6, -2)), event);
+  });
+
   it('serializes a content chunk in OpenAI SSE format', () => {
     const chunk: InternalLLMChunk = {
       content: 'Hello',
@@ -102,6 +119,19 @@ describe('serializeSSEChunk', () => {
     const json = JSON.parse(result.slice(6, -2));
 
     assert.equal(json.model, 'fallback-model');
+  });
+
+  it('uses chunk model over provided fallback model when present', () => {
+    const chunk: InternalLLMChunk = {
+      content: 'Hi',
+      done: false,
+      model: 'chunk-model',
+    };
+
+    const result = serializeSSEChunk(chunk, 'chatcmpl-123', 'fallback-model');
+    const json = JSON.parse(result.slice(6, -2));
+
+    assert.equal(json.model, 'chunk-model');
   });
 });
 

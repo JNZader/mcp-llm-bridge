@@ -572,6 +572,50 @@ describe('GET /v1/logs', () => {
       }
     });
 
+    it('serializes streaming chunks with the chunk model when it differs from the request model', async () => {
+      const requestedModel = 'stream-request-model';
+      const chunkModel = 'stream-chunk-model';
+      const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);
+
+      (router as any).resolveStreamingProviders = async () => ([
+        {
+          provider: { id: 'mock-stream-provider' },
+          request: { model: requestedModel, messages: [] },
+          streamTransformer: {
+            name: 'mock-stream-provider',
+            async *transformStream() {
+              yield { content: 'Hello', done: false, model: chunkModel };
+              yield { content: '', done: true, model: chunkModel, finishReason: 'stop' };
+            },
+          },
+        },
+      ]);
+
+      try {
+        const res = await requestText('POST', '/v1/chat/completions', {
+          body: {
+            model: requestedModel,
+            messages: [{ role: 'user', content: 'Hello' }],
+            stream: true,
+          },
+        });
+
+        assert.equal(res.status, 200);
+        const firstEventLine = res.data
+          .split('\n')
+          .find((line) => line.startsWith('data: {'));
+
+        assert.ok(firstEventLine);
+
+        const payload = JSON.parse(firstEventLine.slice(6)) as { model: string };
+        assert.equal(payload.model, chunkModel);
+      } finally {
+        (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
+        deleteLogsByModel(chunkModel);
+        deleteLogsByModel(requestedModel);
+      }
+    });
+
     it('logs streaming fallback completions', async () => {
       const streamModel = 'stream-fallback-model';
       const originalResolveStreamingProviders = router.resolveStreamingProviders.bind(router);

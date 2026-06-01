@@ -28,6 +28,27 @@ export interface InternalLLMChunk {
   finishReason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error';
 }
 
+export interface SSEChunkChoice {
+  index: number;
+  delta: Record<string, unknown>;
+  finish_reason: string | null;
+}
+
+export interface SSEChunkUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface SSEChunkEvent {
+  id: string;
+  object: 'chat.completion.chunk';
+  created: number;
+  model: string;
+  choices: SSEChunkChoice[];
+  usage?: SSEChunkUsage;
+}
+
 // ── Streaming Outbound Transformer ──────────────────────────
 
 /**
@@ -72,30 +93,38 @@ export function serializeSSEChunk(
   chatId: string,
   model: string,
 ): string {
-  const choice: Record<string, unknown> = {
+  return `data: ${JSON.stringify(buildSSEChunkEvent(chunk, chatId, model))}\n\n`;
+}
+
+export function buildSSEChunkEvent(
+  chunk: InternalLLMChunk,
+  chatId: string,
+  fallbackModel: string,
+): SSEChunkEvent {
+  const choice: SSEChunkChoice = {
     index: 0,
     delta: chunk.content ? { content: chunk.content } : {},
     finish_reason: chunk.done ? (mapFinishReason(chunk.finishReason) ?? 'stop') : null,
   };
 
-  const event: Record<string, unknown> = {
+  const event: SSEChunkEvent = {
     id: chatId,
     object: 'chat.completion.chunk',
     created: Math.floor(Date.now() / 1000),
-    model,
+    model: chunk.model || fallbackModel,
     choices: [choice],
   };
 
   // Include usage on the final chunk if available
   if (chunk.done && (chunk.tokensIn !== undefined || chunk.tokensOut !== undefined)) {
-    event['usage'] = {
+    event.usage = {
       prompt_tokens: chunk.tokensIn ?? 0,
       completion_tokens: chunk.tokensOut ?? 0,
       total_tokens: (chunk.tokensIn ?? 0) + (chunk.tokensOut ?? 0),
     };
   }
 
-  return `data: ${JSON.stringify(event)}\n\n`;
+  return event;
 }
 
 /**
