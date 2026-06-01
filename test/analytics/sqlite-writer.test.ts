@@ -10,6 +10,7 @@ describe("SQLiteAnalyticsWriter", () => {
 	beforeEach(async () => {
 		runner = new MigrationRunner({ dbPath: ":memory:" });
 		await runner.runMigration(2);
+		await runner.runMigration(9);
 	});
 
 	afterEach(() => {
@@ -29,6 +30,9 @@ describe("SQLiteAnalyticsWriter", () => {
 					data: {
 						timestamp: hour,
 						requests: 2,
+						successfulRequests: 1,
+						failedRequests: 1,
+						retriedRequests: 1,
 						totalTokens: 300,
 						inputTokens: 200,
 						outputTokens: 100,
@@ -36,6 +40,8 @@ describe("SQLiteAnalyticsWriter", () => {
 						avgLatency: 150,
 						p95Latency: 200,
 						p99Latency: 250,
+						errorRate: 0.5,
+						retryRate: 0.5,
 					},
 				},
 			],
@@ -45,11 +51,16 @@ describe("SQLiteAnalyticsWriter", () => {
 					data: {
 						timestamp: day,
 						requests: 3,
+						successfulRequests: 2,
+						failedRequests: 1,
+						retriedRequests: 1,
 						totalTokens: 500,
 						inputTokens: 300,
 						outputTokens: 200,
 						cost: 1.25,
 						avgLatency: 180,
+						errorRate: 0.3333,
+						retryRate: 0.3333,
 					},
 				},
 			],
@@ -63,6 +74,9 @@ describe("SQLiteAnalyticsWriter", () => {
 					data: {
 						timestamp: hour,
 						requests: 5,
+						successfulRequests: 3,
+						failedRequests: 2,
+						retriedRequests: 2,
 						totalTokens: 700,
 						inputTokens: 450,
 						outputTokens: 250,
@@ -70,6 +84,8 @@ describe("SQLiteAnalyticsWriter", () => {
 						avgLatency: 175,
 						p95Latency: 220,
 						p99Latency: 275,
+						errorRate: 0.4,
+						retryRate: 0.4,
 					},
 				},
 			],
@@ -79,6 +95,9 @@ describe("SQLiteAnalyticsWriter", () => {
 					data: {
 						timestamp: day,
 						requests: 8,
+						successfulRequests: 5,
+						failedRequests: 3,
+						retriedRequests: 2,
 						totalTokens: 900,
 						inputTokens: 500,
 						outputTokens: 400,
@@ -86,6 +105,8 @@ describe("SQLiteAnalyticsWriter", () => {
 						avgLatency: 210,
 						p95Latency: 300,
 						p99Latency: 350,
+						errorRate: 0.375,
+						retryRate: 0.25,
 					},
 				},
 			],
@@ -100,6 +121,9 @@ describe("SQLiteAnalyticsWriter", () => {
 
 		assert.equal(hourlyRows[0]?.hour, hour);
 		assert.equal(hourlyRows[0]?.requests, 5);
+		assert.equal(hourlyRows[0]?.successful_requests, 3);
+		assert.equal(hourlyRows[0]?.failed_requests, 2);
+		assert.equal(hourlyRows[0]?.retried_requests, 2);
 		assert.equal(hourlyRows[0]?.input_tokens, 450);
 		assert.equal(hourlyRows[0]?.output_tokens, 250);
 		assert.equal(hourlyRows[0]?.avg_latency_ms, 175);
@@ -108,6 +132,9 @@ describe("SQLiteAnalyticsWriter", () => {
 
 		assert.equal(dailyRows[0]?.day, day);
 		assert.equal(dailyRows[0]?.requests, 8);
+		assert.equal(dailyRows[0]?.successful_requests, 5);
+		assert.equal(dailyRows[0]?.failed_requests, 3);
+		assert.equal(dailyRows[0]?.retried_requests, 2);
 		assert.equal(dailyRows[0]?.input_tokens, 500);
 		assert.equal(dailyRows[0]?.output_tokens, 400);
 		assert.equal(dailyRows[0]?.avg_latency_ms, 210);
@@ -130,12 +157,17 @@ describe("SQLiteAnalyticsWriter", () => {
 					data: {
 						timestamp: hour,
 						requests: 4,
+						successfulRequests: 3,
+						failedRequests: 1,
+						retriedRequests: 2,
 						totalTokens: 320,
 						inputTokens: 200,
 						outputTokens: 120,
 						cost: 0.42,
 						avgLatency: 140,
 						p95Latency: 180,
+						errorRate: 0.25,
+						retryRate: 0.5,
 					},
 				},
 			],
@@ -145,11 +177,16 @@ describe("SQLiteAnalyticsWriter", () => {
 					data: {
 						timestamp: day,
 						requests: 7,
+						successfulRequests: 5,
+						failedRequests: 2,
+						retriedRequests: 3,
 						totalTokens: 500,
 						inputTokens: 300,
 						outputTokens: 200,
 						cost: 1.5,
 						avgLatency: 210,
+						errorRate: 0.2857,
+						retryRate: 0.4286,
 					},
 				},
 			],
@@ -162,12 +199,17 @@ describe("SQLiteAnalyticsWriter", () => {
 			{
 				timestamp: hour,
 				requests: 4,
+				successfulRequests: 3,
+				failedRequests: 1,
+				retriedRequests: 2,
 				totalTokens: 320,
 				inputTokens: 200,
 				outputTokens: 120,
 				cost: 0.42,
 				avgLatency: 140,
 				p95Latency: 180,
+				errorRate: 0.25,
+				retryRate: 0.5,
 			},
 		]);
 
@@ -175,11 +217,16 @@ describe("SQLiteAnalyticsWriter", () => {
 			{
 				timestamp: day,
 				requests: 7,
+				successfulRequests: 5,
+				failedRequests: 2,
+				retriedRequests: 3,
 				totalTokens: 500,
 				inputTokens: 300,
 				outputTokens: 200,
 				cost: 1.5,
 				avgLatency: 210,
+				errorRate: 0.2857142857142857,
+				retryRate: 0.42857142857142855,
 			},
 		]);
 	});

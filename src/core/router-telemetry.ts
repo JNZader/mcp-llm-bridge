@@ -26,6 +26,7 @@ export interface RouterUsageRecordInput {
   costUsd?: number;
   latencyMs: number;
   success: boolean;
+  attempt?: number;
   project?: string;
   errorMessage?: string;
 }
@@ -52,6 +53,7 @@ export interface RouterStreamingRecordResultInput {
   totalTokens?: number;
   latencyMs: number;
   success: boolean;
+  attempt?: number;
   project?: string;
   errorMessage?: string;
 }
@@ -73,6 +75,7 @@ export interface RouterAttemptTelemetryCallbacks {
     },
     latencyMs: number,
     success: boolean,
+    attempt?: number,
     project?: string,
     errorMessage?: string,
   ) => void;
@@ -129,6 +132,8 @@ export function recordUsage(
         outputTokens: input.tokensOut,
         cost,
         latencyMs: input.latencyMs,
+        success: input.success,
+        attempt: input.attempt,
         channel: input.project ?? 'default',
       });
     } catch (error) {
@@ -212,6 +217,7 @@ export function createAttemptTelemetryCallbacks(
       usage,
       latencyMs,
       success,
+      attempt,
       project,
       errorMessage,
     ) => {
@@ -224,6 +230,7 @@ export function createAttemptTelemetryCallbacks(
         costUsd: usage.costUsd,
         latencyMs,
         success,
+        attempt,
         project,
         errorMessage,
       });
@@ -250,6 +257,7 @@ export function createStreamingRecordResult(
     totalTokens,
     latencyMs,
     success,
+    attempt,
     project,
     errorMessage,
   }) => {
@@ -266,6 +274,7 @@ export function createStreamingRecordResult(
       tokensOut,
       latencyMs,
       success,
+      attempt,
       project,
       errorMessage,
     });

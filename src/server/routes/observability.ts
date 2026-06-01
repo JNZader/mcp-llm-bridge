@@ -31,6 +31,10 @@ function mergeTimeSeriesData(
 	return Array.from(mergedBuckets.values()).sort((a, b) => a.timestamp - b.timestamp);
 }
 
+function roundRate(value: number): number {
+	return Math.round(value * 10000) / 10000;
+}
+
 export interface ObservabilityRouteDeps {
 	router: Router;
 	analyticsAggregator?: AnalyticsAggregator;
@@ -150,6 +154,9 @@ export function registerObservabilityRoutes(
 					});
 
 			const totalRequests = data.reduce((sum, item) => sum + item.requests, 0);
+			const successfulRequests = data.reduce((sum, item) => sum + item.successfulRequests, 0);
+			const failedRequests = data.reduce((sum, item) => sum + item.failedRequests, 0);
+			const retriedRequests = data.reduce((sum, item) => sum + item.retriedRequests, 0);
 			const totalTokens = data.reduce(
 				(sum, item) => sum + item.totalTokens,
 				0,
@@ -166,15 +173,22 @@ export function registerObservabilityRoutes(
 							) / totalRequests,
 						)
 					: 0;
+			const errorRate = totalRequests > 0 ? roundRate(failedRequests / totalRequests) : 0;
+			const retryRate = totalRequests > 0 ? roundRate(retriedRequests / totalRequests) : 0;
 
 			return c.json({
 				data,
 				dimension,
 				summary: {
 					totalRequests,
+					successfulRequests,
+					failedRequests,
+					retriedRequests,
 					totalTokens,
 					totalCost,
 					avgLatency,
+					errorRate,
+					retryRate,
 				},
 			});
 		} catch (error) {

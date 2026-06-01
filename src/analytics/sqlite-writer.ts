@@ -6,6 +6,9 @@ interface PersistedAnalyticsRow {
 	hour?: number;
 	day?: number;
 	requests: number;
+	successfulRequests: number;
+	failedRequests: number;
+	retriedRequests: number;
 	inputTokens: number;
 	outputTokens: number;
 	cost: number;
@@ -23,6 +26,9 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			INSERT INTO analytics_hourly (
 				hour,
 				requests,
+				successful_requests,
+				failed_requests,
+				retried_requests,
 				input_tokens,
 				output_tokens,
 				cost,
@@ -32,6 +38,9 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			) VALUES (
 				@hour,
 				@requests,
+				@successfulRequests,
+				@failedRequests,
+				@retriedRequests,
 				@inputTokens,
 				@outputTokens,
 				@cost,
@@ -41,6 +50,9 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			)
 			ON CONFLICT(hour) DO UPDATE SET
 				requests = excluded.requests,
+				successful_requests = excluded.successful_requests,
+				failed_requests = excluded.failed_requests,
+				retried_requests = excluded.retried_requests,
 				input_tokens = excluded.input_tokens,
 				output_tokens = excluded.output_tokens,
 				cost = excluded.cost,
@@ -53,6 +65,9 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			INSERT INTO analytics_daily (
 				day,
 				requests,
+				successful_requests,
+				failed_requests,
+				retried_requests,
 				input_tokens,
 				output_tokens,
 				cost,
@@ -62,6 +77,9 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			) VALUES (
 				@day,
 				@requests,
+				@successfulRequests,
+				@failedRequests,
+				@retriedRequests,
 				@inputTokens,
 				@outputTokens,
 				@cost,
@@ -71,6 +89,9 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			)
 			ON CONFLICT(day) DO UPDATE SET
 				requests = excluded.requests,
+				successful_requests = excluded.successful_requests,
+				failed_requests = excluded.failed_requests,
+				retried_requests = excluded.retried_requests,
 				input_tokens = excluded.input_tokens,
 				output_tokens = excluded.output_tokens,
 				cost = excluded.cost,
@@ -112,6 +133,9 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 	private toRow(point: AggregatedDataPoint): Omit<PersistedAnalyticsRow, "hour" | "day"> {
 		return {
 			requests: point.requests,
+			successfulRequests: point.successfulRequests,
+			failedRequests: point.failedRequests,
+			retriedRequests: point.retriedRequests,
 			inputTokens: point.inputTokens,
 			outputTokens: point.outputTokens,
 			cost: point.cost,

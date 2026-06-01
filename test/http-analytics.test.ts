@@ -174,6 +174,8 @@ function seedTestAnalytics(): void {
       outputTokens: entry.outputTokens,
       cost: entry.cost,
       latencyMs: entry.latencyMs,
+      success: !(entry.provider === 'groq' && entry.model === 'llama3-8b'),
+      attempt: entry.provider === 'groq' && entry.model === 'llama3-8b' ? 2 : 1,
       channel: entry.channel,
       timestamp: entry.timestamp,
     });
@@ -241,9 +243,14 @@ describe('GET /v1/analytics', () => {
       const data = res.data as {
         summary: {
           totalRequests: number;
+          successfulRequests: number;
+          failedRequests: number;
+          retriedRequests: number;
           totalTokens: number;
           totalCost: number;
           avgLatency: number;
+          errorRate: number;
+          retryRate: number;
         };
       };
 
@@ -255,6 +262,11 @@ describe('GET /v1/analytics', () => {
       assert.ok(data.summary.totalCost > 0, 'Total cost should be positive');
       // Average latency should be calculated
       assert.ok(data.summary.avgLatency >= 0, 'Average latency should be non-negative');
+      assert.equal(data.summary.successfulRequests, 6);
+      assert.equal(data.summary.failedRequests, 1);
+      assert.equal(data.summary.retriedRequests, 1);
+      assert.equal(data.summary.errorRate, 0.1429);
+      assert.equal(data.summary.retryRate, 0.1429);
     });
   });
 
@@ -544,6 +556,9 @@ describe('GET /v1/analytics', () => {
         const byModel = freshAggregator.query({ dimension: 'model', model });
 
         assert.equal(total?.requests, 1);
+        assert.equal(total?.successfulRequests, 1);
+        assert.equal(total?.failedRequests, 0);
+        assert.equal(total?.retriedRequests, 0);
         assert.equal(total?.inputTokens, 4);
         assert.equal(total?.outputTokens, 6);
         assert.equal(byModel[0]?.requests, 1);
@@ -606,6 +621,9 @@ describe('GET /v1/analytics', () => {
         const byModel = freshAggregator.query({ dimension: 'model', model });
 
         assert.equal(total?.requests, 1);
+        assert.equal(total?.successfulRequests, 0);
+        assert.equal(total?.failedRequests, 1);
+        assert.equal(total?.retriedRequests, 0);
         assert.equal(total?.inputTokens, 2);
         assert.equal(total?.outputTokens, 3);
         assert.equal(byModel[0]?.requests, 1);
@@ -624,17 +642,27 @@ describe('GET /v1/analytics', () => {
         data: Array<{
           timestamp: number;
           requests: number;
+          successfulRequests: number;
+          failedRequests: number;
+          retriedRequests: number;
           totalTokens: number;
           inputTokens: number;
           outputTokens: number;
           cost: number;
           avgLatency: number;
+          errorRate: number;
+          retryRate: number;
         }>;
         summary: {
           totalRequests: number;
+          successfulRequests: number;
+          failedRequests: number;
+          retriedRequests: number;
           totalTokens: number;
           totalCost: number;
           avgLatency: number;
+          errorRate: number;
+          retryRate: number;
         };
       };
 
@@ -644,17 +672,27 @@ describe('GET /v1/analytics', () => {
       // Verify all required fields
       assert.ok(typeof point.timestamp === 'number', 'Should have timestamp');
       assert.ok(typeof point.requests === 'number', 'Should have requests');
+      assert.ok(typeof point.successfulRequests === 'number', 'Should have successfulRequests');
+      assert.ok(typeof point.failedRequests === 'number', 'Should have failedRequests');
+      assert.ok(typeof point.retriedRequests === 'number', 'Should have retriedRequests');
       assert.ok(typeof point.totalTokens === 'number', 'Should have totalTokens');
       assert.ok(typeof point.inputTokens === 'number', 'Should have inputTokens');
       assert.ok(typeof point.outputTokens === 'number', 'Should have outputTokens');
       assert.ok(typeof point.cost === 'number', 'Should have cost');
       assert.ok(typeof point.avgLatency === 'number', 'Should have avgLatency');
+      assert.ok(typeof point.errorRate === 'number', 'Should have errorRate');
+      assert.ok(typeof point.retryRate === 'number', 'Should have retryRate');
 
       // Verify summary fields
       assert.ok(typeof data.summary.totalRequests === 'number', 'Summary should have totalRequests');
+      assert.ok(typeof data.summary.successfulRequests === 'number', 'Summary should have successfulRequests');
+      assert.ok(typeof data.summary.failedRequests === 'number', 'Summary should have failedRequests');
+      assert.ok(typeof data.summary.retriedRequests === 'number', 'Summary should have retriedRequests');
       assert.ok(typeof data.summary.totalTokens === 'number', 'Summary should have totalTokens');
       assert.ok(typeof data.summary.totalCost === 'number', 'Summary should have totalCost');
       assert.ok(typeof data.summary.avgLatency === 'number', 'Summary should have avgLatency');
+      assert.ok(typeof data.summary.errorRate === 'number', 'Summary should have errorRate');
+      assert.ok(typeof data.summary.retryRate === 'number', 'Summary should have retryRate');
     });
 
     it('should include percentile latencies when sufficient samples exist', async () => {
@@ -698,6 +736,9 @@ describe('GET /v1/analytics', () => {
       const data = res.data as {
         data: Array<{
           requests: number;
+          successfulRequests: number;
+          failedRequests: number;
+          retriedRequests: number;
           totalTokens: number;
           inputTokens: number;
           outputTokens: number;
@@ -705,6 +746,9 @@ describe('GET /v1/analytics', () => {
         }>;
         summary: {
           totalRequests: number;
+          successfulRequests: number;
+          failedRequests: number;
+          retriedRequests: number;
           totalTokens: number;
           totalCost: number;
         };
@@ -713,6 +757,9 @@ describe('GET /v1/analytics', () => {
       // Summary should match sum of data
       const dataPoint = data.data[0]!;
       assert.equal(data.summary.totalRequests, dataPoint.requests);
+      assert.equal(data.summary.successfulRequests, dataPoint.successfulRequests);
+      assert.equal(data.summary.failedRequests, dataPoint.failedRequests);
+      assert.equal(data.summary.retriedRequests, dataPoint.retriedRequests);
       assert.equal(data.summary.totalTokens, dataPoint.totalTokens);
       assert.equal(data.summary.totalCost, dataPoint.cost);
 		});
@@ -851,8 +898,9 @@ describe('GET /v1/analytics', () => {
 		};
 
 		it('merges persisted history with unflushed live hourly and daily buckets', async () => {
-			const runner = new MigrationRunner({ dbPath: ':memory:' });
+		const runner = new MigrationRunner({ dbPath: ':memory:' });
 			await runner.runMigration(2);
+			await runner.runMigration(9);
 			const db = runner.getDatabase();
 			const writer = new SQLiteAnalyticsWriter(db);
 			const reader = new SQLiteAnalyticsReader(db);
@@ -865,28 +913,38 @@ describe('GET /v1/analytics', () => {
 				hourly: [
 					{
 						timestamp: toHourTimestamp(persistedTimestamp),
-						data: {
-							timestamp: toHourTimestamp(persistedTimestamp),
-							requests: 2,
-							totalTokens: 120,
+					data: {
+						timestamp: toHourTimestamp(persistedTimestamp),
+						requests: 2,
+						successfulRequests: 1,
+						failedRequests: 1,
+						retriedRequests: 1,
+						totalTokens: 120,
 							inputTokens: 80,
 							outputTokens: 40,
 							cost: 0.12,
 							avgLatency: 300,
+							errorRate: 0.5,
+							retryRate: 0.5,
 						},
 					},
 				],
 				daily: [
 					{
 						timestamp: toDayTimestamp(persistedTimestamp),
-						data: {
-							timestamp: toDayTimestamp(persistedTimestamp),
-							requests: 2,
-							totalTokens: 120,
+					data: {
+						timestamp: toDayTimestamp(persistedTimestamp),
+						requests: 2,
+						successfulRequests: 1,
+						failedRequests: 1,
+						retriedRequests: 1,
+						totalTokens: 120,
 							inputTokens: 80,
 							outputTokens: 40,
 							cost: 0.12,
 							avgLatency: 300,
+							errorRate: 0.5,
+							retryRate: 0.5,
 						},
 					},
 				],
@@ -897,6 +955,8 @@ describe('GET /v1/analytics', () => {
 				outputTokens: 20,
 				cost: 0.06,
 				latencyMs: 900,
+				success: false,
+				attempt: 2,
 				channel: 'fast',
 				timestamp: liveTimestamp,
 			});
@@ -917,11 +977,11 @@ describe('GET /v1/analytics', () => {
 
 				const hourlyBody = await hourlyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
-					summary: { totalRequests: number; totalTokens: number };
+					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number };
 				};
 				const dailyBody = await dailyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
-					summary: { totalRequests: number; totalTokens: number };
+					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number };
 				};
 
 				assert.deepEqual(
@@ -933,6 +993,8 @@ describe('GET /v1/analytics', () => {
 					[2, 1],
 				);
 				assert.equal(hourlyBody.summary.totalRequests, 3);
+				assert.equal(hourlyBody.summary.failedRequests, 2);
+				assert.equal(hourlyBody.summary.retriedRequests, 2);
 				assert.equal(hourlyBody.summary.totalTokens, 180);
 
 				assert.deepEqual(
@@ -944,6 +1006,8 @@ describe('GET /v1/analytics', () => {
 					[2, 1],
 				);
 				assert.equal(dailyBody.summary.totalRequests, 3);
+				assert.equal(dailyBody.summary.failedRequests, 2);
+				assert.equal(dailyBody.summary.retriedRequests, 2);
 				assert.equal(dailyBody.summary.totalTokens, 180);
 			} finally {
 				runner.close();
@@ -954,6 +1018,7 @@ describe('GET /v1/analytics', () => {
 			const dbPath = `/tmp/test-http-analytics-restart-${Date.now()}.db`;
 			const firstRunner = new MigrationRunner({ dbPath });
 			await firstRunner.runMigration(2);
+			await firstRunner.runMigration(9);
 
 			const persistentAggregator = new AnalyticsAggregator({
 				persistenceWriter: new SQLiteAnalyticsWriter(firstRunner.getDatabase()),
@@ -967,6 +1032,8 @@ describe('GET /v1/analytics', () => {
 				outputTokens: 30,
 				cost: 0.12,
 				latencyMs: 400,
+				success: false,
+				attempt: 1,
 				channel: 'fast',
 				timestamp: firstTimestamp,
 			});
@@ -975,6 +1042,8 @@ describe('GET /v1/analytics', () => {
 				outputTokens: 20,
 				cost: 0.08,
 				latencyMs: 600,
+				success: true,
+				attempt: 2,
 				channel: 'fast',
 				timestamp: secondTimestamp,
 			});
@@ -1001,11 +1070,11 @@ describe('GET /v1/analytics', () => {
 
 				const hourlyBody = await hourlyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
-					summary: { totalRequests: number; totalTokens: number; totalCost: number; avgLatency: number };
+					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number; totalCost: number; avgLatency: number };
 				};
 				const dailyBody = await dailyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
-					summary: { totalRequests: number; totalTokens: number };
+					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number };
 				};
 				const totalBody = await totalRes.json() as {
 					data: Array<{ requests: number }>;
@@ -1017,6 +1086,8 @@ describe('GET /v1/analytics', () => {
 				assert.equal(hourlyBody.data[0]?.requests, 2);
 				assert.equal(hourlyBody.data[0]?.totalTokens, 250);
 				assert.equal(hourlyBody.summary.totalRequests, 2);
+				assert.equal(hourlyBody.summary.failedRequests, 1);
+				assert.equal(hourlyBody.summary.retriedRequests, 1);
 				assert.equal(hourlyBody.summary.totalTokens, 250);
 
 				assert.equal(dailyBody.data.length, 1);
@@ -1024,6 +1095,8 @@ describe('GET /v1/analytics', () => {
 				assert.equal(dailyBody.data[0]?.requests, 2);
 				assert.equal(dailyBody.data[0]?.totalTokens, 250);
 				assert.equal(dailyBody.summary.totalRequests, 2);
+				assert.equal(dailyBody.summary.failedRequests, 1);
+				assert.equal(dailyBody.summary.retriedRequests, 1);
 				assert.equal(dailyBody.summary.totalTokens, 250);
 
 				assert.equal(totalBody.data[0]?.requests, 0);
@@ -1042,6 +1115,7 @@ describe('GET /v1/analytics', () => {
 			it('lets live hourly and daily buckets override persisted collisions by timestamp', async () => {
 				const runner = new MigrationRunner({ dbPath: ':memory:' });
 				await runner.runMigration(2);
+				await runner.runMigration(9);
 				const db = runner.getDatabase();
 				const writer = new SQLiteAnalyticsWriter(db);
 				const reader = new SQLiteAnalyticsReader(db);
@@ -1056,11 +1130,16 @@ describe('GET /v1/analytics', () => {
 							data: {
 								timestamp: toHourTimestamp(timestamp),
 								requests: 9,
+								successfulRequests: 9,
+								failedRequests: 0,
+								retriedRequests: 0,
 								totalTokens: 999,
 								inputTokens: 600,
 								outputTokens: 399,
 								cost: 0.99,
 								avgLatency: 999,
+								errorRate: 0,
+								retryRate: 0,
 							},
 						},
 					],
@@ -1070,11 +1149,16 @@ describe('GET /v1/analytics', () => {
 							data: {
 								timestamp: toDayTimestamp(timestamp),
 								requests: 9,
+								successfulRequests: 9,
+								failedRequests: 0,
+								retriedRequests: 0,
 								totalTokens: 999,
 								inputTokens: 600,
 								outputTokens: 399,
 								cost: 0.99,
 								avgLatency: 999,
+								errorRate: 0,
+								retryRate: 0,
 							},
 						},
 					],
@@ -1085,6 +1169,8 @@ describe('GET /v1/analytics', () => {
 					outputTokens: 25,
 					cost: 0.075,
 					latencyMs: 400,
+					success: true,
+					attempt: 1,
 					channel: 'fast',
 					timestamp,
 				});

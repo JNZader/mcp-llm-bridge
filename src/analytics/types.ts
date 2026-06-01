@@ -11,6 +11,12 @@
 export interface AnalyticsMetrics {
   /** Number of requests */
   requests: number;
+  /** Number of successful telemetry events */
+  successfulRequests: number;
+  /** Number of failed telemetry events */
+  failedRequests: number;
+  /** Number of telemetry events that happened after a retry */
+  retriedRequests: number;
   /** Total tokens across all requests when known exactly */
   totalTokens: number;
   /** Total input tokens across requests with exact input splits */
@@ -57,6 +63,12 @@ export interface AggregatedDataPoint {
   model?: string;
   /** Number of requests */
   requests: number;
+  /** Number of successful requests */
+  successfulRequests: number;
+  /** Number of failed requests */
+  failedRequests: number;
+  /** Number of requests that happened on retry attempts */
+  retriedRequests: number;
   /** Total tokens when known exactly */
   totalTokens: number;
   /** Total input tokens from exact split data */
@@ -71,6 +83,10 @@ export interface AggregatedDataPoint {
   p95Latency?: number;
   /** 99th percentile latency (optional, requires sufficient samples) */
   p99Latency?: number;
+  /** Failed requests divided by total requests */
+  errorRate: number;
+  /** Retried requests divided by total requests */
+  retryRate: number;
 }
 
 /**
@@ -105,6 +121,10 @@ export interface RecordInput {
   cost?: number;
   /** Latency in milliseconds */
   latencyMs: number;
+  /** Whether the recorded request succeeded */
+  success?: boolean;
+  /** 1-based attempt index for the recorded request */
+  attempt?: number;
   /** Channel ID (required for channel dimension tracking) */
   channel: string;
   /** Optional timestamp (defaults to current time) */
@@ -205,6 +225,9 @@ export function isAnalyticsMetrics(value: unknown): value is AnalyticsMetrics {
 
   return (
     typeof metrics.requests === 'number' &&
+    typeof metrics.successfulRequests === 'number' &&
+    typeof metrics.failedRequests === 'number' &&
+    typeof metrics.retriedRequests === 'number' &&
     typeof metrics.totalTokens === 'number' &&
     typeof metrics.inputTokens === 'number' &&
     typeof metrics.outputTokens === 'number' &&
@@ -247,10 +270,15 @@ export function isAggregatedDataPoint(value: unknown): value is AggregatedDataPo
   return (
     typeof point.timestamp === 'number' &&
     typeof point.requests === 'number' &&
+    typeof point.successfulRequests === 'number' &&
+    typeof point.failedRequests === 'number' &&
+    typeof point.retriedRequests === 'number' &&
     typeof point.totalTokens === 'number' &&
     typeof point.inputTokens === 'number' &&
     typeof point.outputTokens === 'number' &&
     typeof point.cost === 'number' &&
-    typeof point.avgLatency === 'number'
+    typeof point.avgLatency === 'number' &&
+    typeof point.errorRate === 'number' &&
+    typeof point.retryRate === 'number'
   );
 }

@@ -89,6 +89,7 @@ export async function finalizeStreamingAttemptSuccess(
 		tokensOut: outputTokens,
 		latencyMs: Date.now() - streamStartTime,
 		success: true,
+		attempt: attempts,
 		project,
 	});
 	await finalizeRequestLog({
@@ -136,6 +137,7 @@ export async function finalizeStreamingAttemptFailure(
 		tokensOut: outputTokens,
 		latencyMs: Date.now() - streamStartTime,
 		success: false,
+		attempt: attempts,
 		project,
 		errorMessage: message,
 	});

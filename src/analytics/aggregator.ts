@@ -256,6 +256,9 @@ export class AnalyticsAggregator {
   private createEmptyMetrics(): AnalyticsMetrics {
     return {
       requests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      retriedRequests: 0,
       totalTokens: 0,
       inputTokens: 0,
       outputTokens: 0,
@@ -294,6 +297,9 @@ export class AnalyticsAggregator {
         : 0;
 
     metrics.requests += 1;
+    metrics.successfulRequests += data.success === false ? 0 : 1;
+    metrics.failedRequests += data.success === false ? 1 : 0;
+    metrics.retriedRequests += (data.attempt ?? 1) > 1 ? 1 : 0;
     metrics.totalTokens += totalTokens;
     metrics.inputTokens += data.inputTokens ?? 0;
     metrics.outputTokens += data.outputTokens ?? 0;
@@ -343,6 +349,8 @@ export class AnalyticsAggregator {
       metrics.requests > 0
         ? Math.round(metrics.totalLatencyMs / metrics.requests)
         : 0;
+    const errorRate = metrics.requests > 0 ? metrics.failedRequests / metrics.requests : 0;
+    const retryRate = metrics.requests > 0 ? metrics.retriedRequests / metrics.requests : 0;
 
     const result: AggregatedDataPoint = {
       timestamp,
@@ -350,11 +358,16 @@ export class AnalyticsAggregator {
       ...(identifiers?.provider ? { provider: identifiers.provider } : {}),
       ...(identifiers?.model ? { model: identifiers.model } : {}),
       requests: metrics.requests,
+      successfulRequests: metrics.successfulRequests,
+      failedRequests: metrics.failedRequests,
+      retriedRequests: metrics.retriedRequests,
       totalTokens: metrics.totalTokens,
       inputTokens: metrics.inputTokens,
       outputTokens: metrics.outputTokens,
       cost: Math.round(metrics.cost * 1000000) / 1000000, // Round to 6 decimals
       avgLatency,
+      errorRate: Math.round(errorRate * 10000) / 10000,
+      retryRate: Math.round(retryRate * 10000) / 10000,
     };
 
     // Calculate percentiles if we have enough samples

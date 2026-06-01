@@ -75,6 +75,7 @@ export interface ResolvedStreamingProvider {
     tokensOut?: number;
     latencyMs: number;
     success: boolean;
+    attempt?: number;
     project?: string;
     errorMessage?: string;
   }) => void;
@@ -304,6 +305,7 @@ export class Router {
         startTime,
         defaultModel: plan.routedModel,
         classification: plan.classification,
+        attempt: 1,
         ...telemetry,
         logFailure: ({ provider: failedProvider, attemptedModel, message }) => {
           logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
@@ -336,7 +338,7 @@ export class Router {
     }
 
     const providerErrors = createProviderErrorAccumulator();
-    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider) => {
+    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) => {
       attemptedProviders.push(provider.id);
       return executeGenerateAttempt({
         provider,
@@ -350,6 +352,7 @@ export class Router {
         startTime,
         defaultModel: plan.routedModel,
         classification: plan.classification,
+        attempt: index + 1,
         ...telemetry,
         logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
           if (error instanceof LocalLLMError) {
@@ -501,6 +504,7 @@ export class Router {
               startTime,
               model: plan.routedModel,
               classification: plan.classification ?? undefined,
+              attempt: 1,
               routedEndpoint: plan.modelRouterDecision?.endpoint,
               ...telemetry,
             });
@@ -540,7 +544,7 @@ export class Router {
     }
 
     const providerErrors = createProviderErrorAccumulator();
-    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider) =>
+    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) =>
       tryProvider({
         provider,
         request: buildInternalRequest(
@@ -552,6 +556,7 @@ export class Router {
         circuitBreaker,
         startTime,
         classification: plan.classification ?? undefined,
+        attempt: index + 1,
         routedEndpoint: plan.modelRouterDecision?.endpoint,
         ...telemetry,
       }),

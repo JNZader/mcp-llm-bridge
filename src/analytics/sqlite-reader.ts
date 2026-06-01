@@ -10,6 +10,9 @@ import {
 interface PersistedAnalyticsQueryRow {
 	timestamp: number;
 	requests: number;
+	successfulRequests: number;
+	failedRequests: number;
+	retriedRequests: number;
 	inputTokens: number;
 	outputTokens: number;
 	cost: number;
@@ -42,6 +45,9 @@ export class SQLiteAnalyticsReader implements AnalyticsPersistenceReader {
 				SELECT
 					${timestampColumn} AS timestamp,
 					requests,
+					successful_requests AS successfulRequests,
+					failed_requests AS failedRequests,
+					retried_requests AS retriedRequests,
 					input_tokens AS inputTokens,
 					output_tokens AS outputTokens,
 					cost,
@@ -77,11 +83,16 @@ export class SQLiteAnalyticsReader implements AnalyticsPersistenceReader {
 		const point: AggregatedDataPoint = {
 			timestamp: row.timestamp,
 			requests: row.requests,
+			successfulRequests: row.successfulRequests,
+			failedRequests: row.failedRequests,
+			retriedRequests: row.retriedRequests,
 			totalTokens: row.inputTokens + row.outputTokens,
 			inputTokens: row.inputTokens,
 			outputTokens: row.outputTokens,
 			cost: row.cost,
 			avgLatency: row.avgLatency ?? 0,
+			errorRate: row.requests > 0 ? row.failedRequests / row.requests : 0,
+			retryRate: row.requests > 0 ? row.retriedRequests / row.requests : 0,
 		};
 
 		if (row.p95Latency !== null) {

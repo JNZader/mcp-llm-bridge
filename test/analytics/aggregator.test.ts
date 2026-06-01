@@ -32,6 +32,9 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       const total = aggregator.query({ dimension: 'total' });
       assert.strictEqual(total.length, (1));
       assert.strictEqual(total[0]!.requests, (0));
+      assert.strictEqual(total[0]!.successfulRequests, (0));
+      assert.strictEqual(total[0]!.failedRequests, (0));
+      assert.strictEqual(total[0]!.retriedRequests, (0));
       assert.strictEqual(total[0]!.totalTokens, (0));
       assert.strictEqual(total[0]!.inputTokens, (0));
       assert.strictEqual(total[0]!.outputTokens, (0));
@@ -62,6 +65,9 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
       assert.strictEqual(total[0]!.outputTokens, (50));
       assert.strictEqual(total[0]!.cost, (0.0025));
       assert.strictEqual(total[0]!.avgLatency, (1200));
+      assert.strictEqual(total[0]!.successfulRequests, (1));
+      assert.strictEqual(total[0]!.failedRequests, (0));
+      assert.strictEqual(total[0]!.retriedRequests, (0));
     });
 
     it('should record a request to hourly dimension', () => {
@@ -139,6 +145,36 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
   });
 
   describe('record() - Multiple Requests Aggregation', () => {
+    it('tracks success, failure, and retry counters truthfully', () => {
+      aggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 1200,
+        success: false,
+        attempt: 1,
+        channel: 'default',
+      });
+
+      aggregator.record('openai', 'gpt-4o', {
+        inputTokens: 100,
+        outputTokens: 50,
+        cost: 0.0025,
+        latencyMs: 900,
+        success: true,
+        attempt: 2,
+        channel: 'default',
+      });
+
+      const total = aggregator.query({ dimension: 'total' });
+      assert.strictEqual(total[0]!.requests, 2);
+      assert.strictEqual(total[0]!.successfulRequests, 1);
+      assert.strictEqual(total[0]!.failedRequests, 1);
+      assert.strictEqual(total[0]!.retriedRequests, 1);
+      assert.strictEqual(total[0]!.errorRate, 0.5);
+      assert.strictEqual(total[0]!.retryRate, 0.5);
+    });
+
     it('should aggregate multiple requests to same hour', () => {
       const now = Date.now();
 
@@ -719,6 +755,9 @@ describe('AnalyticsAggregator - RED Phase (TDD)', () => {
 
       const total = aggregator.query({ dimension: 'total' });
       assert.strictEqual(total[0]!.requests, (1));
+      assert.strictEqual(total[0]!.successfulRequests, (1));
+      assert.strictEqual(total[0]!.failedRequests, (0));
+      assert.strictEqual(total[0]!.retriedRequests, (0));
       assert.strictEqual(total[0]!.inputTokens, (0));
       assert.strictEqual(total[0]!.cost, (0));
       assert.strictEqual(total[0]!.avgLatency, (0));
