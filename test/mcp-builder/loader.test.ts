@@ -139,6 +139,26 @@ describe('loadPlugins', () => {
     assert.strictEqual(result.errors[0]!.code, 'load-failed');
   });
 
+  it('quarantines plugin import timeouts with structured summary', async () => {
+    process.env.MCP_PLUGIN_LOAD_TIMEOUT_MS = '25';
+    await writePluginFile('hung', 'await new Promise(() => {}); export default {};');
+
+    try {
+      const startedAt = Date.now();
+      const result = await loadPlugins(tempDir);
+      const elapsedMs = Date.now() - startedAt;
+
+      assert.ok(elapsedMs < 250, `load should be bounded, got ${elapsedMs}ms`);
+      assert.deepStrictEqual(result.loaded, []);
+      assert.strictEqual(result.errors.length, 1);
+      assert.strictEqual(result.errors[0]!.plugin, 'hung');
+      assert.strictEqual(result.errors[0]!.code, 'load-timeout');
+      assert.ok(result.errors[0]!.message.includes('25ms'));
+    } finally {
+      delete process.env.MCP_PLUGIN_LOAD_TIMEOUT_MS;
+    }
+  });
+
   it('falls back to named export (module.server)', async () => {
     const def = makeDefinition('named');
     await writePluginFile(

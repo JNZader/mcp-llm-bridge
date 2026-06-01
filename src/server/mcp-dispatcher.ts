@@ -85,10 +85,9 @@ async function handleDynamicToolFallback(
     };
   }
 
-  const dynamicTool = dynamicToolAdapter?.getTool(toolName);
-  if (dynamicTool) {
-    try {
-      const result = await dynamicTool.handler(args);
+  if (dynamicToolAdapter?.hasTool(toolName)) {
+    const result = await dynamicToolAdapter.executeTool(toolName, args);
+    if (result) {
       const content = result.content.map((item) => {
         if (item.type === 'text') return item;
         return { type: 'text' as const, text: `[image: ${item.mimeType}]` };
@@ -96,12 +95,6 @@ async function handleDynamicToolFallback(
       return {
         content,
         ...(result.isError ? { isError: true } : {}),
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
-        isError: true,
       };
     }
   }

@@ -159,7 +159,7 @@ function admitDynamicPlugins(
       continue;
     }
 
-    adapter.register(server, plugin.definition);
+    adapter.register(server, plugin.definition, plugin.name);
     for (const toolName of pluginToolNames) {
       admittedToolOwners.set(toolName, plugin.name);
     }

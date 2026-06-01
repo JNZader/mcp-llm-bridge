@@ -266,6 +266,54 @@ describe('Dynamic tool execution', () => {
     server = null;
     await rm(join(tempDir, 'exec.mcp-server.js'));
   });
+
+  it('returns a bounded timeout error for a hanging dynamic tool call', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+    process.env.MCP_PLUGIN_TOOL_TIMEOUT_MS = '25';
+
+    const pluginContent = `
+      export default {
+        name: 'timeout-plugin',
+        version: '1.0.0',
+        description: 'Execution timeout plugin',
+        tools: [
+          {
+            name: 'dynamic_hang',
+            description: 'Never returns',
+            inputSchema: { type: 'object', properties: {} },
+            handler: async () => new Promise(() => {}),
+          },
+        ],
+        resources: [],
+        prompts: [],
+      };
+    `;
+    await writeFile(join(tempDir, 'timeout.mcp-server.js'), pluginContent, 'utf-8');
+
+    try {
+      server = await startMcpServer({ router, vault });
+
+      const startedAt = Date.now();
+      const result = await handleToolCall('dynamic_hang', {}, router, vault);
+      const elapsedMs = Date.now() - startedAt;
+
+      assert.ok(elapsedMs < 250, `tool execution should be bounded, got ${elapsedMs}ms`);
+      assert.equal(result.isError, true);
+      assert.deepStrictEqual(JSON.parse(result.content[0]!.text), {
+        error: "Dynamic tool 'dynamic_hang' timed out after 25ms",
+        code: 'dynamic-tool-timeout',
+        toolName: 'dynamic_hang',
+        plugin: 'timeout',
+        timeoutMs: 25,
+      });
+    } finally {
+      await server?.close?.();
+      server = null;
+      delete process.env.MCP_PLUGIN_TOOL_TIMEOUT_MS;
+      await rm(join(tempDir, 'timeout.mcp-server.js'), { force: true });
+    }
+  });
 });
 
 // ── Security profile blocking ───────────────────────────────
@@ -365,6 +413,63 @@ describe('Dynamic tool security profiles', () => {
     await server.close();
     server = null;
     await rm(join(tempDir, 'delayed.mcp-server.js'));
+  });
+
+  it('quarantines a timed out plugin import without blocking a valid plugin', async () => {
+    process.env.MCP_DYNAMIC_SERVERS = 'true';
+    process.env.MCP_SERVERS_DIR = tempDir;
+    process.env.MCP_PLUGIN_LOAD_TIMEOUT_MS = '50';
+
+    await writeFile(join(tempDir, 'hung.mcp-server.js'), `
+      await new Promise(() => {});
+      export default {
+        name: 'hung-plugin',
+        version: '1.0.0',
+        description: 'Never finishes loading',
+        tools: [],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+    await writeFile(join(tempDir, 'healthy.mcp-server.js'), `
+      export default {
+        name: 'healthy-plugin',
+        version: '1.0.0',
+        description: 'Loads normally',
+        tools: [{
+          name: 'dynamic_healthy',
+          description: 'Still available',
+          inputSchema: { type: 'object', properties: {} },
+          handler: async () => ({ content: [{ type: 'text', text: 'healthy' }] }),
+        }],
+        resources: [],
+        prompts: [],
+      };
+    `, 'utf-8');
+
+    try {
+      server = await startMcpServer({ router, vault });
+
+      const summary = getDynamicPluginLoadSummary();
+      assert.deepStrictEqual(summary.loaded, [{
+        plugin: 'healthy',
+        toolCount: 1,
+        toolNames: ['dynamic_healthy'],
+      }]);
+      assert.strictEqual(summary.errors.length, 1);
+      assert.strictEqual(summary.errors[0]!.plugin, 'hung');
+      assert.strictEqual(summary.errors[0]!.code, 'load-timeout');
+
+      const result = await handleToolCall('dynamic_healthy', {}, router, vault);
+      assert.equal(result.isError, undefined);
+      assert.equal(result.content[0]!.text, 'healthy');
+    } finally {
+      await server?.close?.();
+      server = null;
+      delete process.env.MCP_PLUGIN_LOAD_TIMEOUT_MS;
+      await rm(join(tempDir, 'hung.mcp-server.js'), { force: true });
+      await rm(join(tempDir, 'healthy.mcp-server.js'), { force: true });
+    }
   });
 
   it('quarantines plugin collisions and exposes them in the load summary', async () => {

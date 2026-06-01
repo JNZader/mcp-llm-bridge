@@ -104,9 +104,68 @@ describe('McpDefinitionAdapter', () => {
     assert.ok(handler, 'handler should be registered');
     const result = await handler!({});
     assert.deepStrictEqual(result, {
-      content: [{ type: 'text', text: 'Error: Error: boom' }],
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          error: 'boom',
+          code: 'dynamic-tool-error',
+          toolName: 'fail',
+          plugin: 'test-server',
+        }),
+      }],
       isError: true,
     });
+  });
+
+  it('bounds hanging handler execution with a structured timeout result', async () => {
+    const mockServer = createMockServer();
+    const adapter = new McpDefinitionAdapter();
+
+    const definition: McpServerDefinition = {
+      name: 'timeout-plugin',
+      version: '1.0.0',
+      description: 'Test server',
+      tools: [
+        {
+          name: 'hang',
+          description: 'Never resolves',
+          inputSchema: { type: 'object', properties: {} },
+          handler: async () => new Promise<ToolResult>(() => {}),
+        } satisfies ToolPattern,
+      ],
+      resources: [],
+      prompts: [],
+    };
+
+    process.env.MCP_PLUGIN_TOOL_TIMEOUT_MS = '20';
+
+    try {
+      adapter.register(mockServer as any, definition);
+
+      const handler = mockServer.getToolHandler('hang');
+      assert.ok(handler, 'handler should be registered');
+
+      const startedAt = Date.now();
+      const result = await handler!({});
+      const elapsedMs = Date.now() - startedAt;
+
+      assert.ok(elapsedMs < 250, `execution should be bounded, got ${elapsedMs}ms`);
+      assert.deepStrictEqual(result, {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            error: "Dynamic tool 'hang' timed out after 20ms",
+            code: 'dynamic-tool-timeout',
+            toolName: 'hang',
+            plugin: 'timeout-plugin',
+            timeoutMs: 20,
+          }),
+        }],
+        isError: true,
+      });
+    } finally {
+      delete process.env.MCP_PLUGIN_TOOL_TIMEOUT_MS;
+    }
   });
 
   it('getToolNames() returns registered names', () => {

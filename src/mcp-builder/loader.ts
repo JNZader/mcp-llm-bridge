@@ -1,6 +1,7 @@
 import { copyFile, readdir, rm } from 'fs/promises';
 import { dirname, resolve } from 'path';
 import { pathToFileURL } from 'url';
+import { dynamicPluginLoadTimeoutMs } from '../core/mcp-runtime-config.js';
 import type { McpServerDefinition } from './index.js';
 
 export interface LoadedPlugin {
@@ -11,6 +12,7 @@ export interface LoadedPlugin {
 const PLUGIN_LOAD_ERROR = {
   INVALID_TOP_LEVEL_SHAPE: 'invalid-top-level-shape',
   LOAD_FAILED: 'load-failed',
+  LOAD_TIMEOUT: 'load-timeout',
 } as const;
 
 type PluginLoadErrorCode = (typeof PLUGIN_LOAD_ERROR)[keyof typeof PLUGIN_LOAD_ERROR];
@@ -29,6 +31,34 @@ export interface PluginLoadSummary {
 }
 
 let importNonce = 0;
+
+class PluginImportTimeoutError extends Error {
+  readonly code = PLUGIN_LOAD_ERROR.LOAD_TIMEOUT;
+
+  constructor(
+    readonly plugin: string,
+    readonly file: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`Plugin import timed out after ${timeoutMs}ms`);
+    this.name = 'PluginImportTimeoutError';
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error): Promise<T> {
+  let timeoutId: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(onTimeout()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -49,6 +79,7 @@ export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary
   try {
     const entries = await readdir(pluginsDir);
     const jsFiles = entries.filter((f) => f.endsWith('.mcp-server.js')).sort();
+    const importTimeoutMs = dynamicPluginLoadTimeoutMs();
 
     const loaded: LoadedPlugin[] = [];
     const skipped: PluginLoadIssue[] = [];
@@ -60,7 +91,11 @@ export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary
 
       try {
         await copyFile(sourcePath, shadowModulePath);
-        const module = await import(pathToFileURL(shadowModulePath).href);
+        const module = await withTimeout(
+          import(pathToFileURL(shadowModulePath).href),
+          importTimeoutMs,
+          () => new PluginImportTimeoutError(pluginName, file, importTimeoutMs),
+        );
         const definition = module.default || module.server || module.definition;
         if (!isValidPluginDefinition(definition)) {
           skipped.push({
@@ -73,6 +108,16 @@ export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary
         }
         loaded.push({ name: pluginName, definition });
       } catch (e) {
+        if (e instanceof PluginImportTimeoutError) {
+          errors.push({
+            plugin: e.plugin,
+            file: e.file,
+            code: e.code,
+            message: e.message,
+          });
+          continue;
+        }
+
         const message = e instanceof Error ? e.message : String(e);
         errors.push({
           plugin: pluginName,
