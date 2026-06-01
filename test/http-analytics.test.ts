@@ -838,18 +838,120 @@ describe('GET /v1/analytics', () => {
   });
 
 		describe('Durable hourly/daily reads', () => {
+		const toHourTimestamp = (timestamp: number): number => {
+			const date = new Date(timestamp);
+			date.setMinutes(0, 0, 0);
+			return date.getTime();
+		};
+
+		const toDayTimestamp = (timestamp: number): number => {
+			const date = new Date(timestamp);
+			date.setHours(0, 0, 0, 0);
+			return date.getTime();
+		};
+
+		it('merges persisted history with unflushed live hourly and daily buckets', async () => {
+			const runner = new MigrationRunner({ dbPath: ':memory:' });
+			await runner.runMigration(2);
+			const db = runner.getDatabase();
+			const writer = new SQLiteAnalyticsWriter(db);
+			const reader = new SQLiteAnalyticsReader(db);
+			const liveAggregator = new AnalyticsAggregator();
+			const persistedTimestamp = Date.UTC(2026, 0, 10, 10, 15, 0);
+			const liveTimestamp = Date.UTC(2026, 0, 11, 11, 20, 0);
+
+			await writer.upsert({
+				flushedAt: Date.now(),
+				hourly: [
+					{
+						timestamp: toHourTimestamp(persistedTimestamp),
+						data: {
+							timestamp: toHourTimestamp(persistedTimestamp),
+							requests: 2,
+							totalTokens: 120,
+							inputTokens: 80,
+							outputTokens: 40,
+							cost: 0.12,
+							avgLatency: 300,
+						},
+					},
+				],
+				daily: [
+					{
+						timestamp: toDayTimestamp(persistedTimestamp),
+						data: {
+							timestamp: toDayTimestamp(persistedTimestamp),
+							requests: 2,
+							totalTokens: 120,
+							inputTokens: 80,
+							outputTokens: 40,
+							cost: 0.12,
+							avgLatency: 300,
+						},
+					},
+				],
+			});
+
+			liveAggregator.record('openai', 'gpt-4o', {
+				inputTokens: 40,
+				outputTokens: 20,
+				cost: 0.06,
+				latencyMs: 900,
+				channel: 'fast',
+				timestamp: liveTimestamp,
+			});
+
+			const app = new Hono();
+			registerObservabilityRoutes(app, {
+				router: new Router(),
+				analyticsAggregator: liveAggregator,
+				analyticsReader: reader,
+			});
+
+			try {
+				const hourlyRes = await app.request('/v1/analytics?dimension=hourly');
+				const dailyRes = await app.request('/v1/analytics?dimension=daily');
+
+				assert.equal(hourlyRes.status, 200);
+				assert.equal(dailyRes.status, 200);
+
+				const hourlyBody = await hourlyRes.json() as {
+					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					summary: { totalRequests: number; totalTokens: number };
+				};
+				const dailyBody = await dailyRes.json() as {
+					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					summary: { totalRequests: number; totalTokens: number };
+				};
+
+				assert.deepEqual(
+					hourlyBody.data.map((point) => point.timestamp),
+					[toHourTimestamp(persistedTimestamp), toHourTimestamp(liveTimestamp)],
+				);
+				assert.deepEqual(
+					hourlyBody.data.map((point) => point.requests),
+					[2, 1],
+				);
+				assert.equal(hourlyBody.summary.totalRequests, 3);
+				assert.equal(hourlyBody.summary.totalTokens, 180);
+
+				assert.deepEqual(
+					dailyBody.data.map((point) => point.timestamp),
+					[toDayTimestamp(persistedTimestamp), toDayTimestamp(liveTimestamp)],
+				);
+				assert.deepEqual(
+					dailyBody.data.map((point) => point.requests),
+					[2, 1],
+				);
+				assert.equal(dailyBody.summary.totalRequests, 3);
+				assert.equal(dailyBody.summary.totalTokens, 180);
+			} finally {
+				runner.close();
+			}
+		});
+
 		it('serves persisted hourly and daily analytics after restart on the same SQLite DB', async () => {
 			const dbPath = `/tmp/test-http-analytics-restart-${Date.now()}.db`;
-			const toHourTimestamp = (timestamp: number): number => {
-				const date = new Date(timestamp);
-				date.setMinutes(0, 0, 0);
-				return date.getTime();
-			};
-			const toDayTimestamp = (timestamp: number): number => {
-				const date = new Date(timestamp);
-				date.setHours(0, 0, 0, 0);
-				return date.getTime();
-			};
 			const firstRunner = new MigrationRunner({ dbPath });
 			await firstRunner.runMigration(2);
 
@@ -934,7 +1036,98 @@ describe('GET /v1/analytics', () => {
 						unlinkSync(filePath);
 					}
 				}
-			}
-		});
+				}
+			});
+
+			it('lets live hourly and daily buckets override persisted collisions by timestamp', async () => {
+				const runner = new MigrationRunner({ dbPath: ':memory:' });
+				await runner.runMigration(2);
+				const db = runner.getDatabase();
+				const writer = new SQLiteAnalyticsWriter(db);
+				const reader = new SQLiteAnalyticsReader(db);
+				const liveAggregator = new AnalyticsAggregator();
+				const timestamp = Date.UTC(2026, 0, 10, 15, 5, 0);
+
+				await writer.upsert({
+					flushedAt: Date.now(),
+					hourly: [
+						{
+							timestamp: toHourTimestamp(timestamp),
+							data: {
+								timestamp: toHourTimestamp(timestamp),
+								requests: 9,
+								totalTokens: 999,
+								inputTokens: 600,
+								outputTokens: 399,
+								cost: 0.99,
+								avgLatency: 999,
+							},
+						},
+					],
+					daily: [
+						{
+							timestamp: toDayTimestamp(timestamp),
+							data: {
+								timestamp: toDayTimestamp(timestamp),
+								requests: 9,
+								totalTokens: 999,
+								inputTokens: 600,
+								outputTokens: 399,
+								cost: 0.99,
+								avgLatency: 999,
+							},
+						},
+					],
+				});
+
+				liveAggregator.record('openai', 'gpt-4o', {
+					inputTokens: 50,
+					outputTokens: 25,
+					cost: 0.075,
+					latencyMs: 400,
+					channel: 'fast',
+					timestamp,
+				});
+
+				const app = new Hono();
+				registerObservabilityRoutes(app, {
+					router: new Router(),
+					analyticsAggregator: liveAggregator,
+					analyticsReader: reader,
+				});
+
+				try {
+					const hourlyRes = await app.request('/v1/analytics?dimension=hourly');
+					const dailyRes = await app.request('/v1/analytics?dimension=daily');
+
+					assert.equal(hourlyRes.status, 200);
+					assert.equal(dailyRes.status, 200);
+
+					const hourlyBody = await hourlyRes.json() as {
+						data: Array<{ requests: number; totalTokens: number; avgLatency: number }>;
+						summary: { totalRequests: number; totalTokens: number };
+					};
+					const dailyBody = await dailyRes.json() as {
+						data: Array<{ requests: number; totalTokens: number; avgLatency: number }>;
+						summary: { totalRequests: number; totalTokens: number };
+					};
+
+					assert.equal(hourlyBody.data.length, 1);
+					assert.equal(hourlyBody.data[0]?.requests, 1);
+					assert.equal(hourlyBody.data[0]?.totalTokens, 75);
+					assert.equal(hourlyBody.data[0]?.avgLatency, 400);
+					assert.equal(hourlyBody.summary.totalRequests, 1);
+					assert.equal(hourlyBody.summary.totalTokens, 75);
+
+					assert.equal(dailyBody.data.length, 1);
+					assert.equal(dailyBody.data[0]?.requests, 1);
+					assert.equal(dailyBody.data[0]?.totalTokens, 75);
+					assert.equal(dailyBody.data[0]?.avgLatency, 400);
+					assert.equal(dailyBody.summary.totalRequests, 1);
+					assert.equal(dailyBody.summary.totalTokens, 75);
+				} finally {
+					runner.close();
+				}
+			});
 	});
 });

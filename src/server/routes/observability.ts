@@ -1,6 +1,10 @@
 import type { Hono } from "hono";
 
-import type { AnalyticsAggregator, AnalyticsPersistenceReader } from "../../analytics/index.js";
+import type {
+	AggregatedDataPoint,
+	AnalyticsAggregator,
+	AnalyticsPersistenceReader,
+} from "../../analytics/index.js";
 import { getMetrics, getMetricsContentType, updateProviderAvailability } from "../../core/metrics.js";
 import type { Router } from "../../core/router.js";
 import { LogQuerySchema } from "../../logging/schemas.js";
@@ -9,6 +13,23 @@ import type { RequestLogger } from "../../logging/request-logger.js";
 const VALID_ANALYTICS_DIMENSIONS = ["total", "hourly", "daily", "channel", "provider", "model"] as const;
 
 type AnalyticsDimension = (typeof VALID_ANALYTICS_DIMENSIONS)[number];
+
+function mergeTimeSeriesData(
+	persistedData: AggregatedDataPoint[],
+	liveData: AggregatedDataPoint[],
+): AggregatedDataPoint[] {
+	const mergedBuckets = new Map<number, AggregatedDataPoint>();
+
+	for (const point of persistedData) {
+		mergedBuckets.set(point.timestamp, point);
+	}
+
+	for (const point of liveData) {
+		mergedBuckets.set(point.timestamp, point);
+	}
+
+	return Array.from(mergedBuckets.values()).sort((a, b) => a.timestamp - b.timestamp);
+}
 
 export interface ObservabilityRouteDeps {
 	router: Router;
@@ -111,7 +132,14 @@ export function registerObservabilityRoutes(
 
 			const data =
 				(dimension === "hourly" || dimension === "daily") && analyticsReader
-					? await analyticsReader.query({ dimension, from, to })
+					? mergeTimeSeriesData(
+						await analyticsReader.query({ dimension, from, to }),
+						analyticsAggregator.query({
+							dimension,
+							from,
+							to,
+						}),
+					)
 					: analyticsAggregator.query({
 						dimension,
 						from,
