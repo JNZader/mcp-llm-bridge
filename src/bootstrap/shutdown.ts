@@ -59,19 +59,29 @@ export async function setupGracefulShutdown({
 	processOn = process.on.bind(process) as ProcessOn,
 	processExit = process.exit.bind(process) as ProcessExit,
 }: ShutdownDeps): Promise<void> {
+	let cleanupPromise: Promise<void> | undefined;
+
 	const cleanup = async (signal: ShutdownSignal) => {
-		logger.info({ signal }, "Shutting down");
-		compressor.destroy();
-		latencyMeasurer.stopBackgroundTask();
-		freeModelRouter.destroy();
-		costTracker.destroy();
-		groupStore.close();
-		sessionManager.destroy();
-		pageIndexService?.close();
-		cleanupAllProviderHomes();
-		vault.destroy();
-		await shutdownTracing();
-		processExit(0);
+		if (cleanupPromise) {
+			return cleanupPromise;
+		}
+
+		cleanupPromise = (async () => {
+			logger.info({ signal }, "Shutting down");
+			compressor.destroy();
+			latencyMeasurer.stopBackgroundTask();
+			freeModelRouter.destroy();
+			costTracker.destroy();
+			groupStore.close();
+			sessionManager.destroy();
+			pageIndexService?.close();
+			cleanupAllProviderHomes();
+			vault.destroy();
+			await shutdownTracing();
+			processExit(0);
+		})();
+
+		return cleanupPromise;
 	};
 
 	for (const signal of SHUTDOWN_SIGNALS) {

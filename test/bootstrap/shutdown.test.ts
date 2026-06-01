@@ -80,4 +80,56 @@ describe("setupGracefulShutdown", () => {
 			"processExit:0",
 		]);
 	});
+
+	it("does not re-run teardown when shutdown is triggered more than once", async () => {
+		const events: string[] = [];
+		const listeners = new Map<string, () => void | Promise<void>>();
+
+		await setupGracefulShutdown({
+			compressor: { destroy: () => events.push("compressor.destroy") },
+			latencyMeasurer: {
+				stopBackgroundTask: () => events.push("latencyMeasurer.stopBackgroundTask"),
+			},
+			freeModelRouter: { destroy: () => events.push("freeModelRouter.destroy") },
+			costTracker: { destroy: () => events.push("costTracker.destroy") },
+			groupStore: { close: () => events.push("groupStore.close") },
+			sessionManager: { destroy: () => events.push("sessionManager.destroy") },
+			pageIndexService: { close: () => events.push("pageIndexService.close") },
+			vault: { destroy: () => events.push("vault.destroy") },
+			cleanupAllProviderHomes: () => events.push("cleanupAllProviderHomes"),
+			shutdownTracing: async () => {
+				events.push("shutdownTracing.start");
+				events.push("shutdownTracing.end");
+			},
+			processOn: (signal, listener) => {
+				listeners.set(signal, listener);
+			},
+			processExit: (code) => {
+				events.push(`processExit:${code}`);
+			},
+		});
+
+		const sigintHandler = listeners.get("SIGINT");
+		const sigtermHandler = listeners.get("SIGTERM");
+		assert.ok(sigintHandler);
+		assert.ok(sigtermHandler);
+
+		await sigintHandler?.();
+		await sigtermHandler?.();
+
+		assert.deepEqual(events, [
+			"compressor.destroy",
+			"latencyMeasurer.stopBackgroundTask",
+			"freeModelRouter.destroy",
+			"costTracker.destroy",
+			"groupStore.close",
+			"sessionManager.destroy",
+			"pageIndexService.close",
+			"cleanupAllProviderHomes",
+			"vault.destroy",
+			"shutdownTracing.start",
+			"shutdownTracing.end",
+			"processExit:0",
+		]);
+	});
 });
