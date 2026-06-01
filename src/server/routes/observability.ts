@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 
-import type { AnalyticsAggregator } from "../../analytics/index.js";
+import type { AnalyticsAggregator, AnalyticsPersistenceReader } from "../../analytics/index.js";
 import { getMetrics, getMetricsContentType, updateProviderAvailability } from "../../core/metrics.js";
 import type { Router } from "../../core/router.js";
 import { LogQuerySchema } from "../../logging/schemas.js";
@@ -13,6 +13,7 @@ type AnalyticsDimension = (typeof VALID_ANALYTICS_DIMENSIONS)[number];
 export interface ObservabilityRouteDeps {
 	router: Router;
 	analyticsAggregator?: AnalyticsAggregator;
+	analyticsReader?: AnalyticsPersistenceReader;
 	requestLogger?: RequestLogger;
 }
 
@@ -20,7 +21,7 @@ export function registerObservabilityRoutes(
 	app: Hono,
 	deps: ObservabilityRouteDeps,
 ): void {
-	const { router, analyticsAggregator, requestLogger } = deps;
+	const { router, analyticsAggregator, analyticsReader, requestLogger } = deps;
 
 	app.get("/v1/logs", async (c) => {
 		try {
@@ -58,7 +59,7 @@ export function registerObservabilityRoutes(
 		return c.text(metrics, 200, { "Content-Type": getMetricsContentType() });
 	});
 
-	app.get("/v1/analytics", (c) => {
+	app.get("/v1/analytics", async (c) => {
 		try {
 			if (!analyticsAggregator) {
 				return c.json({ error: "Analytics not enabled" }, 503);
@@ -108,14 +109,17 @@ export function registerObservabilityRoutes(
 				);
 			}
 
-			const data = analyticsAggregator.query({
-				dimension,
-				from,
-				to,
-				channelId,
-				provider,
-				model,
-			});
+			const data =
+				(dimension === "hourly" || dimension === "daily") && analyticsReader
+					? await analyticsReader.query({ dimension, from, to })
+					: analyticsAggregator.query({
+						dimension,
+						from,
+						to,
+						channelId,
+						provider,
+						model,
+					});
 
 			const totalRequests = data.reduce((sum, item) => sum + item.requests, 0);
 			const totalTokens = data.reduce(

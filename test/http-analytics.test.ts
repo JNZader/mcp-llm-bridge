@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { unlinkSync, existsSync } from 'node:fs';
 import http from 'node:http';
+import { Hono } from 'hono';
 
 import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
@@ -18,7 +19,9 @@ import type { GatewayConfig } from '../src/core/types.js';
 import type { GenerateRequest, GenerateResponse, LLMProvider } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
-import { AnalyticsAggregator } from '../src/analytics/index.js';
+import { AnalyticsAggregator, SQLiteAnalyticsReader, SQLiteAnalyticsWriter } from '../src/analytics/index.js';
+import { MigrationRunner } from '../src/db/migrate.js';
+import { registerObservabilityRoutes } from '../src/server/routes/observability.js';
 
 // Create test components
 const config: GatewayConfig & { authToken: string } = {
@@ -833,4 +836,105 @@ describe('GET /v1/analytics', () => {
       await new Promise<void>((resolve) => testServer.close(() => resolve()));
     });
   });
+
+		describe('Durable hourly/daily reads', () => {
+		it('serves persisted hourly and daily analytics after restart on the same SQLite DB', async () => {
+			const dbPath = `/tmp/test-http-analytics-restart-${Date.now()}.db`;
+			const toHourTimestamp = (timestamp: number): number => {
+				const date = new Date(timestamp);
+				date.setMinutes(0, 0, 0);
+				return date.getTime();
+			};
+			const toDayTimestamp = (timestamp: number): number => {
+				const date = new Date(timestamp);
+				date.setHours(0, 0, 0, 0);
+				return date.getTime();
+			};
+			const firstRunner = new MigrationRunner({ dbPath });
+			await firstRunner.runMigration(2);
+
+			const persistentAggregator = new AnalyticsAggregator({
+				persistenceWriter: new SQLiteAnalyticsWriter(firstRunner.getDatabase()),
+				flushIntervalMs: 10_000,
+			});
+			const firstTimestamp = Date.UTC(2026, 0, 10, 15, 5, 0);
+			const secondTimestamp = Date.UTC(2026, 0, 10, 15, 25, 0);
+
+			persistentAggregator.record('openai', 'gpt-4o', {
+				inputTokens: 120,
+				outputTokens: 30,
+				cost: 0.12,
+				latencyMs: 400,
+				channel: 'fast',
+				timestamp: firstTimestamp,
+			});
+			persistentAggregator.record('openai', 'gpt-4o', {
+				inputTokens: 80,
+				outputTokens: 20,
+				cost: 0.08,
+				latencyMs: 600,
+				channel: 'fast',
+				timestamp: secondTimestamp,
+			});
+
+			await persistentAggregator.destroy();
+			firstRunner.close();
+
+			const secondRunner = new MigrationRunner({ dbPath });
+			const app = new Hono();
+			registerObservabilityRoutes(app, {
+				router: new Router(),
+				analyticsAggregator: new AnalyticsAggregator(),
+				analyticsReader: new SQLiteAnalyticsReader(secondRunner.getDatabase()),
+			});
+
+			try {
+				const hourlyRes = await app.request('/v1/analytics?dimension=hourly');
+				const dailyRes = await app.request('/v1/analytics?dimension=daily');
+				const totalRes = await app.request('/v1/analytics?dimension=total');
+
+				assert.equal(hourlyRes.status, 200);
+				assert.equal(dailyRes.status, 200);
+				assert.equal(totalRes.status, 200);
+
+				const hourlyBody = await hourlyRes.json() as {
+					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					summary: { totalRequests: number; totalTokens: number; totalCost: number; avgLatency: number };
+				};
+				const dailyBody = await dailyRes.json() as {
+					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					summary: { totalRequests: number; totalTokens: number };
+				};
+				const totalBody = await totalRes.json() as {
+					data: Array<{ requests: number }>;
+					summary: { totalRequests: number };
+				};
+
+				assert.equal(hourlyBody.data.length, 1);
+				assert.equal(hourlyBody.data[0]?.timestamp, toHourTimestamp(firstTimestamp));
+				assert.equal(hourlyBody.data[0]?.requests, 2);
+				assert.equal(hourlyBody.data[0]?.totalTokens, 250);
+				assert.equal(hourlyBody.summary.totalRequests, 2);
+				assert.equal(hourlyBody.summary.totalTokens, 250);
+
+				assert.equal(dailyBody.data.length, 1);
+				assert.equal(dailyBody.data[0]?.timestamp, toDayTimestamp(firstTimestamp));
+				assert.equal(dailyBody.data[0]?.requests, 2);
+				assert.equal(dailyBody.data[0]?.totalTokens, 250);
+				assert.equal(dailyBody.summary.totalRequests, 2);
+				assert.equal(dailyBody.summary.totalTokens, 250);
+
+				assert.equal(totalBody.data[0]?.requests, 0);
+				assert.equal(totalBody.summary.totalRequests, 0);
+			} finally {
+				secondRunner.close();
+				for (const suffix of ['', '-wal', '-shm']) {
+					const filePath = dbPath + suffix;
+					if (existsSync(filePath)) {
+						unlinkSync(filePath);
+					}
+				}
+			}
+		});
+	});
 });

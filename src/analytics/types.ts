@@ -142,6 +142,24 @@ export interface AnalyticsPersistenceWriter {
   upsert(data: AnalyticsPersistenceData): Promise<void> | void;
 }
 
+export const DURABLE_ANALYTICS_DIMENSIONS = {
+  HOURLY: 'hourly',
+  DAILY: 'daily',
+} as const;
+
+export type DurableAnalyticsDimension =
+  (typeof DURABLE_ANALYTICS_DIMENSIONS)[keyof typeof DURABLE_ANALYTICS_DIMENSIONS];
+
+export interface DurableAnalyticsQuery {
+  dimension: DurableAnalyticsDimension;
+  from?: number;
+  to?: number;
+}
+
+export interface AnalyticsPersistenceReader {
+  query(query: DurableAnalyticsQuery): Promise<AggregatedDataPoint[]> | AggregatedDataPoint[];
+}
+
 /**
  * Database interface for flush operations
  * Minimal interface that any database adapter can implement

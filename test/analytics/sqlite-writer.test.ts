@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { SQLiteAnalyticsWriter } from "../../src/analytics/index.js";
+import { SQLiteAnalyticsReader, SQLiteAnalyticsWriter } from "../../src/analytics/index.js";
 import { MigrationRunner } from "../../src/db/migrate.js";
 
 describe("SQLiteAnalyticsWriter", () => {
@@ -113,5 +113,74 @@ describe("SQLiteAnalyticsWriter", () => {
 		assert.equal(dailyRows[0]?.avg_latency_ms, 210);
 		assert.equal(dailyRows[0]?.p95_latency_ms, 300);
 		assert.equal(dailyRows[0]?.p99_latency_ms, 350);
+	});
+
+	it("reads persisted hourly and daily aggregates in AggregatedDataPoint shape", async () => {
+		const db = runner.getDatabase();
+		const writer = new SQLiteAnalyticsWriter(db);
+		const reader = new SQLiteAnalyticsReader(db);
+		const hour = 1_717_200_000_000;
+		const day = 1_717_171_200_000;
+
+		await writer.upsert({
+			flushedAt: Date.now(),
+			hourly: [
+				{
+					timestamp: hour,
+					data: {
+						timestamp: hour,
+						requests: 4,
+						totalTokens: 320,
+						inputTokens: 200,
+						outputTokens: 120,
+						cost: 0.42,
+						avgLatency: 140,
+						p95Latency: 180,
+					},
+				},
+			],
+			daily: [
+				{
+					timestamp: day,
+					data: {
+						timestamp: day,
+						requests: 7,
+						totalTokens: 500,
+						inputTokens: 300,
+						outputTokens: 200,
+						cost: 1.5,
+						avgLatency: 210,
+					},
+				},
+			],
+		});
+
+		const hourly = reader.query({ dimension: "hourly" });
+		const daily = reader.query({ dimension: "daily" });
+
+		assert.deepEqual(hourly, [
+			{
+				timestamp: hour,
+				requests: 4,
+				totalTokens: 320,
+				inputTokens: 200,
+				outputTokens: 120,
+				cost: 0.42,
+				avgLatency: 140,
+				p95Latency: 180,
+			},
+		]);
+
+		assert.deepEqual(daily, [
+			{
+				timestamp: day,
+				requests: 7,
+				totalTokens: 500,
+				inputTokens: 300,
+				outputTokens: 200,
+				cost: 1.5,
+				avgLatency: 210,
+			},
+		]);
 	});
 });

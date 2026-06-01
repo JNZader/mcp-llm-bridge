@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 
-import type { AnalyticsAggregator } from "../analytics/index.js";
+import { SQLiteAnalyticsReader, type AnalyticsAggregator } from "../analytics/index.js";
 import type { ApprovalStore } from "../approval/index.js";
 import { apiKeyAuth } from "../auth/middleware.js";
 import type { ComparisonService } from "../comparison/service.js";
@@ -225,6 +225,7 @@ function registerHttpRoutes(app: Hono, deps: CreateHttpAppDeps): void {
 		sessionManager,
 		requestLogger,
 	} = deps;
+	const analyticsReader = db ? new SQLiteAnalyticsReader(db) : undefined;
 
 	registerPublicRoutes(app, {
 		router,
@@ -236,6 +237,7 @@ function registerHttpRoutes(app: Hono, deps: CreateHttpAppDeps): void {
 	registerObservabilityRoutes(app, {
 		router,
 		analyticsAggregator,
+		analyticsReader,
 		requestLogger,
 	});
 	registerComparisonRoutes(app, { comparisonService });

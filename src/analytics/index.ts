@@ -16,13 +16,17 @@ export type {
   RecordInput,
   AggregatorConfig,
   AnalyticsPersistenceData,
+  AnalyticsPersistenceReader,
   AnalyticsPersistenceWriter,
   Database,
+  DurableAnalyticsDimension,
+  DurableAnalyticsQuery,
   AnalyticsFlushData,
 } from './types.js';
 
 // Export type guards
 export {
+  DURABLE_ANALYTICS_DIMENSIONS,
   isAnalyticsMetrics,
   isAnalyticsQuery,
   isAggregatedDataPoint,
@@ -32,4 +36,5 @@ export {
 export { AnalyticsAggregator } from './aggregator.js';
 
 // Export persistence adapters
+export { SQLiteAnalyticsReader } from './sqlite-reader.js';
 export { SQLiteAnalyticsWriter } from './sqlite-writer.js';
