@@ -234,6 +234,7 @@ describe('GET /v1/analytics', () => {
       assert.equal(res.status, 200);
       assert.ok(Array.isArray((res.data as any).data), 'Response should have data array');
       assert.ok(typeof (res.data as any).summary === 'object', 'Response should have summary object');
+      assert.equal((res.data as { source: string }).source, 'live');
     });
 
     it('should expose additive flush status in the analytics response', async () => {
@@ -1002,12 +1003,17 @@ describe('GET /v1/analytics', () => {
 
 				const hourlyBody = await hourlyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					source: string;
 					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number };
 				};
 				const dailyBody = await dailyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					source: string;
 					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number };
 				};
+
+				assert.equal(hourlyBody.source, 'mixed');
+				assert.equal(dailyBody.source, 'mixed');
 
 				assert.deepEqual(
 					hourlyBody.data.map((point) => point.timestamp),
@@ -1095,16 +1101,23 @@ describe('GET /v1/analytics', () => {
 
 				const hourlyBody = await hourlyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					source: string;
 					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number; totalCost: number; avgLatency: number };
 				};
 				const dailyBody = await dailyRes.json() as {
 					data: Array<{ timestamp: number; requests: number; totalTokens: number }>;
+					source: string;
 					summary: { totalRequests: number; failedRequests: number; retriedRequests: number; totalTokens: number };
 				};
 				const totalBody = await totalRes.json() as {
 					data: Array<{ requests: number }>;
+					source: string;
 					summary: { totalRequests: number };
 				};
+
+				assert.equal(hourlyBody.source, 'durable');
+				assert.equal(dailyBody.source, 'durable');
+				assert.equal(totalBody.source, 'live');
 
 				assert.equal(hourlyBody.data.length, 1);
 				assert.equal(hourlyBody.data[0]?.timestamp, toHourTimestamp(firstTimestamp));
@@ -1214,14 +1227,19 @@ describe('GET /v1/analytics', () => {
 					assert.equal(hourlyRes.status, 200);
 					assert.equal(dailyRes.status, 200);
 
-					const hourlyBody = await hourlyRes.json() as {
-						data: Array<{ requests: number; totalTokens: number; avgLatency: number }>;
-						summary: { totalRequests: number; totalTokens: number };
-					};
-					const dailyBody = await dailyRes.json() as {
-						data: Array<{ requests: number; totalTokens: number; avgLatency: number }>;
-						summary: { totalRequests: number; totalTokens: number };
-					};
+				const hourlyBody = await hourlyRes.json() as {
+					data: Array<{ requests: number; totalTokens: number; avgLatency: number }>;
+					source: string;
+					summary: { totalRequests: number; totalTokens: number };
+				};
+				const dailyBody = await dailyRes.json() as {
+					data: Array<{ requests: number; totalTokens: number; avgLatency: number }>;
+					source: string;
+					summary: { totalRequests: number; totalTokens: number };
+				};
+
+				assert.equal(hourlyBody.source, 'mixed');
+				assert.equal(dailyBody.source, 'mixed');
 
 					assert.equal(hourlyBody.data.length, 1);
 					assert.equal(hourlyBody.data[0]?.requests, 1);
@@ -1236,6 +1254,84 @@ describe('GET /v1/analytics', () => {
 					assert.equal(dailyBody.data[0]?.avgLatency, 400);
 					assert.equal(dailyBody.summary.totalRequests, 1);
 					assert.equal(dailyBody.summary.totalTokens, 75);
+				} finally {
+					runner.close();
+				}
+			});
+
+			it('marks non-persisted dimensions as live-only even when durable history exists', async () => {
+				const runner = new MigrationRunner({ dbPath: ':memory:' });
+				await runner.runMigration(2);
+				await runner.runMigration(9);
+				const db = runner.getDatabase();
+				const writer = new SQLiteAnalyticsWriter(db);
+				const reader = new SQLiteAnalyticsReader(db);
+				const liveAggregator = new AnalyticsAggregator();
+
+				await writer.upsert({
+					flushedAt: Date.now(),
+					hourly: [
+						{
+							timestamp: Date.UTC(2026, 0, 10, 15, 0, 0),
+							data: {
+								timestamp: Date.UTC(2026, 0, 10, 15, 0, 0),
+								requests: 4,
+								successfulRequests: 4,
+								failedRequests: 0,
+								retriedRequests: 0,
+								totalTokens: 200,
+								inputTokens: 120,
+								outputTokens: 80,
+								cost: 0.2,
+								avgLatency: 250,
+								errorRate: 0,
+								retryRate: 0,
+							},
+						},
+					],
+					daily: [
+						{
+							timestamp: Date.UTC(2026, 0, 10, 0, 0, 0),
+							data: {
+								timestamp: Date.UTC(2026, 0, 10, 0, 0, 0),
+								requests: 4,
+								successfulRequests: 4,
+								failedRequests: 0,
+								retriedRequests: 0,
+								totalTokens: 200,
+								inputTokens: 120,
+								outputTokens: 80,
+								cost: 0.2,
+								avgLatency: 250,
+								errorRate: 0,
+								retryRate: 0,
+							},
+						},
+					],
+				});
+
+				liveAggregator.record('openai', 'gpt-4o', {
+					inputTokens: 50,
+					outputTokens: 25,
+					cost: 0.075,
+					latencyMs: 400,
+					channel: 'fast',
+				});
+
+				const app = new Hono();
+				registerObservabilityRoutes(app, {
+					router: new Router(),
+					analyticsAggregator: liveAggregator,
+					analyticsReader: reader,
+				});
+
+				try {
+					for (const dimension of ['total', 'channel', 'provider', 'model']) {
+						const res = await app.request(`/v1/analytics?dimension=${dimension}`);
+						assert.equal(res.status, 200);
+						const body = await res.json() as { source: string };
+						assert.equal(body.source, 'live');
+					}
 				} finally {
 					runner.close();
 				}

@@ -12,7 +12,14 @@ import type { RequestLogger } from "../../logging/request-logger.js";
 
 const VALID_ANALYTICS_DIMENSIONS = ["total", "hourly", "daily", "channel", "provider", "model"] as const;
 
+const ANALYTICS_SOURCES = {
+	LIVE: "live",
+	DURABLE: "durable",
+	MIXED: "mixed",
+} as const;
+
 type AnalyticsDimension = (typeof VALID_ANALYTICS_DIMENSIONS)[number];
+type AnalyticsSource = (typeof ANALYTICS_SOURCES)[keyof typeof ANALYTICS_SOURCES];
 
 function mergeTimeSeriesData(
 	persistedData: AggregatedDataPoint[],
@@ -33,6 +40,24 @@ function mergeTimeSeriesData(
 
 function roundRate(value: number): number {
 	return Math.round(value * 10000) / 10000;
+}
+
+function getAnalyticsSource(
+	dimension: AnalyticsDimension,
+	persistedCount: number,
+	liveCount: number,
+): AnalyticsSource {
+	if (dimension === "hourly" || dimension === "daily") {
+		if (persistedCount > 0 && liveCount > 0) {
+			return ANALYTICS_SOURCES.MIXED;
+		}
+
+		if (persistedCount > 0) {
+			return ANALYTICS_SOURCES.DURABLE;
+		}
+	}
+
+	return ANALYTICS_SOURCES.LIVE;
 }
 
 export interface ObservabilityRouteDeps {
@@ -134,24 +159,23 @@ export function registerObservabilityRoutes(
 				);
 			}
 
-			const data =
+			const liveData = analyticsAggregator.query({
+				dimension,
+				from,
+				to,
+				channelId,
+				provider,
+				model,
+			});
+			const persistedData =
 				(dimension === "hourly" || dimension === "daily") && analyticsReader
-					? mergeTimeSeriesData(
-						await analyticsReader.query({ dimension, from, to }),
-						analyticsAggregator.query({
-							dimension,
-							from,
-							to,
-						}),
-					)
-					: analyticsAggregator.query({
-						dimension,
-						from,
-						to,
-						channelId,
-						provider,
-						model,
-					});
+					? await analyticsReader.query({ dimension, from, to })
+					: [];
+			const data =
+				persistedData.length > 0 || (dimension === "hourly" || dimension === "daily")
+					? mergeTimeSeriesData(persistedData, liveData)
+					: liveData;
+			const source = getAnalyticsSource(dimension, persistedData.length, liveData.length);
 
 			const totalRequests = data.reduce((sum, item) => sum + item.requests, 0);
 			const successfulRequests = data.reduce((sum, item) => sum + item.successfulRequests, 0);
@@ -179,6 +203,7 @@ export function registerObservabilityRoutes(
 			return c.json({
 				data,
 				dimension,
+				source,
 				flushStatus: analyticsAggregator.getFlushStatus(),
 				summary: {
 					totalRequests,
