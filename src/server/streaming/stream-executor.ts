@@ -64,6 +64,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 	let outputTokens: number | undefined;
 	let totalTokens: number | undefined;
 	let attempts = 0;
+	const attemptedProviders: string[] = [];
 	let aborted = abortSignal?.aborted ?? false;
 	let abortFinalization: Promise<void> | undefined;
 
@@ -135,6 +136,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						return;
 					}
 
+					attempts = resolveAttemptsFromRouting(result);
 					totalTokens = result.tokensUsed;
 					await finalizeRequestLog({
 						provider: result.resolvedProvider,
@@ -159,6 +161,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 					const { provider, request: resolvedRequest, streamTransformer, onSuccess, recordResult } =
 						resolved;
+					attemptedProviders.push(provider.id);
 					const attemptStartTime = Date.now();
 					let breakerModel = resolvedRequest.model || canonical.model || "unknown";
 					let attemptInputTokens: number | undefined;
@@ -244,6 +247,9 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							resolvedModel: breakerModel,
 							attemptStartTime,
 							project: scope.project,
+							requestedProvider: readCanonicalString(canonical, "provider"),
+							requestedModel: canonical.model,
+							attemptedProviders,
 							attempts,
 							totalTokens,
 							inputTokens,
@@ -313,6 +319,17 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 			}
 		},
 	};
+}
+
+function resolveAttemptsFromRouting(result: {
+	routing?: { attemptedProviders?: string[] };
+}): number {
+	return result.routing?.attemptedProviders?.length ?? 1;
+}
+
+function readCanonicalString(canonical: CanonicalRequest, key: string): string | undefined {
+	const value = canonical[key];
+	return typeof value === "string" ? value : undefined;
 }
 
 function isAbortError(error: unknown): boolean {

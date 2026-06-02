@@ -16,6 +16,9 @@ interface StreamingAttemptTelemetryInput {
 	resolvedModel: string;
 	attemptStartTime: number;
 	project?: string;
+	requestedProvider?: string;
+	requestedModel?: string;
+	attemptedProviders?: string[];
 	attempts?: number;
 	totalTokens?: number;
 	inputTokens?: number;
@@ -72,6 +75,9 @@ export async function finalizeStreamingAttemptSuccess(
 		resolvedModel,
 		attemptStartTime,
 		project,
+		requestedProvider,
+		requestedModel,
+		attemptedProviders,
 		attempts,
 		totalTokens,
 		inputTokens,
@@ -101,11 +107,14 @@ export async function finalizeStreamingAttemptSuccess(
 		totalTokens,
 		inputTokens,
 		outputTokens,
-		responseData: {
-			stream: true,
-			provider: providerId,
-			model: responseModel,
-		},
+		responseData: buildStreamingResponseData({
+			providerId,
+			requestedProvider,
+			requestedModel,
+			resolvedModel,
+			responseModel,
+			attemptedProviders,
+		}),
 	});
 }
 
@@ -157,4 +166,43 @@ export async function finalizeStreamingAttemptFailure(
 	}
 
 	return resolvedError;
+}
+
+interface StreamingResponseDataInput {
+	providerId: string;
+	requestedProvider?: string;
+	requestedModel?: string;
+	resolvedModel: string;
+	responseModel?: string;
+	attemptedProviders?: string[];
+}
+
+function buildStreamingResponseData(input: StreamingResponseDataInput) {
+	const {
+		providerId,
+		requestedProvider,
+		requestedModel,
+		resolvedModel,
+		responseModel,
+		attemptedProviders,
+	} = input;
+	const routing =
+		attemptedProviders && attemptedProviders.length > 0
+			? { attemptedProviders: [...attemptedProviders] }
+			: undefined;
+
+	return {
+		stream: true,
+		provider: providerId,
+		model: responseModel ?? resolvedModel,
+		requestedProvider,
+		requestedModel,
+		resolvedProvider: providerId,
+		resolvedModel,
+		fallbackUsed:
+			attemptedProviders !== undefined && attemptedProviders.length > 0
+				? attemptedProviders[0] !== providerId
+				: false,
+		routing,
+	};
 }

@@ -106,6 +106,12 @@ describe("createStreamExecutor", () => {
 
 	it("falls back to router.generate when no streaming providers resolve", async () => {
 		const events: string[] = [];
+		const logged: Array<{
+			provider?: string;
+			model?: string;
+			attempts?: number;
+			responseData?: unknown;
+		}> = [];
 		const canonical = {
 			model: "test-model",
 			messages: [
@@ -121,10 +127,16 @@ describe("createStreamExecutor", () => {
 			text: "fallback",
 			provider: "mock",
 			model: "test-model",
+			requestedProvider: "preferred",
+			requestedModel: "test-model",
 			resolvedProvider: "mock",
 			resolvedModel: "test-model",
-			fallbackUsed: false,
+			fallbackUsed: true,
 			tokensUsed: 3,
+			routing: {
+				strategy: "failover",
+				attemptedProviders: ["preferred", "mock"],
+			},
 		};
 		const generateRequests: unknown[] = [];
 
@@ -138,7 +150,26 @@ describe("createStreamExecutor", () => {
 				},
 			} as never,
 			scope: { project: "stream-project" },
-		});
+			requestLogger: {
+				captureStart: () => ({}) as never,
+				captureEnd: async (
+					_ctx: unknown,
+					input?: {
+						provider?: string;
+						model?: string;
+						attempts?: number;
+						responseData?: unknown;
+					},
+				) => {
+					logged.push({
+						provider: input?.provider,
+						model: input?.model,
+						attempts: input?.attempts,
+						responseData: input?.responseData,
+					});
+				},
+			} as never,
+			});
 
 		await executor.execute({
 			writeChunk: async () => {
@@ -157,6 +188,112 @@ describe("createStreamExecutor", () => {
 
 		assert.deepEqual(events, ["fallback:fallback", "done"]);
 		assert.deepEqual(generateRequests, [buildChatGenerateRequest(canonical, { project: "stream-project" })]);
+		assert.deepEqual(logged, [
+			{
+				provider: "mock",
+				model: "test-model",
+				attempts: 2,
+				responseData: fallbackResult,
+			},
+		]);
+	});
+
+	it("logs truthful routing metadata for successful streaming requests", async () => {
+		const logged: Array<{
+			provider?: string;
+			model?: string;
+			attempts?: number;
+			responseData?: unknown;
+		}> = [];
+
+		const executor = createStreamExecutor({
+			canonical: {
+				...createCanonicalRequest(),
+				provider: "primary-provider",
+			},
+			router: {
+				resolveStreamingProviders: async () => [
+					{
+						provider: { id: "primary-provider" },
+						request: { model: "primary-model", messages: [] },
+						streamTransformer: {
+							name: "primary-provider",
+							async *transformStream() {
+								throw new Error("primary failed");
+							},
+						},
+						recordResult: () => {},
+					},
+					{
+						provider: { id: "backup-provider" },
+						request: { model: "backup-model", messages: [] },
+						streamTransformer: {
+							name: "backup-provider",
+							async *transformStream() {
+								yield { content: "ok", done: false, model: "backup-model" };
+								yield { content: "", done: true, finishReason: "stop" };
+							},
+						},
+						recordResult: () => {},
+					},
+				],
+				generate: async () => {
+					assert.fail("should not use router.generate");
+				},
+			} as never,
+			requestLogger: {
+				captureStart: () => ({}) as never,
+				captureEnd: async (
+					_ctx: unknown,
+					input?: {
+						provider?: string;
+						model?: string;
+						attempts?: number;
+						responseData?: unknown;
+					},
+				) => {
+					logged.push({
+						provider: input?.provider,
+						model: input?.model,
+						attempts: input?.attempts,
+						responseData: input?.responseData,
+					});
+				},
+			} as never,
+			scope: {},
+		});
+
+		await executor.execute({
+			writeChunk: async () => {},
+			writeFallbackResult: async () => {
+				assert.fail("should not use fallback result");
+			},
+			writeTerminalError: async (error) => {
+				assert.fail(`unexpected terminal error: ${error.message}`);
+			},
+			writeDone: async () => {},
+		});
+
+		assert.deepEqual(logged, [
+			{
+				provider: "backup-provider",
+				model: "backup-model",
+				attempts: 2,
+				responseData: {
+					stream: true,
+					provider: "backup-provider",
+					model: "backup-model",
+					requestedProvider: "primary-provider",
+					requestedModel: "test-model",
+					resolvedProvider: "backup-provider",
+					resolvedModel: "backup-model",
+					fallbackUsed: true,
+					routing: {
+						attemptedProviders: ["primary-provider", "backup-provider"],
+					},
+				},
+			},
+		]);
 	});
 
 	it("reuses shared chat metadata for streaming provider resolution", async () => {
