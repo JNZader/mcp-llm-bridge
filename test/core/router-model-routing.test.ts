@@ -722,6 +722,24 @@ describe('Router + ModelRouter integration', () => {
 
     assert.equal(result.content, 'internal-response');
     assert.equal(result.metadata?.['provider'], providerId);
+    assert.equal(result.metadata?.['requestedModel'], 'internal-model');
+    assert.equal(result.metadata?.['resolvedProvider'], providerId);
+    assert.equal(result.metadata?.['resolvedModel'], 'internal-model');
+    assert.equal(result.metadata?.['fallbackUsed'], false);
+    assert.deepEqual(result.metadata?.['attemptedProviders'], [providerId]);
+    assert.deepEqual(result.metadata?.['routing'], {
+      strategy: 'model-router',
+      classification: {
+        task: 'summarization',
+        confidence: 0.75,
+        shouldOffload: true,
+        reason: 'Matched 1 keyword(s) for summarization',
+      },
+      matchedRuleId: 'rule-1',
+      selectedEndpointId: endpointId,
+      attemptedProviders: [providerId],
+      decisionReason: 'Primary model for summarization',
+    });
     assert.equal(providerRequest?.model, 'internal-model');
 
     assert.equal(feedbacks.length, 1);
@@ -929,6 +947,17 @@ describe('Router + ModelRouter integration', () => {
     });
 
     assert.equal(internal.metadata?.['provider'], 'alpha');
+    assert.equal(internal.metadata?.['requestedProvider'], 'alpha');
+    assert.equal(internal.metadata?.['requestedModel'], 'beta-model');
+    assert.equal(internal.metadata?.['resolvedProvider'], 'alpha');
+    assert.equal(internal.metadata?.['resolvedModel'], 'beta-model');
+    assert.equal(internal.metadata?.['fallbackUsed'], false);
+    assert.deepEqual(internal.metadata?.['attemptedProviders'], ['alpha']);
+    assert.deepEqual(internal.metadata?.['routing'], {
+      strategy: 'explicit-provider',
+      attemptedProviders: ['alpha'],
+      decisionReason: 'Provider alpha requested explicitly',
+    });
     assert.equal(alphaInternalRequest?.provider, 'alpha');
     assert.equal(alphaInternalRequest?.model, 'beta-model');
     assert.equal(streamingCandidates[0]?.provider.id, 'alpha');
@@ -1176,6 +1205,24 @@ describe('Router + ModelRouter integration', () => {
 
     assert.equal(result.content, 'cloud-fallback-response');
     assert.equal(result.metadata?.['provider'], 'cloud');
+    assert.equal(result.metadata?.['requestedModel'], 'cloud-model');
+    assert.equal(result.metadata?.['resolvedProvider'], 'cloud');
+    assert.equal(result.metadata?.['resolvedModel'], 'cloud-model');
+    assert.equal(result.metadata?.['fallbackUsed'], true);
+    assert.deepEqual(result.metadata?.['attemptedProviders'], ['local-llm', 'cloud']);
+    assert.deepEqual(result.metadata?.['routing'], {
+      strategy: 'local-offload',
+      classification: {
+        task: 'summarization',
+        confidence: 0.75,
+        shouldOffload: true,
+        reason: 'Matched 1 keyword(s) for summarization',
+      },
+      attemptedProviders: ['local-llm', 'cloud'],
+      fallbackFrom: 'local-llm',
+      fallbackTo: 'cloud',
+      decisionReason: 'Matched 1 keyword(s) for summarization',
+    });
     assert.deepEqual(callOrder, ['local-llm', 'cloud']);
   });
 

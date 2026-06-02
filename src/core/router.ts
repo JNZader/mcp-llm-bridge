@@ -51,6 +51,7 @@ import {
   buildRoutingMetadata,
   buildGenerateRequest,
   buildInternalRequest,
+  withInternalResolutionMetadata,
   withResolutionMetadata,
 } from './router-shaping.js';
 import {
@@ -461,12 +462,13 @@ export class Router {
    */
   async generateFromInternal(request: InternalLLMRequest): Promise<InternalLLMResponse> {
     if (!this._transformerRegistry) {
-		throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
-	}
+      throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
+    }
 
-	const registry = this._transformerRegistry;
-	const circuitBreaker = getCircuitBreakerV2();
-	const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
+    const registry = this._transformerRegistry;
+    const circuitBreaker = getCircuitBreakerV2();
+    const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
+    const attemptedProviders: string[] = [];
 
     const plan = await buildInternalRoutingPlan({
       providers: this._providers,
@@ -482,6 +484,18 @@ export class Router {
     const { optimizedRequest } = plan;
 
     const model = plan.model;
+    const routingStrategy = determineRoutingStrategy({
+      requestedProvider: plan.requestedProvider,
+      requestedModel: request.model,
+      modelRouterDecision: plan.appliedModelRouterDecision,
+      offloadClassification: plan.offloadClassification,
+    });
+    const decisionReason = determineDecisionReason({
+      requestedProvider: plan.requestedProvider,
+      requestedModel: request.model,
+      modelRouterDecision: plan.appliedModelRouterDecision,
+      offloadClassification: plan.offloadClassification,
+    });
 
     // 1. Check session stickiness
     if (plan.stickySession?.pinnedProviderId) {
@@ -489,6 +503,7 @@ export class Router {
       if (stickyProvider) {
         if (circuitBreaker.canExecute(stickyProvider.id, 'default', plan.routedModel).allowed) {
           try {
+            attemptedProviders.push(stickyProvider.id);
             const result = await tryProvider({
               provider: stickyProvider,
               request: buildInternalRequest(
@@ -501,10 +516,21 @@ export class Router {
                 model: plan.routedModel,
                 classification: plan.classification ?? undefined,
               attempt: 1,
-              routedEndpoint: plan.modelRouterDecision?.endpoint,
-              ...telemetry,
+                routedEndpoint: plan.modelRouterDecision?.endpoint,
+                ...telemetry,
             });
-            return result;
+            return withInternalResolutionMetadata(result, {
+              requestedProvider: plan.requestedProvider,
+              requestedModel: request.model,
+              resolvedProvider: stickyProvider.id,
+              resolvedModel: result.model,
+              fallbackUsed: attemptedProviders[0] !== stickyProvider.id,
+              attemptedProviders,
+              strategy: routingStrategy,
+              classification: plan.classification ?? plan.offloadClassification,
+              modelRouterDecision: plan.appliedModelRouterDecision,
+              decisionReason,
+            });
           } catch {
             // Sticky provider failed — fall through to normal routing
             logger.warn(
@@ -540,8 +566,9 @@ export class Router {
     }
 
     const providerErrors = createProviderErrorAccumulator();
-    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) =>
-      tryProvider({
+    const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) => {
+      attemptedProviders.push(provider.id);
+      return tryProvider({
         provider,
         request: buildInternalRequest(
           optimizedRequest,
@@ -554,7 +581,8 @@ export class Router {
         attempt: index + 1,
         routedEndpoint: plan.modelRouterDecision?.endpoint,
         ...telemetry,
-      }),
+      });
+    },
       (provider, error) => {
         providerErrors.add(provider, error);
       },
@@ -572,7 +600,18 @@ export class Router {
         );
       }
 
-      return attemptedResult.result;
+      return withInternalResolutionMetadata(attemptedResult.result, {
+        requestedProvider: plan.requestedProvider,
+        requestedModel: request.model,
+        resolvedProvider: attemptedResult.provider.id,
+        resolvedModel: attemptedResult.result.model,
+        fallbackUsed: attemptedProviders[0] !== attemptedResult.provider.id,
+        attemptedProviders,
+        strategy: routingStrategy,
+        classification: plan.classification ?? plan.offloadClassification,
+        modelRouterDecision: plan.appliedModelRouterDecision,
+        decisionReason,
+      });
     }
 
     throwAllProvidersFailed(providerErrors.errors);
