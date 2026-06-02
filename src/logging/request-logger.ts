@@ -16,6 +16,7 @@ import { LOG_QUERY_STATUS, type LogContext, type LogQuery, type LogsResponse, ty
 export interface DirectCaptureInput {
   provider: string;
   model: string;
+  correlationId?: string;
   totalTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
@@ -33,6 +34,7 @@ export interface DirectCaptureInput {
 export interface CaptureStartInput {
   provider: string;
   model: string;
+  correlationId?: string;
   startTime?: number;
 }
 
@@ -131,6 +133,7 @@ export class RequestLogger {
       startTime: input.startTime ?? Date.now(),
       provider: input.provider,
       model: input.model,
+      correlationId: input.correlationId,
       requestId: crypto.randomUUID(),
     };
   }
@@ -152,6 +155,7 @@ export class RequestLogger {
       timestamp: context.startTime,
       provider,
       model,
+      correlation_id: context.correlationId ?? null,
       total_tokens: totalTokens ?? null,
       input_tokens: input.inputTokens ?? null,
       output_tokens: input.outputTokens ?? null,
@@ -169,8 +173,8 @@ export class RequestLogger {
         const stmt = this.db.prepare(`
           INSERT INTO request_logs (
             timestamp, provider, model, total_tokens, input_tokens, output_tokens,
-            cost, latency_ms, error, attempts, request_data, response_data
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cost, latency_ms, error, attempts, correlation_id, request_data, response_data
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const result = stmt.run(
@@ -184,6 +188,7 @@ export class RequestLogger {
           logEntry.latency_ms,
           logEntry.error,
           logEntry.attempts,
+          logEntry.correlation_id,
           logEntry.request_data ?? null,
           logEntry.response_data ?? null
         );
@@ -193,6 +198,7 @@ export class RequestLogger {
           timestamp: logEntry.timestamp,
           provider: logEntry.provider,
           model: logEntry.model,
+          correlationId: logEntry.correlation_id ?? undefined,
           totalTokens: this.normalizeOptionalNumber(logEntry.total_tokens),
           inputTokens: this.normalizeOptionalNumber(logEntry.input_tokens),
           outputTokens: this.normalizeOptionalNumber(logEntry.output_tokens),
@@ -218,6 +224,7 @@ export class RequestLogger {
       timestamp: Date.now(),
       provider: input.provider,
       model: input.model,
+      correlation_id: input.correlationId ?? null,
       total_tokens: totalTokens ?? null,
       input_tokens: input.inputTokens ?? null,
       output_tokens: input.outputTokens ?? null,
@@ -234,8 +241,8 @@ export class RequestLogger {
         const stmt = this.db.prepare(`
           INSERT INTO request_logs (
             timestamp, provider, model, total_tokens, input_tokens, output_tokens,
-            cost, latency_ms, error, attempts, request_data, response_data
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cost, latency_ms, error, attempts, correlation_id, request_data, response_data
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const result = stmt.run(
@@ -249,6 +256,7 @@ export class RequestLogger {
           logEntry.latency_ms,
           logEntry.error,
           logEntry.attempts,
+          logEntry.correlation_id,
           logEntry.request_data,
           logEntry.response_data
         );
@@ -258,6 +266,7 @@ export class RequestLogger {
           timestamp: logEntry.timestamp,
           provider: logEntry.provider,
           model: logEntry.model,
+          correlationId: logEntry.correlation_id ?? undefined,
           totalTokens: this.normalizeOptionalNumber(logEntry.total_tokens),
           inputTokens: this.normalizeOptionalNumber(logEntry.input_tokens),
           outputTokens: this.normalizeOptionalNumber(logEntry.output_tokens),
@@ -305,6 +314,11 @@ export class RequestLogger {
       params.push(query.model);
     }
 
+    if (query.correlationId !== undefined) {
+      whereConditions.push('correlation_id = ?');
+      params.push(query.correlationId);
+    }
+
     if (query.status === LOG_QUERY_STATUS.FAILED) {
       whereConditions.push('error IS NOT NULL');
     }
@@ -343,6 +357,7 @@ export class RequestLogger {
             timestamp,
             provider,
             model,
+            correlation_id as correlationId,
             total_tokens as totalTokens,
             input_tokens as inputTokens,
             output_tokens as outputTokens,
@@ -363,6 +378,7 @@ export class RequestLogger {
         // Convert nullable columns to undefined for the public contract.
         const sanitizedLogs = logs.map(log => ({
           ...log,
+          correlationId: log.correlationId || undefined,
           totalTokens: this.normalizeOptionalNumber(log.totalTokens),
           inputTokens: this.normalizeOptionalNumber(log.inputTokens),
           outputTokens: this.normalizeOptionalNumber(log.outputTokens),

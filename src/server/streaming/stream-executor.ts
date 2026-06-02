@@ -29,6 +29,7 @@ export interface CreateStreamExecutorInput {
 	vault?: Vault;
 	requestLogger?: RequestLogger;
 	project?: string;
+	correlationId?: string;
 	abortSignal?: AbortSignal;
 	providerStreamCallFactory?: typeof buildProviderStreamCall;
 }
@@ -46,12 +47,14 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		vault,
 		requestLogger,
 		project,
+		correlationId,
 		abortSignal,
 		providerStreamCallFactory = buildProviderStreamCall,
 	} = input;
 	const { logCtx, finalizeRequestLog } = createStreamingRequestLogFinalizer(
 		requestLogger,
 		canonical.model,
+		correlationId,
 	);
 	const providerAbortController = new AbortController();
 

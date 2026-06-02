@@ -33,6 +33,11 @@ export interface ExecutionRouteDeps {
 	requestLogger?: RequestLogger;
 }
 
+function getCorrelationId(context: Context): string | undefined {
+	const value = (context as { get: (key: string) => unknown }).get("correlationId");
+	return typeof value === "string" ? value : undefined;
+}
+
 /**
  * Handle a streaming chat completion request via SSE.
  *
@@ -50,6 +55,7 @@ function handleStreamingRequest(
 	const chatId = `chatcmpl-${randomUUID()}`;
 	const model = canonical.model ?? "";
 	const project = c.req.header("X-Project") ?? undefined;
+	const requestCorrelationId = getCorrelationId(c);
 
 	return streamSSE(c, async (stream) => {
 		const executor = createStreamExecutor({
@@ -59,6 +65,7 @@ function handleStreamingRequest(
 			vault,
 			requestLogger,
 			project,
+			correlationId: requestCorrelationId,
 			abortSignal: c.req.raw.signal,
 		});
 
@@ -195,6 +202,7 @@ export function registerExecutionRoutes(
 						prepared: preparedRequest,
 						router,
 						project: c.req.header("X-Project") ?? undefined,
+						correlationId: getCorrelationId(c),
 						requestLogger,
 					}),
 				);

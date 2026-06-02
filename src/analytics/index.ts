@@ -15,6 +15,7 @@ export type {
   AnalyticsQuery,
   RecordInput,
   AggregatorConfig,
+  AnalyticsFlushStatus,
   AnalyticsPersistenceData,
   AnalyticsPersistenceReader,
   AnalyticsPersistenceWriter,

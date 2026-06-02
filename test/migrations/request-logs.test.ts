@@ -239,3 +239,27 @@ describe('Migration 001: request_logs table', () => {
     });
   });
 });
+
+describe('Migration 010: request_logs correlation ID column', () => {
+	let runner: MigrationRunner;
+
+	beforeEach(() => {
+		runner = new MigrationRunner({ dbPath: ':memory:' });
+	});
+
+	afterEach(() => {
+		runner.close();
+	});
+
+	it('should add correlation_id column and index', async () => {
+		await runner.runMigration(1);
+		await runner.runMigration(10);
+
+		const columns = runner.getTableInfo('request_logs');
+		const columnMap = new Map(columns.map((column) => [column.name, column.type]));
+		const indexes = runner.getIndexes('request_logs');
+
+		assert.strictEqual(columnMap.get('correlation_id'), 'TEXT');
+		assert.ok(indexes.includes('idx_logs_correlation_id'));
+	});
+});

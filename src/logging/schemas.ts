@@ -16,6 +16,7 @@ export const LogEntrySchema = z.object({
   timestamp: z.number().int().positive(),
   provider: z.string().min(1).max(100),
   model: z.string().min(1).max(200),
+  correlationId: z.string().min(1).max(200).optional(),
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
   cost: z.number().nonnegative(),
@@ -35,6 +36,7 @@ export const LogEntryPublicSchema = LogEntrySchema.pick({
   timestamp: true,
   provider: true,
   model: true,
+  correlationId: true,
   inputTokens: true,
   outputTokens: true,
   cost: true,
@@ -51,6 +53,7 @@ export const LogQuerySchema = z.object({
   to: z.coerce.number().int().positive().optional(),
   provider: z.string().min(1).max(100).optional(),
   model: z.string().min(1).max(200).optional(),
+  correlationId: z.string().min(1).max(200).optional(),
   status: z.enum([
     LOG_QUERY_STATUS.FAILED,
     LOG_QUERY_STATUS.RETRIED,
@@ -89,6 +92,7 @@ export const LogContextSchema = z.object({
   startTime: z.number().int().positive(),
   provider: z.string().min(1),
   model: z.string().min(1),
+  correlationId: z.string().min(1).max(200).optional(),
   requestId: z.string().uuid(),
 });
 

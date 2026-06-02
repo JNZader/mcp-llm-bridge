@@ -44,6 +44,7 @@ function createTestDatabase(): Database.Database {
       latency_ms INTEGER NOT NULL,
       error TEXT,
       attempts INTEGER NOT NULL DEFAULT 1,
+      correlation_id TEXT,
       request_data TEXT,
       response_data TEXT,
       created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
@@ -52,6 +53,7 @@ function createTestDatabase(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON request_logs(timestamp);
     CREATE INDEX IF NOT EXISTS idx_logs_provider ON request_logs(provider);
     CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model);
+    CREATE INDEX IF NOT EXISTS idx_logs_correlation_id ON request_logs(correlation_id);
   `);
   
   return db;
@@ -293,6 +295,7 @@ describe('RequestLogger', () => {
 			await logger.capture({
 				provider: 'openai',
 				model: 'gpt-4.1-mini',
+				correlationId: 'corr-total-only',
 				totalTokens: 33,
 				latencyMs: 250,
 			});
@@ -303,6 +306,27 @@ describe('RequestLogger', () => {
 			assert.strictEqual(row.total_tokens, 33);
 			assert.strictEqual(row.input_tokens, null);
 			assert.strictEqual(row.output_tokens, null);
+			assert.strictEqual(row.correlation_id, 'corr-total-only');
+		});
+
+		it('should persist correlation IDs from captureStart into completed logs', async () => {
+			const context = logger.captureStart({
+				provider: 'openai',
+				model: 'gpt-4o-mini',
+				correlationId: 'corr-capture-end',
+				startTime: mockTimeCounter,
+			});
+
+			const result = await logger.captureEnd(context, {
+				outputTokens: 4,
+			});
+
+			const row = db.prepare('SELECT correlation_id FROM request_logs WHERE id = ?').get(result.id) as {
+				correlation_id: string | null;
+			};
+
+			assert.strictEqual(result.correlationId, 'corr-capture-end');
+			assert.strictEqual(row.correlation_id, 'corr-capture-end');
 		});
   });
 
@@ -465,6 +489,27 @@ describe('RequestLogger', () => {
       assert.deepStrictEqual(result.logs.map((log: any) => log.model), ['slowest-model', 'slow-model']);
       assert.strictEqual(result.total, 2);
     });
+
+		it('should filter logs by correlation ID', async () => {
+			await logger.capture({
+				provider: 'openai',
+				model: 'corr-match-model',
+				correlationId: 'corr-match',
+				latencyMs: 120,
+			});
+			await logger.capture({
+				provider: 'openai',
+				model: 'corr-other-model',
+				correlationId: 'corr-other',
+				latencyMs: 180,
+			});
+
+			const result = await logger.getLogs({ correlationId: 'corr-match' });
+
+			assert.deepStrictEqual(result.logs.map((log: any) => log.model), ['corr-match-model']);
+			assert.strictEqual(result.logs[0]?.correlationId, 'corr-match');
+			assert.strictEqual(result.total, 1);
+		});
   });
 
   describe('Data handling', () => {

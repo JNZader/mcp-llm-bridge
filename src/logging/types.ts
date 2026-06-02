@@ -19,6 +19,9 @@ export interface LogEntry {
   
   /** Model name used */
   model: string;
+
+  /** HTTP correlation ID associated with the request */
+  correlationId?: string;
   
   /** Total tokens consumed when known exactly */
   totalTokens?: number;
@@ -66,6 +69,9 @@ export interface LogEntryPublic {
   
   /** Model name */
   model: string;
+
+  /** HTTP correlation ID associated with the request */
+  correlationId?: string;
   
   /** Total tokens consumed when known exactly */
   totalTokens?: number;
@@ -113,6 +119,9 @@ export interface LogQuery {
   /** Filter by model */
   model?: string;
 
+  /** Filter by HTTP correlation ID */
+  correlationId?: string;
+
   /** Filter by incident-triage status */
   status?: LogQueryStatus;
 
@@ -156,6 +165,9 @@ export interface LogContext {
   
   /** Model name */
   model: string;
+
+  /** HTTP correlation ID associated with the request */
+  correlationId?: string;
   
   /** Request ID for correlation */
   requestId: string;

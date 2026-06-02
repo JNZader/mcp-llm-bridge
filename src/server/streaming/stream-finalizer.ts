@@ -42,10 +42,12 @@ export function normalizeStreamingError(error: unknown): Error {
 export function createStreamingRequestLogFinalizer(
 	requestLogger: RequestLogger | undefined,
 	requestedModel: string | undefined,
+	correlationId?: string,
 ): StreamingRequestLogFinalizer {
 	const logCtx = requestLogger?.captureStart({
 		provider: "unknown",
 		model: requestedModel || "unknown",
+		correlationId,
 		startTime: Date.now(),
 	});
 	let logCompleted = false;

@@ -5,6 +5,11 @@ import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 
+function getCorrelationId(context: Context): string | undefined {
+	const value = (context as { get: (key: string) => unknown }).get("correlationId");
+	return typeof value === "string" ? value : undefined;
+}
+
 function resolveAttemptsFromRouting(result: {
 	routing?: { attemptedProviders?: string[] };
 }): number {
@@ -32,6 +37,7 @@ export async function executeGenerateRequest(
 	const logCtx = requestLogger?.captureStart({
 		provider: validated.provider || "unknown",
 		model: validated.model || "unknown",
+		correlationId: getCorrelationId(context),
 		startTime: now(),
 	});
 

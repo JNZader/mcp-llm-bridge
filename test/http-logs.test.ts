@@ -46,7 +46,7 @@ let logsDb: Database.Database;
 async function request(
   method: string,
   path: string,
-  opts?: { body?: object; auth?: string | null },
+  opts?: { body?: object; auth?: string | null; headers?: Record<string, string> },
 ): Promise<{ status: number; data: unknown; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const bodyStr = opts?.body ? JSON.stringify(opts.body) : undefined;
@@ -63,6 +63,7 @@ async function request(
           'Content-Type': 'application/json',
           ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
           ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
+          ...(opts?.headers ?? {}),
         },
       },
       (res) => {
@@ -90,7 +91,7 @@ async function request(
 async function requestText(
   method: string,
   path: string,
-  opts?: { body?: object; auth?: string | null },
+  opts?: { body?: object; auth?: string | null; headers?: Record<string, string> },
 ): Promise<{ status: number; data: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const bodyStr = opts?.body ? JSON.stringify(opts.body) : undefined;
@@ -106,6 +107,7 @@ async function requestText(
           'Content-Type': 'application/json',
           ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
           ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {}),
+          ...(opts?.headers ?? {}),
         },
       },
       (res) => {
@@ -177,6 +179,7 @@ describe('GET /v1/logs', () => {
         latency_ms INTEGER NOT NULL,
         error TEXT,
         attempts INTEGER NOT NULL DEFAULT 1,
+        correlation_id TEXT,
         request_data TEXT,
         response_data TEXT,
         created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
@@ -185,6 +188,7 @@ describe('GET /v1/logs', () => {
       CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON request_logs(timestamp);
       CREATE INDEX IF NOT EXISTS idx_logs_provider ON request_logs(provider);
       CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(model);
+      CREATE INDEX IF NOT EXISTS idx_logs_correlation_id ON request_logs(correlation_id);
     `);
 
     // Create RequestLogger with the separate database
@@ -313,6 +317,46 @@ describe('GET /v1/logs', () => {
       assert.equal(data.total, 0);
     });
   });
+
+	describe('Filtering by correlation ID', () => {
+		it('should expose and filter logs by correlationId', async () => {
+			const correlationId = 'corr-http-logs-filter';
+
+			const generateRes = await request('POST', '/v1/generate', {
+				body: {
+					model: 'mock-gpt',
+					prompt: 'hello correlation',
+				},
+				headers: {
+					'X-Correlation-ID': correlationId,
+				},
+			});
+
+			assert.ok(generateRes.status === 200 || generateRes.status === 500);
+
+			try {
+				const logsRes = await request('GET', `/v1/logs?correlationId=${correlationId}`);
+				assert.equal(logsRes.status, 200);
+
+				const data = logsRes.data as {
+					total: number;
+					logs: Array<{
+						correlationId?: string;
+						model: string;
+						requestData?: string;
+						responseData?: string;
+					}>;
+				};
+
+				assert.equal(data.total, 1);
+				assert.equal(data.logs[0]?.correlationId, correlationId);
+				assert.ok(!('requestData' in data.logs[0]!));
+				assert.ok(!('responseData' in data.logs[0]!));
+			} finally {
+				logsDb.prepare('DELETE FROM request_logs WHERE correlation_id = ?').run(correlationId);
+			}
+		});
+	});
 
   describe('Filtering by date range', () => {
     it('should filter logs by from timestamp', async () => {
@@ -529,6 +573,7 @@ describe('GET /v1/logs', () => {
           timestamp: number;
           provider: string;
           model: string;
+          correlationId?: string;
           inputTokens: number;
           outputTokens: number;
           cost: number;
@@ -543,6 +588,7 @@ describe('GET /v1/logs', () => {
       assert.ok(typeof log.timestamp === 'number', 'Should have timestamp');
       assert.ok(typeof log.provider === 'string', 'Should have provider');
       assert.ok(typeof log.model === 'string', 'Should have model');
+      assert.ok(log.correlationId === undefined || typeof log.correlationId === 'string', 'Should have optional correlationId');
       assert.ok(typeof log.inputTokens === 'number', 'Should have inputTokens');
       assert.ok(typeof log.outputTokens === 'number', 'Should have outputTokens');
       assert.ok(typeof log.cost === 'number', 'Should have cost');

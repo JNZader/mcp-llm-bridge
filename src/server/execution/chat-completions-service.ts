@@ -35,6 +35,7 @@ interface NonStreamingChatLogger {
 	requestLogger?: RequestLogger;
 	startTimeMs: number;
 	requestedModel?: string;
+	correlationId?: string;
 }
 
 export interface PreparedChatCompletionsRequest {
@@ -46,6 +47,7 @@ export interface ExecuteNonStreamingChatCompletionsInput {
 	prepared: PreparedChatCompletionsRequest;
 	router: Router;
 	project?: string;
+	correlationId?: string;
 	requestLogger?: RequestLogger;
 	now?: () => number;
 	createChatCompletionId?: () => string;
@@ -103,6 +105,7 @@ export async function executeNonStreamingChatCompletions(
 		prepared,
 		router,
 		project,
+		correlationId,
 		requestLogger,
 		now = Date.now,
 		createChatCompletionId = () => `chatcmpl-${randomUUID()}`,
@@ -111,6 +114,7 @@ export async function executeNonStreamingChatCompletions(
 		requestLogger,
 		startTimeMs: now(),
 		requestedModel: prepared.canonicalRequest.model,
+		correlationId,
 	});
 
 	try {
@@ -136,12 +140,13 @@ export async function executeNonStreamingChatCompletions(
 }
 
 function createNonStreamingLogger(input: NonStreamingChatLogger) {
-	const { requestLogger, startTimeMs, requestedModel } = input;
+	const { requestLogger, startTimeMs, requestedModel, correlationId } = input;
 	return {
 		requestLogger,
 		logCtx: requestLogger?.captureStart({
 			provider: "unknown",
 			model: requestedModel || "unknown",
+			correlationId,
 			startTime: startTimeMs,
 		}),
 	};
