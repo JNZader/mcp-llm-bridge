@@ -9,6 +9,7 @@ interface PersistedAnalyticsRow {
 	successfulRequests: number;
 	failedRequests: number;
 	retriedRequests: number;
+	totalTokens: number;
 	inputTokens: number;
 	outputTokens: number;
 	cost: number;
@@ -29,6 +30,7 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 				successful_requests,
 				failed_requests,
 				retried_requests,
+				total_tokens,
 				input_tokens,
 				output_tokens,
 				cost,
@@ -41,6 +43,7 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 				@successfulRequests,
 				@failedRequests,
 				@retriedRequests,
+				@totalTokens,
 				@inputTokens,
 				@outputTokens,
 				@cost,
@@ -53,6 +56,7 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 				successful_requests = excluded.successful_requests,
 				failed_requests = excluded.failed_requests,
 				retried_requests = excluded.retried_requests,
+				total_tokens = excluded.total_tokens,
 				input_tokens = excluded.input_tokens,
 				output_tokens = excluded.output_tokens,
 				cost = excluded.cost,
@@ -68,6 +72,7 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 				successful_requests,
 				failed_requests,
 				retried_requests,
+				total_tokens,
 				input_tokens,
 				output_tokens,
 				cost,
@@ -80,6 +85,7 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 				@successfulRequests,
 				@failedRequests,
 				@retriedRequests,
+				@totalTokens,
 				@inputTokens,
 				@outputTokens,
 				@cost,
@@ -92,6 +98,7 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 				successful_requests = excluded.successful_requests,
 				failed_requests = excluded.failed_requests,
 				retried_requests = excluded.retried_requests,
+				total_tokens = excluded.total_tokens,
 				input_tokens = excluded.input_tokens,
 				output_tokens = excluded.output_tokens,
 				cost = excluded.cost,
@@ -136,6 +143,7 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			successfulRequests: point.successfulRequests,
 			failedRequests: point.failedRequests,
 			retriedRequests: point.retriedRequests,
+			totalTokens: point.totalTokens,
 			inputTokens: point.inputTokens,
 			outputTokens: point.outputTokens,
 			cost: point.cost,

@@ -11,6 +11,7 @@ describe("SQLiteAnalyticsWriter", () => {
 		runner = new MigrationRunner({ dbPath: ":memory:" });
 		await runner.runMigration(2);
 		await runner.runMigration(9);
+		await runner.runMigration(11);
 	});
 
 	afterEach(() => {
@@ -124,6 +125,7 @@ describe("SQLiteAnalyticsWriter", () => {
 		assert.equal(hourlyRows[0]?.successful_requests, 3);
 		assert.equal(hourlyRows[0]?.failed_requests, 2);
 		assert.equal(hourlyRows[0]?.retried_requests, 2);
+		assert.equal(hourlyRows[0]?.total_tokens, 700);
 		assert.equal(hourlyRows[0]?.input_tokens, 450);
 		assert.equal(hourlyRows[0]?.output_tokens, 250);
 		assert.equal(hourlyRows[0]?.avg_latency_ms, 175);
@@ -135,6 +137,7 @@ describe("SQLiteAnalyticsWriter", () => {
 		assert.equal(dailyRows[0]?.successful_requests, 5);
 		assert.equal(dailyRows[0]?.failed_requests, 3);
 		assert.equal(dailyRows[0]?.retried_requests, 2);
+		assert.equal(dailyRows[0]?.total_tokens, 900);
 		assert.equal(dailyRows[0]?.input_tokens, 500);
 		assert.equal(dailyRows[0]?.output_tokens, 400);
 		assert.equal(dailyRows[0]?.avg_latency_ms, 210);
@@ -229,5 +232,68 @@ describe("SQLiteAnalyticsWriter", () => {
 				retryRate: 0.42857142857142855,
 			},
 		]);
+	});
+
+	it("preserves durable totalTokens when input/output splits are unknown", async () => {
+		const db = runner.getDatabase();
+		const writer = new SQLiteAnalyticsWriter(db);
+		const reader = new SQLiteAnalyticsReader(db);
+		const hour = 1_717_200_000_000;
+		const day = 1_717_171_200_000;
+
+		await writer.upsert({
+			flushedAt: Date.now(),
+			hourly: [
+				{
+					timestamp: hour,
+					data: {
+						timestamp: hour,
+						requests: 1,
+						successfulRequests: 1,
+						failedRequests: 0,
+						retriedRequests: 0,
+						totalTokens: 17,
+						inputTokens: 0,
+						outputTokens: 0,
+						cost: 0,
+						avgLatency: 321,
+						errorRate: 0,
+						retryRate: 0,
+					},
+				},
+			],
+			daily: [
+				{
+					timestamp: day,
+					data: {
+						timestamp: day,
+						requests: 1,
+						successfulRequests: 1,
+						failedRequests: 0,
+						retriedRequests: 0,
+						totalTokens: 17,
+						inputTokens: 0,
+						outputTokens: 0,
+						cost: 0,
+						avgLatency: 321,
+						errorRate: 0,
+						retryRate: 0,
+					},
+				},
+			],
+		});
+
+		const hourlyRow = db.prepare("SELECT total_tokens, input_tokens, output_tokens FROM analytics_hourly WHERE hour = ?").get(hour) as Record<string, number>;
+		const dailyRow = db.prepare("SELECT total_tokens, input_tokens, output_tokens FROM analytics_daily WHERE day = ?").get(day) as Record<string, number>;
+
+		assert.equal(hourlyRow.total_tokens, 17);
+		assert.equal(hourlyRow.input_tokens, 0);
+		assert.equal(hourlyRow.output_tokens, 0);
+		assert.equal(dailyRow.total_tokens, 17);
+		assert.equal(dailyRow.input_tokens, 0);
+		assert.equal(dailyRow.output_tokens, 0);
+
+		assert.equal(reader.query({ dimension: "hourly" })[0]?.totalTokens, 17);
+		assert.equal(reader.query({ dimension: "daily" })[0]?.totalTokens, 17);
 	});
 });

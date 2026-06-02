@@ -13,6 +13,7 @@ interface PersistedAnalyticsQueryRow {
 	successfulRequests: number;
 	failedRequests: number;
 	retriedRequests: number;
+	totalTokens: number;
 	inputTokens: number;
 	outputTokens: number;
 	cost: number;
@@ -48,6 +49,7 @@ export class SQLiteAnalyticsReader implements AnalyticsPersistenceReader {
 					successful_requests AS successfulRequests,
 					failed_requests AS failedRequests,
 					retried_requests AS retriedRequests,
+					total_tokens AS totalTokens,
 					input_tokens AS inputTokens,
 					output_tokens AS outputTokens,
 					cost,
@@ -86,7 +88,7 @@ export class SQLiteAnalyticsReader implements AnalyticsPersistenceReader {
 			successfulRequests: row.successfulRequests,
 			failedRequests: row.failedRequests,
 			retriedRequests: row.retriedRequests,
-			totalTokens: row.inputTokens + row.outputTokens,
+			totalTokens: row.totalTokens,
 			inputTokens: row.inputTokens,
 			outputTokens: row.outputTokens,
 			cost: row.cost,

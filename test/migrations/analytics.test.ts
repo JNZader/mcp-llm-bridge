@@ -389,3 +389,64 @@ describe('Migration 002: analytics tables', () => {
     });
   });
 });
+
+describe('Migration 011: analytics total_tokens column', () => {
+	let runner: MigrationRunner;
+
+	beforeEach(() => {
+		runner = new MigrationRunner({ dbPath: ':memory:' });
+	});
+
+	afterEach(() => {
+		runner.close();
+	});
+
+	it('should add total_tokens to hourly and daily analytics tables', async () => {
+		await runner.runMigration(2);
+		await runner.runMigration(9);
+		await runner.runMigration(11);
+
+		const hourlyColumns = new Map(runner.getTableInfo('analytics_hourly').map((column) => [column.name, column.type]));
+		const dailyColumns = new Map(runner.getTableInfo('analytics_daily').map((column) => [column.name, column.type]));
+
+		assert.strictEqual(hourlyColumns.get('total_tokens'), 'INTEGER');
+		assert.strictEqual(dailyColumns.get('total_tokens'), 'INTEGER');
+	});
+
+	it('should backfill total_tokens from input/output token splits', async () => {
+		await runner.runMigration(2);
+		await runner.runMigration(9);
+
+		const db = runner.getDatabase();
+		db.prepare(`
+			INSERT INTO analytics_hourly (
+				hour,
+				requests,
+				successful_requests,
+				failed_requests,
+				retried_requests,
+				input_tokens,
+				output_tokens
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`).run(1_717_200_000_000, 1, 1, 0, 0, 11, 6);
+		db.prepare(`
+			INSERT INTO analytics_daily (
+				day,
+				requests,
+				successful_requests,
+				failed_requests,
+				retried_requests,
+				input_tokens,
+				output_tokens
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`).run(1_717_158_400_000, 1, 1, 0, 0, 9, 8);
+
+		await runner.runMigration(11);
+
+		const hourlyRow = db.prepare('SELECT total_tokens FROM analytics_hourly LIMIT 1').get() as { total_tokens: number };
+		const dailyRow = db.prepare('SELECT total_tokens FROM analytics_daily LIMIT 1').get() as { total_tokens: number };
+
+		assert.strictEqual(hourlyRow.total_tokens, 17);
+		assert.strictEqual(dailyRow.total_tokens, 17);
+	});
+});

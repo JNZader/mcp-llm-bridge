@@ -927,6 +927,7 @@ describe('GET /v1/analytics', () => {
 		const runner = new MigrationRunner({ dbPath: ':memory:' });
 			await runner.runMigration(2);
 			await runner.runMigration(9);
+			await runner.runMigration(11);
 			const db = runner.getDatabase();
 			const writer = new SQLiteAnalyticsWriter(db);
 			const reader = new SQLiteAnalyticsReader(db);
@@ -1050,6 +1051,7 @@ describe('GET /v1/analytics', () => {
 			const firstRunner = new MigrationRunner({ dbPath });
 			await firstRunner.runMigration(2);
 			await firstRunner.runMigration(9);
+			await firstRunner.runMigration(11);
 
 			const persistentAggregator = new AnalyticsAggregator({
 				persistenceWriter: new SQLiteAnalyticsWriter(firstRunner.getDatabase()),
@@ -1154,6 +1156,7 @@ describe('GET /v1/analytics', () => {
 				const runner = new MigrationRunner({ dbPath: ':memory:' });
 				await runner.runMigration(2);
 				await runner.runMigration(9);
+				await runner.runMigration(11);
 				const db = runner.getDatabase();
 				const writer = new SQLiteAnalyticsWriter(db);
 				const reader = new SQLiteAnalyticsReader(db);
@@ -1263,6 +1266,7 @@ describe('GET /v1/analytics', () => {
 				const runner = new MigrationRunner({ dbPath: ':memory:' });
 				await runner.runMigration(2);
 				await runner.runMigration(9);
+				await runner.runMigration(11);
 				const db = runner.getDatabase();
 				const writer = new SQLiteAnalyticsWriter(db);
 				const reader = new SQLiteAnalyticsReader(db);
