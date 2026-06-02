@@ -140,6 +140,8 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
   const outbound = registry.getOutbound(provider.id);
   const attemptedModel = request.model ?? model;
   const feedbackEndpointId = resolveFeedbackEndpointId(provider, attemptedModel, routedEndpoint);
+  const project =
+    typeof request.metadata?.['project'] === 'string' ? request.metadata['project'] : undefined;
 
   if (!outbound) {
     const cliOutbound = registry.getOutbound('cli');
@@ -155,6 +157,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
           system,
           model: attemptedModel,
           maxTokens: request.maxTokens,
+          project,
         });
 
         circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
@@ -171,6 +174,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
           latencyMs,
           true,
           attempt,
+          project,
         );
         if (classification) {
           recordModelFeedback(feedbackEndpointId, classification, true, latencyMs, routedEndpoint?.id);
@@ -180,7 +184,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - attemptStartTime;
-        recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, undefined, message);
+        recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, project, message);
         if (classification) {
           recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
         }
@@ -203,6 +207,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       model: attemptedModel,
       maxTokens: request.maxTokens,
       provider: provider.id,
+      project,
     };
 
     const result = await provider.generate(adapterRequest);
@@ -235,6 +240,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       latencyMs,
       true,
       attempt,
+      project,
     );
     if (classification) {
       recordModelFeedback(feedbackEndpointId, classification, true, latencyMs, routedEndpoint?.id);
@@ -244,7 +250,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
     const message = error instanceof Error ? error.message : String(error);
     const latencyMs = Date.now() - attemptStartTime;
-    recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, undefined, message);
+    recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, project, message);
     if (classification) {
       recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
     }

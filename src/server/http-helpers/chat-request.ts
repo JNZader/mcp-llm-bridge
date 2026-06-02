@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 
+import type { InternalLLMRequest } from "../../core/internal-model.js";
 import type { ChatCompletionsRequest } from "../../core/schemas.js";
 import type { GenerateRequest } from "../../core/types.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
@@ -47,6 +48,33 @@ function getOptionalCanonicalBoolean(
 	if (!(key in request)) return false;
 	const value = (request as Record<string, unknown>)[key];
 	return value === true;
+}
+
+function buildChatInternalMetadata(
+	request: CanonicalRequest | ChatCompletionsRequest,
+	project?: string,
+): Record<string, unknown> | undefined {
+	const metadata: Record<string, unknown> = {};
+	const provider = getOptionalCanonicalString(request, "provider");
+
+	if (provider) {
+		metadata["provider"] = provider;
+	}
+
+	const clientId = getOptionalCanonicalString(request, "clientId");
+	if (clientId) {
+		metadata["clientId"] = clientId;
+	}
+
+	if (getOptionalCanonicalBoolean(request, "strict")) {
+		metadata["strict"] = true;
+	}
+
+	if (project) {
+		metadata["project"] = project;
+	}
+
+	return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
 export function buildChatGenerateRequestFromMessages(
@@ -97,6 +125,28 @@ export function buildChatGenerateRequestFromMessages(
 			? { strict: true }
 			: {}),
 		project,
+	};
+}
+
+export function buildChatInternalRequestFromMessages(
+	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
+	messages: readonly ChatGenerateMessage[],
+	project?: string,
+): InternalLLMRequest {
+	const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
+
+	if (!lastUserMessage) {
+		throw new Error(CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED);
+	}
+
+	return {
+		messages: messages.map((message) => ({
+			role: message.role,
+			content: message.content,
+		})),
+		model: canonicalRequest.model,
+		maxTokens: canonicalRequest.max_tokens,
+		metadata: buildChatInternalMetadata(canonicalRequest, project),
 	};
 }
 

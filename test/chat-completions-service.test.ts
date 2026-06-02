@@ -74,19 +74,26 @@ describe("chat-completions-service", () => {
 				},
 			} as never,
 			router: {
-				generate: async (request: unknown) => {
+				generateFromInternal: async (request: unknown) => {
 					captured.push({ phase: "generate", request: request as Record<string, unknown> });
 					return {
-						text: "Strict mode catches more bugs.",
-						provider: "mock-provider",
+						content: "Strict mode catches more bugs.",
 						model: "gpt-4o-mini",
-						tokensUsed: 9,
-						requestedProvider: "openai",
-						requestedModel: "gpt-4o-mini",
-						resolvedProvider: "mock-provider",
-						resolvedModel: "gpt-4o-mini",
-						fallbackUsed: false,
-						routing: { strategy: "mock", attemptedProviders: ["mock-provider"] },
+						finishReason: "stop",
+						usage: {
+							inputTokens: 0,
+							outputTokens: 9,
+							totalTokens: 9,
+						},
+						metadata: {
+							provider: "mock-provider",
+							requestedProvider: "openai",
+							requestedModel: "gpt-4o-mini",
+							resolvedProvider: "mock-provider",
+							resolvedModel: "gpt-4o-mini",
+							fallbackUsed: false,
+							routing: { strategy: "mock", attemptedProviders: ["mock-provider"] },
+						},
 					};
 				},
 			} as never,
@@ -97,16 +104,22 @@ describe("chat-completions-service", () => {
 				phase: "start",
 				provider: "unknown",
 				model: "gpt-4o-mini",
+				correlationId: undefined,
 				startTime: 1_700_000_000_000,
 			},
 			{
 				phase: "generate",
 				request: {
-					prompt: "assistant: What do you need?\nuser: Explain strict mode",
-					system: "Be terse.",
+					messages: [
+						{ role: "system", content: "Be terse." },
+						{ role: "assistant", content: "What do you need?" },
+						{ role: "user", content: "Explain strict mode" },
+					],
 					model: "gpt-4o-mini",
 					maxTokens: 42,
-					project: "project-alpha",
+					metadata: {
+						project: "project-alpha",
+					},
 				},
 			},
 			{
@@ -178,16 +191,20 @@ describe("chat-completions-service", () => {
 				},
 			} as never,
 			router: {
-				generate: async () => ({
-					text: "done",
-					provider: "mock-provider",
+				generateFromInternal: async () => ({
+					content: "done",
 					model: "gpt-4o-mini",
-					resolvedProvider: "mock-provider",
-					resolvedModel: "gpt-4o-mini",
-					fallbackUsed: true,
-					routing: {
-						strategy: "mock",
-						attemptedProviders: ["first-provider", "second-provider", "mock-provider"],
+					finishReason: "stop",
+					usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+					metadata: {
+						provider: "mock-provider",
+						resolvedProvider: "mock-provider",
+						resolvedModel: "gpt-4o-mini",
+						fallbackUsed: true,
+						routing: {
+							strategy: "mock",
+							attemptedProviders: ["first-provider", "second-provider", "mock-provider"],
+						},
 					},
 				}),
 			} as never,

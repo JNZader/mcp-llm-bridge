@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 
 import type { ChatCompletionsRequest } from "../../core/schemas.js";
 import type { Router } from "../../core/router.js";
-import type { GenerateResponse } from "../../core/types.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import {
 	createCanonicalResponse,
@@ -12,7 +11,7 @@ import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
 import {
 	type ChatGenerateMessage,
-	buildChatGenerateRequestFromMessages,
+	buildChatInternalRequestFromMessages,
 } from "../http-helpers/chat-request.js";
 
 interface GatewayMetadataInput {
@@ -22,7 +21,15 @@ interface GatewayMetadataInput {
 	resolvedModel?: string;
 	fallbackUsed?: boolean;
 	tokensUsed?: number;
-	routing?: unknown;
+	routing?: { attemptedProviders?: string[] } & Record<string, unknown>;
+}
+
+interface NonStreamingChatResult extends GatewayMetadataInput {
+	text: string;
+	provider: string;
+	model: string;
+	resolvedProvider: string;
+	resolvedModel: string;
 }
 
 function resolveAttemptsFromRouting(result: {
@@ -118,11 +125,13 @@ export async function executeNonStreamingChatCompletions(
 	});
 
 	try {
-		const result = await router.generate(
-			buildChatGenerateRequestFromMessages(
-				prepared.canonicalRequest,
-				prepared.optimizedCanonicalRequest.messages,
-				project,
+		const result = mapInternalResultToNonStreamingChatResult(
+			await router.generateFromInternal(
+				buildChatInternalRequestFromMessages(
+					prepared.canonicalRequest,
+					prepared.optimizedCanonicalRequest.messages,
+					project,
+				),
 			),
 		);
 
@@ -154,7 +163,7 @@ function createNonStreamingLogger(input: NonStreamingChatLogger) {
 
 async function finalizeNonStreamingSuccess(
 	logger: ReturnType<typeof createNonStreamingLogger>,
-	result: GenerateResponse,
+	result: NonStreamingChatResult,
 ) {
 	if (!logger.logCtx || !logger.requestLogger) {
 		return;
@@ -184,7 +193,7 @@ async function finalizeNonStreamingFailure(
 }
 
 function buildNonStreamingChatResponse(input: {
-	result: GenerateResponse;
+	result: NonStreamingChatResult;
 	createdAtSeconds: number;
 	chatId: string;
 }) {
@@ -202,6 +211,53 @@ function buildNonStreamingChatResponse(input: {
 		created: createdAtSeconds,
 		x_gateway: buildGatewayMetadata(result),
 	};
+}
+
+function mapInternalResultToNonStreamingChatResult(
+	result: {
+		content: string;
+		model: string;
+		usage: { totalTokens: number };
+		metadata?: Record<string, unknown>;
+	},
+): NonStreamingChatResult {
+	const metadata = result.metadata ?? {};
+	const provider = readMetadataString(metadata, "provider") ?? "unknown";
+	const resolvedProvider =
+		readMetadataString(metadata, "resolvedProvider") ?? provider;
+	const resolvedModel =
+		readMetadataString(metadata, "resolvedModel") ?? result.model;
+
+	return {
+		text: result.content,
+		provider,
+		model: result.model,
+		tokensUsed: result.usage.totalTokens,
+		requestedProvider: readMetadataString(metadata, "requestedProvider"),
+		requestedModel: readMetadataString(metadata, "requestedModel"),
+		resolvedProvider,
+		resolvedModel,
+		fallbackUsed: metadata["fallbackUsed"] === true,
+		routing: readRoutingMetadata(metadata["routing"]),
+	};
+}
+
+function readMetadataString(
+	metadata: Record<string, unknown>,
+	key: string,
+): string | undefined {
+	const value = metadata[key];
+	return typeof value === "string" ? value : undefined;
+}
+
+function readRoutingMetadata(
+	value: unknown,
+): ({ attemptedProviders?: string[] } & Record<string, unknown>) | undefined {
+	if (!value || typeof value !== "object") {
+		return undefined;
+	}
+
+	return value as { attemptedProviders?: string[] } & Record<string, unknown>;
 }
 
 function buildGatewayMetadata(result: GatewayMetadataInput) {

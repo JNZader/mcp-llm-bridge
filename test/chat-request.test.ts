@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import type { ChatCompletionsRequest } from "../src/core/schemas.js";
 import {
 	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
+	buildChatInternalRequestFromMessages,
 	prepareChatGenerateRequest,
 } from "../src/server/http-helpers/chat-request.js";
 
@@ -66,6 +67,40 @@ describe("prepareChatGenerateRequest", () => {
 					createContext(),
 				),
 				new Error(CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED),
+		);
+	});
+
+	it("builds an internal request with routing metadata from optimized chat messages", () => {
+		assert.deepEqual(
+			buildChatInternalRequestFromMessages(
+				{
+					model: "gpt-4o",
+					max_tokens: 99,
+					provider: "openai",
+					strict: true,
+					clientId: "client-123",
+					messages: [{ role: "user", content: "ignored by helper" }],
+				},
+				[
+					{ role: "system", content: "Be concise" },
+					{ role: "user", content: "Explain strict mode" },
+				],
+				"project-alpha",
+			),
+			{
+				messages: [
+					{ role: "system", content: "Be concise" },
+					{ role: "user", content: "Explain strict mode" },
+				],
+				model: "gpt-4o",
+				maxTokens: 99,
+				metadata: {
+					provider: "openai",
+					clientId: "client-123",
+					strict: true,
+					project: "project-alpha",
+				},
+			},
 		);
 	});
 });
