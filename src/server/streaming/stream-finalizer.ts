@@ -38,6 +38,11 @@ interface StreamingAttemptFailureInput extends StreamingAttemptTelemetryInput {
 	finalizeRequestLog: (input?: CaptureEndInput) => Promise<void>;
 }
 
+interface StreamingAttemptAbortInput extends StreamingAttemptTelemetryInput {
+	error: unknown;
+	finalizeRequestLog: (input?: CaptureEndInput) => Promise<void>;
+}
+
 export function normalizeStreamingError(error: unknown): Error {
 	return error instanceof Error ? error : new Error(String(error));
 }
@@ -164,6 +169,51 @@ export async function finalizeStreamingAttemptFailure(
 			error: resolvedError,
 		});
 	}
+
+	return resolvedError;
+}
+
+export async function finalizeStreamingAttemptAbort(
+	input: StreamingAttemptAbortInput,
+): Promise<Error> {
+	const {
+		providerId,
+		resolvedModel,
+		attemptStartTime,
+		project,
+		attempts,
+		totalTokens,
+		inputTokens,
+		outputTokens,
+		streamRecorder,
+		recordResult,
+		error,
+		finalizeRequestLog,
+	} = input;
+	const resolvedError = normalizeStreamingError(error);
+	const message = resolvedError.message;
+
+	streamRecorder?.finish(message);
+	recordResult?.({
+		model: resolvedModel,
+		totalTokens,
+		tokensIn: inputTokens,
+		tokensOut: outputTokens,
+		latencyMs: Date.now() - attemptStartTime,
+		success: false,
+		attempt: attempts,
+		project,
+		errorMessage: message,
+	});
+	await finalizeRequestLog({
+		provider: providerId,
+		model: resolvedModel,
+		attempts,
+		totalTokens,
+		inputTokens,
+		outputTokens,
+		error: resolvedError,
+	});
 
 	return resolvedError;
 }

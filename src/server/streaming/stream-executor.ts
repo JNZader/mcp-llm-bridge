@@ -1,6 +1,6 @@
 import type { CostTracker } from "../../core/cost-tracker.js";
 import type { InternalLLMRequest } from "../../core/internal-model.js";
-import type { Router } from "../../core/router.js";
+import type { ResolvedStreamingProvider, Router } from "../../core/router.js";
 import type { GenerateResponse } from "../../core/types.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
@@ -14,6 +14,7 @@ import type { RequestScope } from "../http-helpers/request-scope.js";
 import { buildProviderStreamCall } from "./provider-stream-client.js";
 import {
 	createStreamingRequestLogFinalizer,
+	finalizeStreamingAttemptAbort,
 	finalizeStreamingAttemptFailure,
 	finalizeStreamingAttemptSuccess,
 	normalizeStreamingError,
@@ -67,6 +68,21 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 	const attemptedProviders: string[] = [];
 	let aborted = abortSignal?.aborted ?? false;
 	let abortFinalization: Promise<void> | undefined;
+	let activeProviderId: string | undefined;
+	let activeResolvedModel: string | undefined;
+	let activeAttemptStartTime: number | undefined;
+	let activeStreamRecorder:
+		| ReturnType<NonNullable<CostTracker["recordStream"]>>
+		| undefined;
+	let activeRecordResult: ResolvedStreamingProvider["recordResult"] | undefined;
+
+	const clearActiveAttemptTelemetry = () => {
+		activeProviderId = undefined;
+		activeResolvedModel = undefined;
+		activeAttemptStartTime = undefined;
+		activeStreamRecorder = undefined;
+		activeRecordResult = undefined;
+	};
 
 	const internalRequest: InternalLLMRequest = buildChatInternalRequestFromMessages(
 		canonical,
@@ -83,15 +99,34 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 			providerAbortController.abort();
 		}
 
-		abortFinalization ??= finalizeRequestLog({
-			attempts,
-			totalTokens,
-			inputTokens,
-			outputTokens,
-			error: new Error("Stream aborted by client"),
-		});
+		const abortError = new Error("Stream aborted by client");
+
+		abortFinalization ??=
+			activeProviderId && activeResolvedModel && activeAttemptStartTime
+				? finalizeStreamingAttemptAbort({
+						providerId: activeProviderId,
+						resolvedModel: activeResolvedModel,
+						attemptStartTime: activeAttemptStartTime,
+						project: scope.project,
+						attempts,
+						totalTokens,
+						inputTokens,
+						outputTokens,
+						streamRecorder: activeStreamRecorder,
+						recordResult: activeRecordResult,
+						error: abortError,
+						finalizeRequestLog,
+					}).then(() => undefined)
+				: finalizeRequestLog({
+						attempts,
+						totalTokens,
+						inputTokens,
+						outputTokens,
+						error: abortError,
+					});
 
 		await abortFinalization;
+		clearActiveAttemptTelemetry();
 	};
 
 	const onAbort = () => {
@@ -179,6 +214,11 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						breakerModel,
 						scope.project,
 					);
+					activeProviderId = provider.id;
+					activeResolvedModel = breakerModel;
+					activeAttemptStartTime = attemptStartTime;
+					activeStreamRecorder = streamRecorder;
+					activeRecordResult = recordResult;
 
 					try {
 						const providerCall = providerStreamCallFactory(
@@ -201,15 +241,23 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 							if (chunk.tokensIn !== undefined) {
 								attemptInputTokens = chunk.tokensIn;
+								inputTokens = chunk.tokensIn;
 							}
 							if (chunk.tokensOut !== undefined) {
 								attemptOutputTokens = chunk.tokensOut;
+								outputTokens = chunk.tokensOut;
 							}
+							totalTokens =
+								typeof inputTokens === "number" && typeof outputTokens === "number"
+									? inputTokens + outputTokens
+									: undefined;
 							if (chunk.model && logCtx) {
 								logCtx.model = chunk.model;
 								breakerModel = chunk.model;
+								activeResolvedModel = chunk.model;
 							} else if (chunk.model) {
 								breakerModel = chunk.model;
+								activeResolvedModel = chunk.model;
 							}
 
 							const chunkHasContent = chunk.content.length > 0;
@@ -259,6 +307,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							finalizeRequestLog,
 							responseModel: logCtx?.model,
 						});
+						clearActiveAttemptTelemetry();
 						onSuccess?.();
 						return;
 					} catch (error) {
@@ -291,6 +340,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							emittedMeaningfulContent,
 							finalizeRequestLog,
 						});
+						clearActiveAttemptTelemetry();
 
 						if (!emittedMeaningfulContent) {
 							lastStreamingError = resolvedError;

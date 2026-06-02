@@ -7,6 +7,7 @@ import { SessionManager } from "../src/session/index.js";
 import { TransformerRegistry } from "../src/core/transformer.js";
 import type { GenerateResponse } from "../src/core/types.js";
 import type { LLMProvider, ModelInfo } from "../src/core/types.js";
+import type { ResolvedStreamingProvider } from "../src/core/router.js";
 import { buildChatGenerateRequest } from "../src/server/http-helpers/chat-request.js";
 import { createStreamExecutor } from "../src/server/streaming/stream-executor.js";
 import type { InternalLLMChunk } from "../src/transformers/streaming.js";
@@ -512,7 +513,26 @@ describe("createStreamExecutor", () => {
 
 	it("finalizes locally, aborts upstream, and stops processing chunks after abort", async () => {
 		const observedChunks: string[] = [];
-		const loggedErrors: Error[] = [];
+		const loggedEnds: Array<{
+			provider?: string;
+			model?: string;
+			attempts?: number;
+			inputTokens?: number;
+			outputTokens?: number;
+			totalTokens?: number;
+			error?: Error;
+		}> = [];
+		const recordedResults: Array<{
+			model?: string;
+			totalTokens?: number;
+			tokensIn?: number;
+			tokensOut?: number;
+			latencyMs: number;
+			success: boolean;
+			attempt?: number;
+			project?: string;
+			errorMessage?: string;
+		}> = [];
 		const passedSignals: AbortSignal[] = [];
 		let releaseExtraChunks: (() => void) | undefined;
 		let executor: ReturnType<typeof createStreamExecutor>;
@@ -534,27 +554,46 @@ describe("createStreamExecutor", () => {
 								_request: unknown,
 								providerCall: (request: unknown) => AsyncIterable<unknown>,
 							) {
-								for await (const chunk of providerCall({})) {
-									yield chunk as InternalLLMChunk;
-								}
-							},
+							for await (const chunk of providerCall({})) {
+								yield chunk as InternalLLMChunk;
+							}
 						},
-						recordResult: () => {},
 					},
-				],
+					recordResult: (input: Parameters<ResolvedStreamingProvider["recordResult"]>[0]) => {
+						recordedResults.push(input);
+					},
+				},
+			],
 				generate: async () => {
 					assert.fail("should not use router.generate");
 				},
 			} as never,
 			requestLogger: {
 				captureStart: () => ({}) as never,
-				captureEnd: async (_ctx: unknown, input?: { error?: Error }) => {
-					if (input?.error instanceof Error) {
-						loggedErrors.push(input.error);
-					}
+				captureEnd: async (
+					_ctx: unknown,
+					input?: {
+						provider?: string;
+						model?: string;
+						attempts?: number;
+						inputTokens?: number;
+						outputTokens?: number;
+						totalTokens?: number;
+						error?: Error;
+					},
+				) => {
+					loggedEnds.push({
+						provider: input?.provider,
+						model: input?.model,
+						attempts: input?.attempts,
+						inputTokens: input?.inputTokens,
+						outputTokens: input?.outputTokens,
+						totalTokens: input?.totalTokens,
+						error: input?.error,
+					});
 				},
 			} as never,
-			scope: {},
+			scope: { project: "abort-project" },
 			providerStreamCallFactory,
 		});
 
@@ -578,8 +617,27 @@ describe("createStreamExecutor", () => {
 		});
 
 		assert.deepEqual(observedChunks, ["first"]);
-		assert.equal(loggedErrors.length, 1);
-		assert.equal(loggedErrors[0]?.message, "Stream aborted by client");
+		assert.deepEqual(loggedEnds, [
+			{
+				provider: "abortable-provider",
+				model: "abort-model",
+				attempts: 1,
+				inputTokens: 2,
+				outputTokens: 3,
+				totalTokens: 5,
+				error: new Error("Stream aborted by client"),
+			},
+		]);
+		assert.equal(recordedResults.length, 1);
+		assert.equal(recordedResults[0]?.model, "abort-model");
+		assert.equal(recordedResults[0]?.tokensIn, 2);
+		assert.equal(recordedResults[0]?.tokensOut, 3);
+		assert.equal(recordedResults[0]?.totalTokens, 5);
+		assert.equal(recordedResults[0]?.success, false);
+		assert.equal(recordedResults[0]?.attempt, 1);
+		assert.equal(recordedResults[0]?.project, "abort-project");
+		assert.equal(recordedResults[0]?.errorMessage, "Stream aborted by client");
+		assert.ok((recordedResults[0]?.latencyMs ?? 0) >= 0);
 		assert.equal(passedSignals.length, 1);
 		assert.equal(passedSignals[0]?.aborted, true);
 
@@ -600,7 +658,7 @@ describe("createStreamExecutor", () => {
 
 			return () => ({
 				[Symbol.asyncIterator]: async function* () {
-					yield { content: "first", done: false };
+					yield { content: "first", done: false, model: "abort-model", tokensIn: 2, tokensOut: 3 };
 					await extraChunksReady;
 					if (signal.aborted) {
 						throw createAbortError();
