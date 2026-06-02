@@ -17,6 +17,7 @@ import {
 	getTrustedProxyIps,
 	isMultiTenantEnabled,
 } from "../core/http-runtime-config.js";
+import { startHttpTimer } from "../core/metrics.js";
 import type { Router } from "../core/router.js";
 import type { GatewayConfig, TrustLevel } from "../core/types.js";
 import type { FreeModelRouter } from "../free-models/router.js";
@@ -208,6 +209,37 @@ function rateLimitMiddleware(limiter: RateLimiter) {
 	};
 }
 
+function normalizeMetricsPath(path: string): string {
+	const patterns: Array<[RegExp, string]> = [
+		[/^\/v1\/credentials\/[^/]+$/, '/v1/credentials/:id'],
+		[/^\/v1\/files\/[^/]+$/, '/v1/files/:id'],
+		[/^\/v1\/admin\/profiles\/[^/]+$/, '/v1/admin/profiles/:project'],
+		[/^\/v1\/admin\/keys\/[^/]+$/, '/v1/admin/keys/:id'],
+		[/^\/v1\/admin\/reset-circuit-breaker\/[^/]+$/, '/v1/admin/reset-circuit-breaker/:provider'],
+		[/^\/v1\/groups\/[^/]+$/, '/v1/groups/:id'],
+	];
+
+	for (const [pattern, replacement] of patterns) {
+		if (pattern.test(path)) {
+			return replacement;
+		}
+	}
+
+	return path;
+}
+
+async function httpMetrics(c: Context, next: Next): Promise<void> {
+	const end = startHttpTimer(c.req.method, normalizeMetricsPath(c.req.path));
+
+	try {
+		await next();
+		end(c.res.status || 200);
+	} catch (error) {
+		end(500);
+		throw error;
+	}
+}
+
 function registerHttpRoutes(app: Hono, deps: CreateHttpAppDeps): void {
 	const {
 		router,
@@ -283,6 +315,7 @@ export function createHttpApp(deps: CreateHttpAppDeps): Hono {
 	const rateLimiter = new RateLimiter();
 
 	app.use(compress());
+	app.use("*", httpMetrics);
 	app.use(requestTimeout);
 	app.use(correlationId);
 	app.use("*", rateLimitMiddleware(rateLimiter));

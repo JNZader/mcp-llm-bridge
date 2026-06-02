@@ -261,4 +261,28 @@ describe('Prometheus LLM metrics', () => {
       /llm_tokens_used_total\{provider="stream-provider",model="stream-model"\} 18(?:\.0)?/,
     );
   });
+
+	it('records HTTP 4xx responses and strips query strings from path labels', async () => {
+		const response = await requestJson('POST', '/v1/generate', {});
+
+		assert.equal(response.status, 400);
+
+		await requestJson('GET', '/health?dimension=hourly');
+
+		const metrics = await getMetrics();
+
+		assert.match(
+			metrics,
+			/http_requests_total\{method="POST",path="\/v1\/generate",status="4xx"\} 1(?:\.0)?/,
+		);
+		assert.match(
+			metrics,
+			/http_request_duration_seconds_count\{method="POST",path="\/v1\/generate"\} 1(?:\.0)?/,
+		);
+		assert.match(
+			metrics,
+			/http_requests_total\{method="GET",path="\/health",status="2xx"\} 1(?:\.0)?/,
+		);
+		assert.doesNotMatch(metrics, /dimension=hourly/);
+	});
 });
