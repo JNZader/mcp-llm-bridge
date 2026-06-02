@@ -40,6 +40,7 @@ import { registerPublicRoutes } from "./routes/public.js";
 import { registerStorageRoutes } from "./routes/storage.js";
 import { registerToolingRoutes } from "./routes/tooling.js";
 import { registerUsageRoutes } from "./routes/usage.js";
+import { normalizeMetricsPath } from "./http-helpers/metrics-path.js";
 
 /** Request timeout in milliseconds (2 minutes). */
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -207,25 +208,6 @@ function rateLimitMiddleware(limiter: RateLimiter) {
 
 		await next();
 	};
-}
-
-function normalizeMetricsPath(path: string): string {
-	const patterns: Array<[RegExp, string]> = [
-		[/^\/v1\/credentials\/[^/]+$/, '/v1/credentials/:id'],
-		[/^\/v1\/files\/[^/]+$/, '/v1/files/:id'],
-		[/^\/v1\/admin\/profiles\/[^/]+$/, '/v1/admin/profiles/:project'],
-		[/^\/v1\/admin\/keys\/[^/]+$/, '/v1/admin/keys/:id'],
-		[/^\/v1\/admin\/reset-circuit-breaker\/[^/]+$/, '/v1/admin/reset-circuit-breaker/:provider'],
-		[/^\/v1\/groups\/[^/]+$/, '/v1/groups/:id'],
-	];
-
-	for (const [pattern, replacement] of patterns) {
-		if (pattern.test(path)) {
-			return replacement;
-		}
-	}
-
-	return path;
 }
 
 async function httpMetrics(c: Context, next: Next): Promise<void> {
