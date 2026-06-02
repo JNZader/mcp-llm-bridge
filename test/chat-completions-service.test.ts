@@ -44,7 +44,7 @@ describe("chat-completions-service", () => {
 
 		const response = await executeNonStreamingChatCompletions({
 			prepared,
-			project: "project-alpha",
+			scope: { project: "project-alpha" },
 			now: () => 1_700_000_000_000,
 			createChatCompletionId: () => "chatcmpl-test",
 			requestLogger: {
@@ -184,6 +184,7 @@ describe("chat-completions-service", () => {
 
 		await executeNonStreamingChatCompletions({
 			prepared,
+			scope: {},
 			requestLogger: {
 				captureStart: () => ({ provider: "unknown", model: "gpt-4o-mini", startTime: 0 }) as never,
 				captureEnd: async (_ctx: unknown, input?: { attempts?: number }) => {

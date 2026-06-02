@@ -1,20 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { Context } from "hono";
-
 import { executeGenerateRequest } from "../src/server/execution/generate-service.js";
 
 describe("generate-service", () => {
 	it("prepares the generate request, executes it, and logs success", async () => {
 		const captured: Array<Record<string, unknown>> = [];
 		const logCtx = { provider: "", model: "", startTime: 0 };
-		const context = {
-			req: {
-				header: (name: string) =>
-					name === "X-Project" ? "header-project" : undefined,
-			},
-		} as Context;
 
 		const result = await executeGenerateRequest({
 			validated: {
@@ -26,7 +18,7 @@ describe("generate-service", () => {
 				maxTokens: 64,
 				strict: true,
 			},
-			context,
+			scope: { project: "header-project" },
 			now: () => 1_700_000_000_000,
 			requestLogger: {
 				captureStart: (input: {
@@ -79,6 +71,7 @@ describe("generate-service", () => {
 				phase: "start",
 				provider: "openai",
 				model: "gpt-4o-mini",
+				correlationId: undefined,
 				startTime: 1_700_000_000_000,
 			},
 			{
@@ -133,20 +126,15 @@ describe("generate-service", () => {
 	it("logs failures and rethrows the router error", async () => {
 		const captured: Array<Record<string, unknown>> = [];
 		const failure = new Error("router blew up");
-		const context = {
-			req: {
-				header: () => undefined,
-			},
-		} as unknown as Context;
 
 		await assert.rejects(
 			() =>
-				executeGenerateRequest({
-					validated: {
-						prompt: "Hello world",
-					},
-					context,
-					now: () => 123,
+					executeGenerateRequest({
+						validated: {
+							prompt: "Hello world",
+						},
+						scope: {},
+						now: () => 123,
 					requestLogger: {
 						captureStart: (input: {
 							provider: string;
@@ -184,6 +172,7 @@ describe("generate-service", () => {
 				phase: "start",
 				provider: "unknown",
 				model: "unknown",
+				correlationId: undefined,
 				startTime: 123,
 			},
 			{

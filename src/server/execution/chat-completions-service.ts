@@ -13,6 +13,7 @@ import {
 	type ChatGenerateMessage,
 	buildChatInternalRequestFromMessages,
 } from "../http-helpers/chat-request.js";
+import type { RequestScope } from "../http-helpers/request-scope.js";
 
 interface GatewayMetadataInput {
 	requestedProvider?: string;
@@ -53,8 +54,7 @@ export interface PreparedChatCompletionsRequest {
 export interface ExecuteNonStreamingChatCompletionsInput {
 	prepared: PreparedChatCompletionsRequest;
 	router: Router;
-	project?: string;
-	correlationId?: string;
+	scope: RequestScope;
 	requestLogger?: RequestLogger;
 	now?: () => number;
 	createChatCompletionId?: () => string;
@@ -111,8 +111,7 @@ export async function executeNonStreamingChatCompletions(
 	const {
 		prepared,
 		router,
-		project,
-		correlationId,
+		scope,
 		requestLogger,
 		now = Date.now,
 		createChatCompletionId = () => `chatcmpl-${randomUUID()}`,
@@ -121,7 +120,7 @@ export async function executeNonStreamingChatCompletions(
 		requestLogger,
 		startTimeMs: now(),
 		requestedModel: prepared.canonicalRequest.model,
-		correlationId,
+		correlationId: scope.correlationId,
 	});
 
 	try {
@@ -130,7 +129,7 @@ export async function executeNonStreamingChatCompletions(
 				buildChatInternalRequestFromMessages(
 					prepared.canonicalRequest,
 					prepared.optimizedCanonicalRequest.messages,
-					project,
+					scope,
 				),
 			),
 		);

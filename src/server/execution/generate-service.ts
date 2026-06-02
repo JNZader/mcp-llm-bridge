@@ -1,14 +1,8 @@
-import type { Context } from "hono";
-
 import type { GenerateRequest as ValidatedGenerateRequest } from "../../core/schemas.js";
 import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
-
-function getCorrelationId(context: Context): string | undefined {
-	const value = (context as { get: (key: string) => unknown }).get("correlationId");
-	return typeof value === "string" ? value : undefined;
-}
+import type { RequestScope } from "../http-helpers/request-scope.js";
 
 function resolveAttemptsFromRouting(result: {
 	routing?: { attemptedProviders?: string[] };
@@ -18,7 +12,7 @@ function resolveAttemptsFromRouting(result: {
 
 export interface ExecuteGenerateRequestInput {
 	validated: ValidatedGenerateRequest;
-	context: Context;
+	scope: RequestScope;
 	router: Router;
 	requestLogger?: RequestLogger;
 	now?: () => number;
@@ -29,7 +23,7 @@ export async function executeGenerateRequest(
 ) {
 	const {
 		validated,
-		context,
+		scope,
 		router,
 		requestLogger,
 		now = Date.now,
@@ -37,13 +31,13 @@ export async function executeGenerateRequest(
 	const logCtx = requestLogger?.captureStart({
 		provider: validated.provider || "unknown",
 		model: validated.model || "unknown",
-		correlationId: getCorrelationId(context),
+		correlationId: scope.correlationId,
 		startTime: now(),
 	});
 
 	try {
 		const result = await router.generate(
-			prepareGenerateRequest(validated, context),
+			prepareGenerateRequest(validated, scope),
 		);
 
 		if (logCtx && requestLogger) {

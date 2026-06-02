@@ -6,7 +6,11 @@ import type { RequestLogger } from "../../logging/request-logger.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { Vault } from "../../vault/vault.js";
-import { buildChatGenerateRequest } from "../http-helpers/chat-request.js";
+import {
+	buildChatGenerateRequest,
+	buildChatInternalMetadata,
+} from "../http-helpers/chat-request.js";
+import type { RequestScope } from "../http-helpers/request-scope.js";
 import { buildProviderStreamCall } from "./provider-stream-client.js";
 import {
 	createStreamingRequestLogFinalizer,
@@ -28,8 +32,7 @@ export interface CreateStreamExecutorInput {
 	costTracker?: CostTracker;
 	vault?: Vault;
 	requestLogger?: RequestLogger;
-	project?: string;
-	correlationId?: string;
+	scope: RequestScope;
 	abortSignal?: AbortSignal;
 	providerStreamCallFactory?: typeof buildProviderStreamCall;
 }
@@ -46,15 +49,14 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		costTracker,
 		vault,
 		requestLogger,
-		project,
-		correlationId,
+		scope,
 		abortSignal,
 		providerStreamCallFactory = buildProviderStreamCall,
 	} = input;
 	const { logCtx, finalizeRequestLog } = createStreamingRequestLogFinalizer(
 		requestLogger,
 		canonical.model,
-		correlationId,
+		scope.correlationId,
 	);
 	const providerAbortController = new AbortController();
 
@@ -74,15 +76,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		messages: internalMessages,
 		model: canonical.model,
 		maxTokens: canonical.max_tokens,
-		metadata: {
-			...(typeof canonical["clientId"] === "string"
-				? { clientId: canonical["clientId"] }
-				: {}),
-			...(typeof canonical["provider"] === "string"
-				? { provider: canonical["provider"] }
-				: {}),
-			...(canonical["strict"] === true ? { strict: true } : {}),
-		},
+		metadata: buildChatInternalMetadata(canonical, scope),
 	};
 
 	const finalizeAbort = async () => {
@@ -124,7 +118,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 				if (resolvedCandidates.length === 0) {
 					let result: GenerateResponse;
 					try {
-						result = await router.generate(buildChatGenerateRequest(canonical, project));
+						result = await router.generate(buildChatGenerateRequest(canonical, scope));
 					} catch (error) {
 						if (aborted || isAbortError(error)) {
 							await finalizeAbort();
@@ -183,14 +177,14 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 					const streamRecorder = costTracker?.recordStream(
 						provider.id,
 						breakerModel,
-						project,
+						scope.project,
 					);
 
 					try {
 						const providerCall = providerStreamCallFactory(
 							provider.id,
 							vault,
-							project,
+							scope.project,
 							providerAbortController.signal,
 						);
 						const chunks = streamTransformer.transformStream(resolvedRequest, providerCall);
@@ -252,7 +246,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							providerId: provider.id,
 							resolvedModel: breakerModel,
 							attemptStartTime,
-							project,
+							project: scope.project,
 							attempts,
 							totalTokens,
 							inputTokens,
@@ -280,7 +274,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							providerId: provider.id,
 							resolvedModel: breakerModel,
 							attemptStartTime,
-							project,
+							project: scope.project,
 							attempts,
 							totalTokens:
 								typeof attemptInputTokens === "number" && typeof attemptOutputTokens === "number"

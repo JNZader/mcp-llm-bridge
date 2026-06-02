@@ -1,16 +1,14 @@
-import type { Context } from "hono";
-
 import type { GenerateRequest as ValidatedGenerateRequest } from "../../core/schemas.js";
 import type { GenerateRequest } from "../../core/types.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
 
-import { resolveRequestProject } from "./request-validation.js";
+import type { RequestScope } from "./request-scope.js";
 
 export function prepareGenerateRequest(
 	validated: ValidatedGenerateRequest,
-	c: Context,
+	scope: RequestScope,
 ): GenerateRequest {
-	const project = resolveRequestProject(validated.project, c);
+	const project = validated.project ?? scope.project;
 
 	let prompt = validated.prompt ?? "";
 	let system = validated.system;

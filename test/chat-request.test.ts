@@ -8,14 +8,8 @@ import {
 	prepareChatGenerateRequest,
 } from "../src/server/http-helpers/chat-request.js";
 
-function createContext(headerProject?: string) {
-	return {
-		req: {
-			header(name: string) {
-				return name === "X-Project" ? headerProject : undefined;
-			},
-		},
-	} as Parameters<typeof prepareChatGenerateRequest>[1];
+function createScope(project?: string) {
+	return { project } satisfies Parameters<typeof prepareChatGenerateRequest>[1];
 }
 
 describe("prepareChatGenerateRequest", () => {
@@ -31,7 +25,7 @@ describe("prepareChatGenerateRequest", () => {
 		};
 
 		assert.deepEqual(
-			prepareChatGenerateRequest(validated, createContext("project-alpha")),
+			prepareChatGenerateRequest(validated, createScope("project-alpha")),
 			{
 				prompt: "assistant: What do you need?\nuser: Explain strict mode",
 				system: "Be concise",
@@ -50,7 +44,7 @@ describe("prepareChatGenerateRequest", () => {
 			],
 		};
 
-		const prepared = prepareChatGenerateRequest(validated, createContext());
+		const prepared = prepareChatGenerateRequest(validated, createScope());
 
 		assert.equal(prepared.system, "Keep this system");
 		assert.equal(
@@ -64,7 +58,7 @@ describe("prepareChatGenerateRequest", () => {
 			() =>
 				prepareChatGenerateRequest(
 					{ messages: [{ role: "assistant", content: "Hello" }] },
-					createContext(),
+					createScope(),
 				),
 				new Error(CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED),
 		);
@@ -85,7 +79,7 @@ describe("prepareChatGenerateRequest", () => {
 					{ role: "system", content: "Be concise" },
 					{ role: "user", content: "Explain strict mode" },
 				],
-				"project-alpha",
+				{ project: "project-alpha" },
 			),
 			{
 				messages: [

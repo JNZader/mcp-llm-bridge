@@ -1,5 +1,3 @@
-import type { Context } from "hono";
-
 import type { InternalLLMRequest } from "../../core/internal-model.js";
 import type { ChatCompletionsRequest } from "../../core/schemas.js";
 import type { GenerateRequest } from "../../core/types.js";
@@ -8,8 +6,7 @@ import type {
 	CanonicalMessage,
 	CanonicalRequest,
 } from "../../protocol-converter/types.js";
-
-import { resolveRequestProject } from "./request-validation.js";
+import type { RequestScope } from "./request-scope.js";
 
 export const CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED =
 	"At least one user message is required";
@@ -50,9 +47,9 @@ function getOptionalCanonicalBoolean(
 	return value === true;
 }
 
-function buildChatInternalMetadata(
+export function buildChatInternalMetadata(
 	request: CanonicalRequest | ChatCompletionsRequest,
-	project?: string,
+	scope?: RequestScope,
 ): Record<string, unknown> | undefined {
 	const metadata: Record<string, unknown> = {};
 	const provider = getOptionalCanonicalString(request, "provider");
@@ -70,8 +67,8 @@ function buildChatInternalMetadata(
 		metadata["strict"] = true;
 	}
 
-	if (project) {
-		metadata["project"] = project;
+	if (scope?.project) {
+		metadata["project"] = scope.project;
 	}
 
 	return Object.keys(metadata).length > 0 ? metadata : undefined;
@@ -80,7 +77,7 @@ function buildChatInternalMetadata(
 export function buildChatGenerateRequestFromMessages(
 	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
 	messages: readonly ChatGenerateMessage[],
-	project?: string,
+	scope?: RequestScope,
 ): GenerateRequest {
 	const systemMessages = messages
 		.filter((message) => message.role === "system")
@@ -124,14 +121,14 @@ export function buildChatGenerateRequestFromMessages(
 		...(getOptionalCanonicalBoolean(canonicalRequest, "strict")
 			? { strict: true }
 			: {}),
-		project,
+		project: scope?.project,
 	};
 }
 
 export function buildChatInternalRequestFromMessages(
 	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
 	messages: readonly ChatGenerateMessage[],
-	project?: string,
+	scope?: RequestScope,
 ): InternalLLMRequest {
 	const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
 
@@ -146,13 +143,13 @@ export function buildChatInternalRequestFromMessages(
 		})),
 		model: canonicalRequest.model,
 		maxTokens: canonicalRequest.max_tokens,
-		metadata: buildChatInternalMetadata(canonicalRequest, project),
+		metadata: buildChatInternalMetadata(canonicalRequest, scope),
 	};
 }
 
 export function buildChatGenerateRequest(
 	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
-	project?: string,
+	scope?: RequestScope,
 ): GenerateRequest {
 	const internalMessages = canonicalRequest.messages.map((message) => ({
 		role: message.role,
@@ -165,16 +162,13 @@ export function buildChatGenerateRequest(
 	return buildChatGenerateRequestFromMessages(
 		canonicalRequest,
 		optimizedMessages,
-		project,
+		scope,
 	);
 }
 
 export function prepareChatGenerateRequest(
 	canonicalRequest: CanonicalRequest | ChatCompletionsRequest,
-	c: Context,
+	scope: RequestScope,
 ): GenerateRequest {
-	return buildChatGenerateRequest(
-		canonicalRequest,
-		resolveRequestProject(undefined, c),
-	);
+	return buildChatGenerateRequest(canonicalRequest, scope);
 }

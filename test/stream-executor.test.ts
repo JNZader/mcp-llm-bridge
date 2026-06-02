@@ -70,6 +70,7 @@ describe("createStreamExecutor", () => {
 				strict: true,
 			},
 			router,
+			scope: {},
 			requestLogger: {
 				captureStart: () => ({}) as never,
 				captureEnd: async (_ctx: unknown, input?: { error?: Error; responseData?: unknown }) => {
@@ -136,7 +137,7 @@ describe("createStreamExecutor", () => {
 					return fallbackResult;
 				},
 			} as never,
-			project: "stream-project",
+			scope: { project: "stream-project" },
 		});
 
 		await executor.execute({
@@ -155,7 +156,62 @@ describe("createStreamExecutor", () => {
 		});
 
 		assert.deepEqual(events, ["fallback:fallback", "done"]);
-		assert.deepEqual(generateRequests, [buildChatGenerateRequest(canonical, "stream-project")]);
+		assert.deepEqual(generateRequests, [buildChatGenerateRequest(canonical, { project: "stream-project" })]);
+	});
+
+	it("reuses shared chat metadata for streaming provider resolution", async () => {
+		const requests: unknown[] = [];
+
+		const executor = createStreamExecutor({
+			canonical: {
+				model: "test-model",
+				messages: [{ role: "user", content: "hello" }],
+				stream: true,
+				provider: "openai",
+				strict: true,
+				clientId: "client-1",
+			},
+			router: {
+				resolveStreamingProviders: async (request: unknown) => {
+					requests.push(request);
+					return [];
+				},
+				generate: async () => ({
+					text: "fallback",
+					provider: "mock",
+					model: "test-model",
+					resolvedProvider: "mock",
+					resolvedModel: "test-model",
+					fallbackUsed: false,
+				}),
+			} as never,
+			scope: { project: "stream-project" },
+		});
+
+		await executor.execute({
+			writeChunk: async () => {
+				assert.fail("should not write streaming chunks during fallback");
+			},
+			writeFallbackResult: async () => {},
+			writeTerminalError: async (error) => {
+				assert.fail(`unexpected terminal error: ${error.message}`);
+			},
+			writeDone: async () => {},
+		});
+
+		assert.deepEqual(requests, [
+			{
+				messages: [{ role: "user", content: "hello" }],
+				model: "test-model",
+				maxTokens: undefined,
+				metadata: {
+					provider: "openai",
+					clientId: "client-1",
+					strict: true,
+					project: "stream-project",
+				},
+			},
+		]);
 	});
 
 	it("buffers empty pre-content chunks until meaningful content arrives", async () => {
@@ -198,6 +254,7 @@ describe("createStreamExecutor", () => {
 					assert.fail("should not use non-streaming fallback");
 				},
 			} as never,
+			scope: {},
 		});
 
 		await executor.execute({
@@ -261,6 +318,7 @@ describe("createStreamExecutor", () => {
 					assert.fail("should not use router.generate");
 				},
 			} as never,
+			scope: {},
 		});
 
 		await executor.execute({
@@ -327,6 +385,7 @@ describe("createStreamExecutor", () => {
 					}
 				},
 			} as never,
+			scope: {},
 			providerStreamCallFactory,
 		});
 
@@ -429,6 +488,7 @@ describe("createStreamExecutor", () => {
 				clientId: "client-1",
 			},
 			router,
+			scope: {},
 		});
 
 		await executor.execute({
@@ -498,6 +558,7 @@ describe("createStreamExecutor", () => {
 				clientId: "client-1",
 			},
 			router,
+			scope: {},
 		});
 
 		await executor.execute({

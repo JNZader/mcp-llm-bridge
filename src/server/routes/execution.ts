@@ -19,6 +19,10 @@ import {
 	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
 } from "../http-helpers/chat-request.js";
 import {
+	resolveRequestScope,
+	type RequestScope,
+} from "../http-helpers/request-scope.js";
+import {
 	executeNonStreamingChatCompletions,
 	prepareChatCompletionsRequest,
 } from "../execution/chat-completions-service.js";
@@ -33,11 +37,6 @@ export interface ExecutionRouteDeps {
 	requestLogger?: RequestLogger;
 }
 
-function getCorrelationId(context: Context): string | undefined {
-	const value = (context as { get: (key: string) => unknown }).get("correlationId");
-	return typeof value === "string" ? value : undefined;
-}
-
 /**
  * Handle a streaming chat completion request via SSE.
  *
@@ -47,6 +46,7 @@ function getCorrelationId(context: Context): string | undefined {
 function handleStreamingRequest(
 	c: Context,
 	canonical: CanonicalRequest,
+	scope: RequestScope,
 	router: Router,
 	costTracker?: CostTracker,
 	vault?: Vault,
@@ -54,8 +54,6 @@ function handleStreamingRequest(
 ): Response {
 	const chatId = `chatcmpl-${randomUUID()}`;
 	const model = canonical.model ?? "";
-	const project = c.req.header("X-Project") ?? undefined;
-	const requestCorrelationId = getCorrelationId(c);
 
 	return streamSSE(c, async (stream) => {
 		const executor = createStreamExecutor({
@@ -64,8 +62,7 @@ function handleStreamingRequest(
 			costTracker,
 			vault,
 			requestLogger,
-			project,
-			correlationId: requestCorrelationId,
+			scope,
 			abortSignal: c.req.raw.signal,
 		});
 
@@ -151,7 +148,7 @@ export function registerExecutionRoutes(
 			return c.json(
 				await executeGenerateRequest({
 					validated,
-					context: c,
+					scope: resolveRequestScope(c, validated.project),
 					router,
 					requestLogger,
 				}),
@@ -185,10 +182,13 @@ export function registerExecutionRoutes(
 				return jsonChatInvalidRequestError(c, message, null);
 			}
 
+			const scope = resolveRequestScope(c);
+
 			if (preparedRequest.canonicalRequest.stream) {
 				return handleStreamingRequest(
 					c,
 					preparedRequest.optimizedCanonicalRequest,
+					scope,
 					router,
 					costTracker,
 					vault,
@@ -201,8 +201,7 @@ export function registerExecutionRoutes(
 					await executeNonStreamingChatCompletions({
 						prepared: preparedRequest,
 						router,
-						project: c.req.header("X-Project") ?? undefined,
-						correlationId: getCorrelationId(c),
+						scope,
 						requestLogger,
 					}),
 				);
