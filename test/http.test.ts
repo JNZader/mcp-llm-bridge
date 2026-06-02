@@ -456,6 +456,14 @@ describe('POST /v1/chat/completions', () => {
     });
     assert.equal(res.status, 400);
   });
+
+  it('rejects streaming messages without user role with the same HTTP contract', async () => {
+    const res = await request('POST', '/v1/chat/completions', {
+      messages: [{ role: 'assistant', content: 'Hello' }],
+      stream: true,
+    });
+    assert.equal(res.status, 400);
+  });
 });
 
 // ── Files endpoints ────────────────────────────────────────

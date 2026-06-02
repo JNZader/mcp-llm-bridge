@@ -8,7 +8,7 @@ import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { Vault } from "../../vault/vault.js";
 import {
 	buildChatGenerateRequest,
-	buildChatInternalMetadata,
+	buildChatInternalRequestFromMessages,
 } from "../http-helpers/chat-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
 import { buildProviderStreamCall } from "./provider-stream-client.js";
@@ -67,17 +67,14 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 	let aborted = abortSignal?.aborted ?? false;
 	let abortFinalization: Promise<void> | undefined;
 
-	const internalMessages = canonical.messages.map((message) => ({
-		role: message.role as "system" | "user" | "assistant",
-		content: message.content,
-	}));
-
-	const internalRequest: InternalLLMRequest = {
-		messages: internalMessages,
-		model: canonical.model,
-		maxTokens: canonical.max_tokens,
-		metadata: buildChatInternalMetadata(canonical, scope),
-	};
+	const internalRequest: InternalLLMRequest = buildChatInternalRequestFromMessages(
+		canonical,
+		canonical.messages.map((message) => ({
+			role: message.role as "system" | "user" | "assistant",
+			content: message.content,
+		})),
+		scope,
+	);
 
 	const finalizeAbort = async () => {
 		aborted = true;

@@ -13,6 +13,16 @@ export const CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED =
 
 export type ChatGenerateMessage = Pick<CanonicalMessage, "role" | "content">;
 
+export function assertChatMessagesContainUserMessage(
+	messages: readonly ChatGenerateMessage[],
+): void {
+	const hasUserMessage = messages.some((message) => message.role === "user");
+
+	if (!hasUserMessage) {
+		throw new Error(CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED);
+	}
+}
+
 function normalizeChatGenerateMessages(
 	messages: ReadonlyArray<{ role: string; content?: unknown }>,
 ): ChatGenerateMessage[] {
@@ -89,13 +99,10 @@ export function buildChatGenerateRequestFromMessages(
 	const conversationMessages = messages.filter(
 		(message) => message.role !== "system",
 	);
+	assertChatMessagesContainUserMessage(conversationMessages);
 	const lastUserMessage = [...conversationMessages]
 		.reverse()
-		.find((message) => message.role === "user");
-
-	if (!lastUserMessage) {
-		throw new Error(CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED);
-	}
+		.find((message) => message.role === "user")!;
 
 	const earlierMessages = conversationMessages.slice(0, -1);
 	let prompt =
@@ -130,11 +137,7 @@ export function buildChatInternalRequestFromMessages(
 	messages: readonly ChatGenerateMessage[],
 	scope?: RequestScope,
 ): InternalLLMRequest {
-	const lastUserMessage = [...messages].reverse().find((message) => message.role === "user");
-
-	if (!lastUserMessage) {
-		throw new Error(CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED);
-	}
+	assertChatMessagesContainUserMessage(messages);
 
 	return {
 		messages: messages.map((message) => ({

@@ -5,6 +5,7 @@ import {
 	executeNonStreamingChatCompletions,
 	prepareChatCompletionsRequest,
 } from "../src/server/execution/chat-completions-service.js";
+import { validateChatCompletions } from "../src/core/schemas.js";
 
 describe("chat-completions-service", () => {
 	it("prepares an optimized canonical request for the streaming handoff", () => {
@@ -27,6 +28,38 @@ describe("chat-completions-service", () => {
 			{ role: "system", content: "You are a helpful assistant." },
 			{ role: "user", content: "[Instruction]\nTask: Explain strict mode." },
 		]);
+	});
+
+	it("preserves provider, strict, clientId, and project through validation and preparation", () => {
+		const prepared = prepareChatCompletionsRequest(
+			validateChatCompletions({
+				model: "gpt-4o-mini",
+				messages: [{ role: "user", content: "Explain strict mode" }],
+				provider: "openai",
+				strict: true,
+				clientId: "client-123",
+				project: "project-alpha",
+			}),
+		);
+
+		assert.equal(prepared.canonicalRequest.provider, "openai");
+		assert.equal(prepared.canonicalRequest.strict, true);
+		assert.equal(prepared.canonicalRequest.clientId, "client-123");
+		assert.equal(prepared.canonicalRequest.project, "project-alpha");
+		assert.equal(prepared.optimizedCanonicalRequest.provider, "openai");
+		assert.equal(prepared.optimizedCanonicalRequest.strict, true);
+		assert.equal(prepared.optimizedCanonicalRequest.clientId, "client-123");
+		assert.equal(prepared.optimizedCanonicalRequest.project, "project-alpha");
+	});
+
+	it("rejects assistant-only requests before stream/non-stream branching", () => {
+		assert.throws(
+			() =>
+				prepareChatCompletionsRequest({
+					messages: [{ role: "assistant", content: "Hello" }],
+				}),
+			new Error("At least one user message is required"),
+		);
 	});
 
 	it("executes the non-stream path with the prepared optimized messages and preserves response shape", async () => {

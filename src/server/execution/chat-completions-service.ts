@@ -10,6 +10,7 @@ import {
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
 import {
+	assertChatMessagesContainUserMessage,
 	type ChatGenerateMessage,
 	buildChatInternalRequestFromMessages,
 } from "../http-helpers/chat-request.js";
@@ -72,6 +73,7 @@ export function prepareChatCompletionsRequest(
 			})),
 		),
 	);
+	assertChatMessagesContainUserMessage(normalizedOptimizedMessages);
 
 	return {
 		canonicalRequest,

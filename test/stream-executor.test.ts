@@ -214,6 +214,38 @@ describe("createStreamExecutor", () => {
 		]);
 	});
 
+	it("rejects assistant-only streaming requests with the shared chat guard", () => {
+		assert.throws(
+			() =>
+				createStreamExecutor({
+					canonical: {
+						model: "test-model",
+						messages: [{ role: "assistant", content: "hello" }],
+						stream: true,
+					},
+					router: {
+						resolveStreamingProviders: async () => {
+							assert.fail("should not resolve providers for invalid chat input");
+							return [];
+						},
+						generate: async () => {
+							assert.fail("should not fall back for invalid chat input");
+							return {
+								text: "fallback",
+								provider: "mock",
+								model: "test-model",
+								resolvedProvider: "mock",
+								resolvedModel: "test-model",
+								fallbackUsed: false,
+							};
+						},
+					} as never,
+					scope: {},
+				}),
+			/message is required/i,
+		);
+	});
+
 	it("buffers empty pre-content chunks until meaningful content arrives", async () => {
 		const observedChunks: InternalLLMChunk[] = [];
 		let providerIndex = 0;

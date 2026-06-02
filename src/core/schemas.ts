@@ -39,6 +39,10 @@ export const chatCompletionsSchema = z.object({
   max_tokens: z.number().int().positive().optional(),
   temperature: z.number().min(0).max(2).optional(),
   stream: z.boolean().optional(),
+  provider: z.string().optional(),
+  strict: z.boolean().optional(),
+  clientId: z.string().optional(),
+  project: z.string().optional(),
 });
 
 /** Credential store schema. */
