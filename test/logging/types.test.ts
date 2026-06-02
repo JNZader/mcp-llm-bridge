@@ -23,6 +23,7 @@ describe('Logging Schemas', () => {
         timestamp: Date.now(),
         provider: 'openai',
         model: 'gpt-4o',
+        totalTokens: 150,
         inputTokens: 100,
         outputTokens: 50,
         cost: 0.0025,
@@ -43,10 +44,21 @@ describe('Logging Schemas', () => {
         timestamp: Date.now(),
         provider: 'anthropic',
         model: 'claude-3-sonnet',
-        inputTokens: 0,
-        outputTokens: 0,
-        cost: 0,
         latencyMs: 0,
+        attempts: 1,
+      };
+
+      const result = LogEntrySchema.safeParse(logEntry);
+      assert.strictEqual(result.success, true);
+    });
+
+    it('should validate total-only log entry without fabricated splits', () => {
+      const logEntry = {
+        timestamp: Date.now(),
+        provider: 'openai',
+        model: 'gpt-4.1-mini',
+        totalTokens: 33,
+        latencyMs: 250,
         attempts: 1,
       };
 
@@ -75,9 +87,6 @@ describe('Logging Schemas', () => {
         timestamp: Date.now(),
         provider: '',
         model: 'gpt-4o',
-        inputTokens: 0,
-        outputTokens: 0,
-        cost: 0,
         latencyMs: 0,
         attempts: 1,
       };
@@ -91,9 +100,6 @@ describe('Logging Schemas', () => {
         timestamp: Date.now(),
         provider: 'openai',
         model: 'gpt-4o',
-        inputTokens: 0,
-        outputTokens: 0,
-        cost: 0,
         latencyMs: 0,
       };
 
@@ -109,6 +115,7 @@ describe('Logging Schemas', () => {
         timestamp: Date.now(),
         provider: 'openai',
         model: 'gpt-4o',
+        totalTokens: 150,
         inputTokens: 100,
         outputTokens: 50,
         cost: 0.0025,
@@ -136,6 +143,21 @@ describe('Logging Schemas', () => {
 
       const result = LogEntryPublicSchema.safeParse(publicEntry);
       assert.strictEqual(result.success, false);
+    });
+
+    it('should validate public entry when token splits and cost are unknown', () => {
+      const publicEntry = {
+        id: 1,
+        timestamp: Date.now(),
+        provider: 'openai',
+        model: 'gpt-4o',
+        totalTokens: 5,
+        latencyMs: 1200,
+        attempts: 1,
+      };
+
+      const result = LogEntryPublicSchema.safeParse(publicEntry);
+      assert.strictEqual(result.success, true);
     });
   });
 
@@ -213,6 +235,7 @@ describe('Logging Schemas', () => {
             timestamp: Date.now(),
             provider: 'openai',
             model: 'gpt-4o',
+            totalTokens: 150,
             inputTokens: 100,
             outputTokens: 50,
             cost: 0.0025,
@@ -265,6 +288,7 @@ describe('Logging Schemas', () => {
           model: 'gpt-4o',
           requestId: '550e8400-e29b-41d4-a716-446655440000',
         },
+        totalTokens: 150,
         inputTokens: 100,
         outputTokens: 50,
         cost: 0.0025,

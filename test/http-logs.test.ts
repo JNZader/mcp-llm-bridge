@@ -574,9 +574,10 @@ describe('GET /v1/logs', () => {
           provider: string;
           model: string;
           correlationId?: string;
-          inputTokens: number;
-          outputTokens: number;
-          cost: number;
+          totalTokens?: number;
+          inputTokens?: number;
+          outputTokens?: number;
+          cost?: number;
           latencyMs: number;
           error?: string;
           attempts: number;
@@ -589,9 +590,10 @@ describe('GET /v1/logs', () => {
       assert.ok(typeof log.provider === 'string', 'Should have provider');
       assert.ok(typeof log.model === 'string', 'Should have model');
       assert.ok(log.correlationId === undefined || typeof log.correlationId === 'string', 'Should have optional correlationId');
-      assert.ok(typeof log.inputTokens === 'number', 'Should have inputTokens');
-      assert.ok(typeof log.outputTokens === 'number', 'Should have outputTokens');
-      assert.ok(typeof log.cost === 'number', 'Should have cost');
+      assert.ok(log.totalTokens === undefined || typeof log.totalTokens === 'number', 'Should have optional totalTokens');
+      assert.ok(log.inputTokens === undefined || typeof log.inputTokens === 'number', 'Should have optional inputTokens');
+      assert.ok(log.outputTokens === undefined || typeof log.outputTokens === 'number', 'Should have optional outputTokens');
+      assert.ok(log.cost === undefined || typeof log.cost === 'number', 'Should have optional cost');
       assert.ok(typeof log.latencyMs === 'number', 'Should have latencyMs');
       assert.ok(typeof log.attempts === 'number', 'Should have attempts');
 

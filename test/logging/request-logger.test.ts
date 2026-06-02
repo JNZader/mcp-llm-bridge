@@ -292,7 +292,7 @@ describe('RequestLogger', () => {
 		});
 
 		it('should preserve total-only usage without fabricating splits', async () => {
-			await logger.capture({
+			const result = await logger.capture({
 				provider: 'openai',
 				model: 'gpt-4.1-mini',
 				correlationId: 'corr-total-only',
@@ -307,6 +307,10 @@ describe('RequestLogger', () => {
 			assert.strictEqual(row.input_tokens, null);
 			assert.strictEqual(row.output_tokens, null);
 			assert.strictEqual(row.correlation_id, 'corr-total-only');
+			assert.strictEqual(result.totalTokens, 33);
+			assert.strictEqual(result.inputTokens, undefined);
+			assert.strictEqual(result.outputTokens, undefined);
+			assert.strictEqual(result.cost, undefined);
 		});
 
 		it('should persist correlation IDs from captureStart into completed logs', async () => {
