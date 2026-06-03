@@ -118,14 +118,14 @@ export async function buildRoutingPolicyPlan(
     }
   }
 
-  if (!requestedProvider && !strict && !modelRouterDecision) {
+  if (!requestedProvider && !strict && !appliedModelRouterDecision) {
     offloadClassification = classifyForOffload(options.request.prompt);
     if (offloadClassification.shouldOffload) {
       orderedCandidates = prioritizeProviderCandidate(orderedCandidates, 'local-llm');
     }
   }
 
-  const routedModel = modelRouterDecision?.endpoint.modelId ?? requestModel ?? options.fallbackModel;
+  const routedModel = appliedModelRouterDecision?.endpoint.modelId ?? requestModel ?? options.fallbackModel;
   const { availableCandidates, blockedStrictCandidate } = resolveExecutableCandidates(
     orderedCandidates,
     options.circuitBreaker,
@@ -218,7 +218,7 @@ export function determineDecisionReason(options: RoutingPolicyMetadataOptions): 
     return options.modelRouterDecision.reason;
   }
 
-  if (options.offloadClassification?.reason) {
+  if (options.offloadClassification?.shouldOffload && options.offloadClassification.reason) {
     return options.offloadClassification.reason;
   }
 

@@ -330,7 +330,7 @@ describe('Router + ModelRouter integration', () => {
     const mockRouter = createMockModelRouter({ enabled: true, decision });
     router.setModelRouter(mockRouter);
 
-    const result = await router.generate({ prompt: 'summarize this' });
+    const result = await router.generate({ prompt: 'security audit and threat model' });
 
     // Should fall back to standard resolution (first provider)
     assert.equal(result.text, 'from-first');
@@ -368,7 +368,7 @@ describe('Router + ModelRouter integration', () => {
 
     router.setModelRouter(createMockModelRouter({ enabled: true, decision }));
 
-    const result = await router.generate({ prompt: 'summarize this' });
+    const result = await router.generate({ prompt: 'security audit and threat model' });
 
     assert.equal(result.text, 'from-first');
     assert.equal(result.provider, 'first');
@@ -1154,6 +1154,82 @@ describe('Router + ModelRouter integration', () => {
     assert.deepEqual(callOrder, ['local-llm']);
   });
 
+  it('generate still offloads locally when ModelRouter decision is unresolved', async () => {
+    const router = new Router();
+    const callOrder: string[] = [];
+
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+      },
+      onGenerate: () => {
+        callOrder.push('cloud');
+      },
+    });
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: {
+        text: 'local-response',
+        provider: 'local-llm',
+        model: 'local-model',
+        resolvedProvider: 'local-llm',
+        resolvedModel: 'local-model',
+        fallbackUsed: false,
+      },
+      onGenerate: () => {
+        callOrder.push('local-llm');
+      },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+    router.setModelRouter(createMockModelRouter({
+      enabled: true,
+      decision: {
+        endpoint: createMockEndpoint({ id: 'missing-endpoint', provider: 'missing-provider', modelId: 'missing-model' }),
+        matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['missing-endpoint'] }),
+        reason: 'Primary model for summarization',
+        isFallback: false,
+        costTier: 'standard',
+      },
+    }));
+
+    const previousFlag = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'true';
+
+    try {
+      const circuitBreaker = getCircuitBreakerV2();
+      for (let index = 0; index < 5; index++) {
+        circuitBreaker.recordFailure('local-llm', 'default', 'missing-model');
+      }
+
+      const result = await router.generate({ prompt: 'summarize this', model: 'cloud-model' });
+
+      assert.equal(result.provider, 'local-llm');
+      assert.equal(result.routing?.strategy, 'local-offload');
+      assert.equal(result.routing?.selectedEndpointId, undefined);
+      assert.deepEqual(callOrder, ['local-llm']);
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      } else {
+        process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = previousFlag;
+      }
+    }
+  });
+
   it('generateFromInternal falls back to cloud when local-llm fails', async () => {
     const router = new Router();
     const registry = new TransformerRegistry();
@@ -1224,6 +1300,95 @@ describe('Router + ModelRouter integration', () => {
       decisionReason: 'Matched 1 keyword(s) for summarization',
     });
     assert.deepEqual(callOrder, ['local-llm', 'cloud']);
+  });
+
+  it('generateFromInternal still offloads locally when ModelRouter decision is unresolved', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const callOrder: string[] = [];
+
+    router.register(createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+      },
+      onGenerate: () => {
+        callOrder.push('cloud');
+      },
+    }));
+    router.register(createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: {
+        text: 'local-response',
+        provider: 'local-llm',
+        model: 'local-model',
+        resolvedProvider: 'local-llm',
+        resolvedModel: 'local-model',
+        fallbackUsed: false,
+      },
+      onGenerate: () => {
+        callOrder.push('local-llm');
+      },
+    }));
+    router.setTransformerRegistry(registry);
+    registerPassthroughOutbound(registry, 'cloud');
+    registerPassthroughOutbound(registry, 'local-llm');
+    router.setModelRouter(createMockModelRouter({
+      enabled: true,
+      decision: {
+        endpoint: createMockEndpoint({ id: 'missing-endpoint', provider: 'missing-provider', modelId: 'missing-model' }),
+        matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['missing-endpoint'] }),
+        reason: 'Primary model for summarization',
+        isFallback: false,
+        costTier: 'standard',
+      },
+    }));
+
+    const previousFlag = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'true';
+
+    try {
+      const circuitBreaker = getCircuitBreakerV2();
+      for (let index = 0; index < 5; index++) {
+        circuitBreaker.recordFailure('local-llm', 'default', 'missing-model');
+      }
+
+      const result = await router.generateFromInternal({
+        messages: [{ role: 'user', content: 'summarize this' }],
+        model: 'cloud-model',
+      });
+
+      assert.equal(result.metadata?.['provider'], 'local-llm');
+      assert.deepEqual(result.metadata?.['routing'], {
+        strategy: 'local-offload',
+        classification: {
+          task: 'summarization',
+          confidence: 0.75,
+          shouldOffload: true,
+          reason: 'Matched 1 keyword(s) for summarization',
+        },
+        attemptedProviders: ['local-llm'],
+        decisionReason: 'Matched 1 keyword(s) for summarization',
+      });
+      assert.deepEqual(callOrder, ['local-llm']);
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      } else {
+        process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = previousFlag;
+      }
+    }
   });
 
   it('generateFromInternal preserves optimized request shaping on the local path', async () => {
@@ -1427,6 +1592,76 @@ describe('Router + ModelRouter integration', () => {
       streaming.map((candidate) => candidate.provider.id),
       ['local-llm', 'cloud'],
     );
+  });
+
+  it('resolveStreamingProviders still offloads locally when ModelRouter decision is unresolved', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+
+    router.register(createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+    }));
+    router.register(createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+    }));
+    router.setTransformerRegistry(registry);
+    registerPassthroughOutbound(registry, 'cloud');
+    registerPassthroughOutbound(registry, 'local-llm');
+    registry.registerStreamOutbound('cloud', {
+      name: 'cloud',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+    registry.registerStreamOutbound('local-llm', {
+      name: 'local-llm',
+      async *transformStream() {
+        yield { content: '', done: true };
+      },
+    });
+    router.setModelRouter(createMockModelRouter({
+      enabled: true,
+      decision: {
+        endpoint: createMockEndpoint({ id: 'missing-endpoint', provider: 'missing-provider', modelId: 'missing-model' }),
+        matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['missing-endpoint'] }),
+        reason: 'Primary model for summarization',
+        isFallback: false,
+        costTier: 'standard',
+      },
+    }));
+
+    const previousFlag = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'true';
+
+    try {
+      const circuitBreaker = getCircuitBreakerV2();
+      for (let index = 0; index < 5; index++) {
+        circuitBreaker.recordFailure('local-llm', 'default', 'missing-model');
+      }
+
+      const streaming = await router.resolveStreamingProviders({
+        messages: [{ role: 'user', content: 'summarize this' }],
+        model: 'cloud-model',
+      });
+
+      assert.deepEqual(
+        streaming.map((candidate) => candidate.provider.id),
+        ['local-llm', 'cloud'],
+      );
+      assert.equal(streaming[0]?.request.model, 'cloud-model');
+    } finally {
+      if (previousFlag === undefined) {
+        delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      } else {
+        process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = previousFlag;
+      }
+    }
   });
 
   it('resolveStreamingProvider returns a success telemetry hook for ModelRouter feedback', async () => {

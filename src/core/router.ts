@@ -299,9 +299,9 @@ export class Router {
         request: buildGenerateRequest(
           request,
           provider,
-          plan.modelRouterDecision?.endpoint,
+          plan.appliedModelRouterDecision?.endpoint,
         ),
-        routedEndpoint: plan.modelRouterDecision?.endpoint,
+        routedEndpoint: plan.appliedModelRouterDecision?.endpoint,
         circuitBreaker,
         defaultModel: plan.routedModel,
         classification: plan.classification,
@@ -345,9 +345,9 @@ export class Router {
         request: buildGenerateRequest(
           request,
           provider,
-          plan.modelRouterDecision?.endpoint,
+          plan.appliedModelRouterDecision?.endpoint,
         ),
-        routedEndpoint: plan.modelRouterDecision?.endpoint,
+        routedEndpoint: plan.appliedModelRouterDecision?.endpoint,
         circuitBreaker,
         defaultModel: plan.routedModel,
         classification: plan.classification,
@@ -509,14 +509,14 @@ export class Router {
               request: buildInternalRequest(
                 optimizedRequest,
                 stickyProvider,
-                plan.modelRouterDecision?.endpoint,
+                plan.appliedModelRouterDecision?.endpoint,
                 ),
                 registry,
                 circuitBreaker,
                 model: plan.routedModel,
                 classification: plan.classification ?? undefined,
               attempt: 1,
-                routedEndpoint: plan.modelRouterDecision?.endpoint,
+                routedEndpoint: plan.appliedModelRouterDecision?.endpoint,
                 ...telemetry,
             });
             return withInternalResolutionMetadata(result, {
@@ -573,13 +573,13 @@ export class Router {
         request: buildInternalRequest(
           optimizedRequest,
           provider,
-          plan.modelRouterDecision?.endpoint,
+          plan.appliedModelRouterDecision?.endpoint,
         ),
         registry,
         circuitBreaker,
         classification: plan.classification ?? undefined,
         attempt: index + 1,
-        routedEndpoint: plan.modelRouterDecision?.endpoint,
+        routedEndpoint: plan.appliedModelRouterDecision?.endpoint,
         ...telemetry,
       });
     },
@@ -670,7 +670,7 @@ export class Router {
     for (const provider of orderedStreamingCandidates) {
       const streamTransformer = registry.getStreamOutbound(provider.id);
       if (streamTransformer) {
-        const routedEndpoint = plan.modelRouterDecision?.endpoint;
+        const routedEndpoint = plan.appliedModelRouterDecision?.endpoint;
         const stickySession = plan.stickySession;
         const stickyTtlMs = stickySession?.stickyTtlMs ?? null;
         resolvedProviders.push({
