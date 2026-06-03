@@ -48,7 +48,9 @@ import {
   determineRoutingStrategy,
 } from './router-policy-plan.js';
 import {
+  buildGenerateResponseFromInternal,
   buildGenerateRequest,
+  buildInternalRequestFromGenerate,
   buildInternalRequest,
   type RoutingMetadataOptions,
   withInternalResolutionMetadata,
@@ -233,6 +235,25 @@ export class Router {
     this._providers.push(provider);
   }
 
+  private canUseInternalGenerateCompatibilityPath(): boolean {
+    if (
+      !this._transformerRegistry ||
+      this._groupStore ||
+      this._sessionManager ||
+      this._freeModelRouter
+    ) {
+      return false;
+    }
+
+    const hasCliOutbound = this._transformerRegistry.getOutbound('cli') !== null;
+
+    return this._providers.every((provider) =>
+      provider.type === 'cli'
+        ? hasCliOutbound
+        : this._transformerRegistry?.getOutbound(provider.id) !== null,
+    );
+  }
+
   /**
    * Generate text by routing the request to the best available provider.
    *
@@ -248,6 +269,13 @@ export class Router {
    * Uses circuit breaker to skip providers that are currently failing.
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
+    if (this.canUseInternalGenerateCompatibilityPath()) {
+      return buildGenerateResponseFromInternal(
+        request,
+        await this.generateFromInternal(buildInternalRequestFromGenerate(request)),
+      );
+    }
+
     const startTime = Date.now();
     const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
     const circuitBreaker = getCircuitBreakerV2();

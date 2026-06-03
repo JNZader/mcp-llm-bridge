@@ -228,6 +228,145 @@ describe("createStreamExecutor", () => {
 		]);
 	});
 
+	it("uses the generate compatibility wrapper during zero-stream fallback when transformers are configured", async () => {
+		const router = new Router();
+		const registry = new TransformerRegistry();
+		const events: string[] = [];
+		const logged: Array<{
+			provider?: string;
+			model?: string;
+			attempts?: number;
+			totalTokens?: number;
+			inputTokens?: number;
+			outputTokens?: number;
+			responseData?: unknown;
+		}> = [];
+		const providerRequests: Array<Record<string, unknown>> = [];
+
+		router.register({
+			...createProvider("mock", "test-model"),
+			async generate(request) {
+				providerRequests.push(request as Record<string, unknown>);
+				return {
+					text: "fallback-via-internal",
+					provider: "mock",
+					model: "test-model",
+					resolvedProvider: "mock",
+					resolvedModel: "test-model",
+					fallbackUsed: false,
+					tokensUsed: 7,
+				};
+			},
+		});
+		router.setTransformerRegistry(registry);
+		registry.registerOutbound("mock", {
+			name: "mock",
+			transformRequest: () => ({ transformed: true }),
+			transformResponse: () => ({
+				content: "ignored",
+				model: "test-model",
+				finishReason: "stop",
+				usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+			}),
+		});
+
+		const executor = createStreamExecutor({
+			canonical: {
+				model: "test-model",
+				messages: [
+					{ role: "system" as const, content: "You are terse." },
+					{ role: "user" as const, content: "Question" },
+				],
+				stream: true,
+				strict: true,
+			},
+			router,
+			scope: { project: "stream-project" },
+			requestLogger: {
+				captureStart: () => ({}) as never,
+				captureEnd: async (
+					_ctx: unknown,
+					input?: {
+						provider?: string;
+						model?: string;
+						attempts?: number;
+						totalTokens?: number;
+						inputTokens?: number;
+						outputTokens?: number;
+						responseData?: unknown;
+					},
+				) => {
+					logged.push({
+						provider: input?.provider,
+						model: input?.model,
+						attempts: input?.attempts,
+						totalTokens: input?.totalTokens,
+						inputTokens: input?.inputTokens,
+						outputTokens: input?.outputTokens,
+						responseData: input?.responseData,
+					});
+				},
+			} as never,
+		});
+
+		await executor.execute({
+			writeChunk: async () => {
+				assert.fail("should not write streaming chunks during fallback");
+			},
+			writeFallbackResult: async (result) => {
+				events.push(`fallback:${result.text}`);
+			},
+			writeTerminalError: async (error) => {
+				assert.fail(`unexpected terminal error: ${error.message}`);
+			},
+			writeDone: async () => {
+				events.push("done");
+			},
+		});
+
+		assert.deepEqual(events, ["fallback:fallback-via-internal", "done"]);
+		assert.deepEqual(providerRequests, [
+			{
+				prompt: "Question",
+				system: "You are terse.",
+				provider: "mock",
+				model: "test-model",
+				maxTokens: undefined,
+				project: "stream-project",
+			},
+		]);
+		assert.deepEqual(logged, [
+			{
+				provider: "mock",
+				model: "test-model",
+				attempts: 1,
+				totalTokens: 7,
+				inputTokens: undefined,
+				outputTokens: undefined,
+				responseData: {
+					text: "fallback-via-internal",
+					provider: "mock",
+					model: "test-model",
+					tokensUsed: 7,
+					requestedProvider: undefined,
+					requestedModel: "test-model",
+					resolvedProvider: "mock",
+					resolvedModel: "test-model",
+					fallbackUsed: false,
+					latencyMs: (logged[0]?.responseData as GenerateResponse | undefined)?.latencyMs,
+					routing: {
+						strategy: "requested-model",
+						attemptedProviders: ["mock"],
+						decisionReason: "Model test-model requested explicitly",
+					},
+				},
+			},
+		]);
+		assert.ok(
+			typeof (logged[0]?.responseData as GenerateResponse | undefined)?.latencyMs === "number",
+		);
+	});
+
 	it("logs truthful routing metadata for successful streaming requests", async () => {
 		const logged: Array<{
 			provider?: string;

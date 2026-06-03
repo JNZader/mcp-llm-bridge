@@ -122,6 +122,64 @@ export function buildGenerateRequest(
   };
 }
 
+export function buildInternalRequestFromGenerate(request: GenerateRequest): InternalLLMRequest {
+  const metadata: Record<string, unknown> = {};
+
+  if (request.provider) {
+    metadata['provider'] = request.provider;
+  }
+
+  if (request.strict === true) {
+    metadata['strict'] = true;
+  }
+
+  if (request.project) {
+    metadata['project'] = request.project;
+  }
+
+  return {
+    messages: [
+      ...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
+      { role: 'user' as const, content: request.prompt },
+    ],
+    model: request.model,
+    maxTokens: request.maxTokens,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
+}
+
+export function buildGenerateResponseFromInternal(
+  request: GenerateRequest,
+  response: InternalLLMResponse,
+): GenerateResponse {
+  const metadata = response.metadata ?? {};
+  const resolvedProvider =
+    typeof metadata['resolvedProvider'] === 'string'
+      ? metadata['resolvedProvider']
+      : typeof metadata['provider'] === 'string'
+        ? metadata['provider']
+        : 'unknown';
+  const routing =
+    metadata['routing'] && typeof metadata['routing'] === 'object'
+      ? (metadata['routing'] as RoutingMetadata)
+      : undefined;
+
+  return {
+    text: response.content,
+    provider: resolvedProvider,
+    model: response.model,
+    tokensUsed: response.usage.totalTokens,
+    requestedProvider: request.provider,
+    requestedModel: request.model,
+    resolvedProvider,
+    resolvedModel:
+      typeof metadata['resolvedModel'] === 'string' ? metadata['resolvedModel'] : response.model,
+    fallbackUsed: metadata['fallbackUsed'] === true,
+    latencyMs: typeof metadata['latencyMs'] === 'number' ? metadata['latencyMs'] : undefined,
+    routing,
+  };
+}
+
 export function buildInternalRequest(
   request: InternalLLMRequest,
   provider: LLMProvider,

@@ -1412,6 +1412,142 @@ describe('Router + ModelRouter integration', () => {
     }
   });
 
+  it('generate reuses internal execution when the standard compatibility path is safe', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    let providerRequest: GenerateRequest | undefined;
+
+    const provider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+        tokensUsed: 11,
+      },
+      onGenerate: (request) => {
+        providerRequest = request;
+      },
+    });
+
+    router.register(provider);
+    router.setTransformerRegistry(registry);
+    registerPassthroughOutbound(registry, 'cloud');
+
+    const result = await router.generate({
+      prompt: 'explain strict mode',
+      system: 'be terse',
+      model: 'cloud-model',
+      maxTokens: 128,
+      strict: true,
+      project: 'compat-project',
+    });
+
+    assert.deepEqual(providerRequest, {
+      prompt: 'explain strict mode',
+      system: 'be terse',
+      provider: 'cloud',
+      model: 'cloud-model',
+      maxTokens: 128,
+      project: 'compat-project',
+    });
+    assert.deepEqual(result, {
+      text: 'cloud-response',
+      provider: 'cloud',
+      model: 'cloud-model',
+      tokensUsed: 11,
+      requestedProvider: undefined,
+      requestedModel: 'cloud-model',
+      resolvedProvider: 'cloud',
+      resolvedModel: 'cloud-model',
+      fallbackUsed: false,
+      latencyMs: result.latencyMs,
+      routing: {
+        strategy: 'requested-model',
+        attemptedProviders: ['cloud'],
+        decisionReason: 'Model cloud-model requested explicitly',
+      },
+    });
+    assert.ok(typeof result.latencyMs === 'number');
+    assert.ok((result.latencyMs ?? -1) >= 0);
+  });
+
+  it('generate preserves internal fallback routing metadata on the safe compatibility path', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const callOrder: string[] = [];
+
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+    });
+    localProvider.generate = async () => {
+      callOrder.push('local-llm');
+      throw new LocalLLMError('ollama unavailable', 'ollama');
+    };
+
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      response: {
+        text: 'cloud-fallback-response',
+        provider: 'cloud',
+        model: 'cloud-model',
+        resolvedProvider: 'cloud',
+        resolvedModel: 'cloud-model',
+        fallbackUsed: false,
+        tokensUsed: 9,
+      },
+      onGenerate: () => {
+        callOrder.push('cloud');
+      },
+    });
+
+    router.register(cloudProvider);
+    router.register(localProvider);
+    router.setTransformerRegistry(registry);
+    router.setModelRouter(createMockModelRouter({ enabled: true, decision: null }));
+    registerPassthroughOutbound(registry, 'cloud');
+    registerPassthroughOutbound(registry, 'local-llm');
+
+    const result = await router.generate({
+      prompt: 'summarize this',
+      model: 'cloud-model',
+    });
+
+    assert.equal(result.text, 'cloud-fallback-response');
+    assert.equal(result.provider, 'cloud');
+    assert.equal(result.requestedModel, 'cloud-model');
+    assert.equal(result.resolvedProvider, 'cloud');
+    assert.equal(result.resolvedModel, 'cloud-model');
+    assert.equal(result.fallbackUsed, true);
+    assert.equal(result.tokensUsed, 9);
+    assert.deepEqual(result.routing, {
+      strategy: 'local-offload',
+      classification: {
+        task: 'summarization',
+        confidence: 0.75,
+        shouldOffload: true,
+        reason: 'Matched 1 keyword(s) for summarization',
+      },
+      attemptedProviders: ['local-llm', 'cloud'],
+      fallbackFrom: 'local-llm',
+      fallbackTo: 'cloud',
+      decisionReason: 'Matched 1 keyword(s) for summarization',
+    });
+    assert.deepEqual(callOrder, ['local-llm', 'cloud']);
+  });
+
   it('generateFromInternal preserves optimized request shaping on the local path', async () => {
     const savedOptimizeMessages = process.env['OPTIMIZE_MESSAGES_ENABLED'];
     process.env['OPTIMIZE_MESSAGES_ENABLED'] = 'true';
