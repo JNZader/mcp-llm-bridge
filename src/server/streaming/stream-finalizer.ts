@@ -1,6 +1,11 @@
 import type { StreamRecorder } from "../../core/cost-tracker.js";
+import {
+  buildStreamingExecutionResponseData,
+  createRouterExecutionContract,
+  type RouterExecutionContract,
+} from "../../core/router-execution-contract.js";
 import { getCircuitBreakerV2, type ResolvedStreamingProvider } from "../../core/router.js";
-import { buildRoutingMetadata, type RoutingMetadataOptions } from "../../core/router-shaping.js";
+import type { RoutingMetadataOptions } from "../../core/router-shaping.js";
 import type {
 	CaptureEndInput,
 	RequestLogger,
@@ -25,6 +30,7 @@ interface StreamingAttemptTelemetryInput {
 	inputTokens?: number;
 	outputTokens?: number;
 	routingMetadata?: ResolvedStreamingProvider["routingMetadata"];
+	executionContract?: RouterExecutionContract;
 	streamRecorder?: StreamRecorder;
 	recordResult?: ResolvedStreamingProvider["recordResult"];
 }
@@ -119,6 +125,7 @@ export async function finalizeStreamingAttemptSuccess(
 		inputTokens,
 		outputTokens,
 		responseData: buildStreamingResponseData({
+			executionContract: input.executionContract,
 			providerId,
 			requestedProvider,
 			requestedModel,
@@ -225,6 +232,7 @@ export async function finalizeStreamingAttemptAbort(
 		outputTokens,
 		error: resolvedError,
 		responseData: buildStreamingResponseData({
+			executionContract: input.executionContract,
 			providerId,
 			requestedProvider,
 			requestedModel,
@@ -245,10 +253,12 @@ interface StreamingResponseDataInput {
 	responseModel?: string;
 	attemptedProviders?: string[];
 	routingMetadata?: Omit<RoutingMetadataOptions, "attemptedProviders">;
+	executionContract?: RouterExecutionContract;
 }
 
 function buildStreamingResponseData(input: StreamingResponseDataInput) {
 	const {
+		executionContract,
 		providerId,
 		requestedProvider,
 		requestedModel,
@@ -257,22 +267,29 @@ function buildStreamingResponseData(input: StreamingResponseDataInput) {
 		attemptedProviders,
 		routingMetadata,
 	} = input;
-	const fallbackUsed =
-		attemptedProviders !== undefined && attemptedProviders.length > 0
-			? attemptedProviders[0] !== providerId
-			: false;
-	const routing = routingMetadata
-		? buildRoutingMetadata(
-				{ provider: providerId },
-				fallbackUsed,
-				{
-					...routingMetadata,
-					attemptedProviders: [...(attemptedProviders ?? [providerId])],
-				},
-			)
-		: attemptedProviders && attemptedProviders.length > 0
-			? { attemptedProviders: [...attemptedProviders] }
-			: undefined;
+	const contract =
+		executionContract ??
+		(routingMetadata
+			? (() => {
+					const fallbackContract = createRouterExecutionContract({
+						requestedProvider,
+						requestedModel,
+						routingMetadata,
+					});
+					for (const attemptedProvider of attemptedProviders ?? []) {
+						fallbackContract.recordAttempt(attemptedProvider);
+					}
+					return fallbackContract;
+				})()
+			: undefined);
+
+	if (contract) {
+		return buildStreamingExecutionResponseData(contract, {
+			providerId,
+			resolvedModel,
+			responseModel,
+		});
+	}
 
 	return {
 		stream: true,
@@ -282,7 +299,10 @@ function buildStreamingResponseData(input: StreamingResponseDataInput) {
 		requestedModel,
 		resolvedProvider: providerId,
 		resolvedModel,
-		fallbackUsed,
-		routing,
+		fallbackUsed:
+			attemptedProviders !== undefined && attemptedProviders.length > 0
+				? attemptedProviders[0] !== providerId
+				: false,
+		routing: attemptedProviders && attemptedProviders.length > 0 ? { attemptedProviders: [...attemptedProviders] } : undefined,
 	};
 }

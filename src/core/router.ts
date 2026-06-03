@@ -48,13 +48,18 @@ import {
   determineRoutingStrategy,
 } from './router-policy-plan.js';
 import {
-  buildRoutingMetadata,
   buildGenerateRequest,
+  buildRoutingMetadata,
   buildInternalRequest,
   type RoutingMetadataOptions,
   withInternalResolutionMetadata,
   withResolutionMetadata,
 } from './router-shaping.js';
+import {
+  buildInternalResolutionMetadataOptions,
+  createRouterExecutionContract,
+  type RouterExecutionContract,
+} from './router-execution-contract.js';
 import {
   createProviderErrorAccumulator,
   throwAllProvidersFailed,
@@ -70,6 +75,7 @@ export interface ResolvedStreamingProvider {
   request: InternalLLMRequest;
   streamTransformer: StreamingOutboundTransformer;
   routingMetadata?: Omit<RoutingMetadataOptions, 'attemptedProviders'>;
+  executionContract?: RouterExecutionContract;
   onSuccess?: () => void;
   recordResult: (input: {
     model?: string;
@@ -470,7 +476,6 @@ export class Router {
     const registry = this._transformerRegistry;
     const circuitBreaker = getCircuitBreakerV2();
     const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
-    const attemptedProviders: string[] = [];
 
     const plan = await buildInternalRoutingPlan({
       providers: this._providers,
@@ -498,6 +503,16 @@ export class Router {
       modelRouterDecision: plan.appliedModelRouterDecision,
       offloadClassification: plan.offloadClassification,
     });
+    const executionContract = createRouterExecutionContract({
+      requestedProvider: plan.requestedProvider,
+      requestedModel: request.model,
+      routingMetadata: {
+        strategy: routingStrategy,
+        classification: plan.classification ?? plan.offloadClassification,
+        modelRouterDecision: plan.appliedModelRouterDecision,
+        decisionReason,
+      },
+    });
 
     // 1. Check session stickiness
     if (plan.stickySession?.pinnedProviderId) {
@@ -505,7 +520,7 @@ export class Router {
       if (stickyProvider) {
         if (circuitBreaker.canExecute(stickyProvider.id, 'default', plan.routedModel).allowed) {
           try {
-            attemptedProviders.push(stickyProvider.id);
+            executionContract.recordAttempt(stickyProvider.id);
             const result = await tryProvider({
               provider: stickyProvider,
               request: buildInternalRequest(
@@ -521,18 +536,13 @@ export class Router {
                 routedEndpoint: plan.appliedModelRouterDecision?.endpoint,
                 ...telemetry,
             });
-            return withInternalResolutionMetadata(result, {
-              requestedProvider: plan.requestedProvider,
-              requestedModel: request.model,
-              resolvedProvider: stickyProvider.id,
-              resolvedModel: result.model,
-              fallbackUsed: attemptedProviders[0] !== stickyProvider.id,
-              attemptedProviders,
-              strategy: routingStrategy,
-              classification: plan.classification ?? plan.offloadClassification,
-              modelRouterDecision: plan.appliedModelRouterDecision,
-              decisionReason,
-            });
+            return withInternalResolutionMetadata(
+              result,
+              buildInternalResolutionMetadataOptions(executionContract, {
+                resolvedProvider: stickyProvider.id,
+                resolvedModel: result.model,
+              }),
+            );
           } catch {
             // Sticky provider failed — fall through to normal routing
             logger.warn(
@@ -569,7 +579,7 @@ export class Router {
 
     const providerErrors = createProviderErrorAccumulator();
     const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) => {
-      attemptedProviders.push(provider.id);
+      executionContract.recordAttempt(provider.id);
       return tryProvider({
         provider,
         request: buildInternalRequest(
@@ -602,18 +612,13 @@ export class Router {
         );
       }
 
-      return withInternalResolutionMetadata(attemptedResult.result, {
-        requestedProvider: plan.requestedProvider,
-        requestedModel: request.model,
-        resolvedProvider: attemptedResult.provider.id,
-        resolvedModel: attemptedResult.result.model,
-        fallbackUsed: attemptedProviders[0] !== attemptedResult.provider.id,
-        attemptedProviders,
-        strategy: routingStrategy,
-        classification: plan.classification ?? plan.offloadClassification,
-        modelRouterDecision: plan.appliedModelRouterDecision,
-        decisionReason,
-      });
+      return withInternalResolutionMetadata(
+        attemptedResult.result,
+        buildInternalResolutionMetadataOptions(executionContract, {
+          resolvedProvider: attemptedResult.provider.id,
+          resolvedModel: attemptedResult.result.model,
+        }),
+      );
     }
 
     throwAllProvidersFailed(providerErrors.errors);
@@ -683,6 +688,11 @@ export class Router {
         offloadClassification: plan.offloadClassification,
       }),
     } satisfies Omit<RoutingMetadataOptions, 'attemptedProviders'>;
+    const executionContract = createRouterExecutionContract({
+      requestedProvider: plan.requestedProvider,
+      requestedModel: request.model,
+      routingMetadata,
+    });
     const resolvedProviders: ResolvedStreamingProvider[] = [];
 
     for (const provider of orderedStreamingCandidates) {
@@ -700,6 +710,7 @@ export class Router {
           ),
           streamTransformer,
           routingMetadata,
+          executionContract,
           onSuccess:
             this._sessionManager && stickySession && stickyTtlMs !== null
               ? () => {
