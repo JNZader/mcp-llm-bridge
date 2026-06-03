@@ -4,7 +4,6 @@ import type { ChatCompletionsRequest } from "../../core/schemas.js";
 import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import {
-	createCanonicalResponse,
 	createOpenAIUsage,
 	normalizeOpenAIRequest,
 } from "../../protocol-converter/index.js";
@@ -204,12 +203,6 @@ function buildNonStreamingChatResponse(input: {
 	chatId: string;
 }) {
 	const { result, createdAtSeconds, chatId } = input;
-	const canonicalResponse = createCanonicalResponse(
-		chatId,
-		result.model,
-		result.text,
-		{ prompt: 0, completion: result.tokensUsed ?? 0 },
-	);
 	const usage =
 		typeof result.inputTokens === "number" && typeof result.outputTokens === "number"
 			? createOpenAIUsage({
@@ -219,14 +212,25 @@ function buildNonStreamingChatResponse(input: {
 			: createOpenAIUsage({
 				totalTokens: result.tokensUsed,
 			});
-
-	return {
-		...canonicalResponse,
-		usage,
+	const response = {
+		id: chatId,
+		model: result.model,
+		choices: [
+			{
+				index: 0,
+				message: {
+					role: "assistant",
+					content: result.text,
+				},
+				finish_reason: "stop",
+			},
+		],
 		object: "chat.completion",
 		created: createdAtSeconds,
 		x_gateway: buildGatewayMetadata(result),
 	};
+
+	return usage ? { ...response, usage } : response;
 }
 
 function mapInternalResultToNonStreamingChatResult(
@@ -236,7 +240,7 @@ function mapInternalResultToNonStreamingChatResult(
 		usage: {
 			inputTokens?: number;
 			outputTokens?: number;
-			totalTokens: number;
+			totalTokens?: number;
 		};
 		metadata?: Record<string, unknown>;
 	},

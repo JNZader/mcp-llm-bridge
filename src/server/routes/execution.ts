@@ -6,7 +6,6 @@ import type { CostTracker } from "../../core/cost-tracker.js";
 import type { Router } from "../../core/router.js";
 import { validateChatCompletions, validateGenerateRequest } from "../../core/schemas.js";
 import {
-	createCanonicalResponse,
 	createOpenAIUsage,
 } from "../../protocol-converter/index.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
@@ -38,6 +37,34 @@ export interface ExecutionRouteDeps {
 	vault: Vault;
 	costTracker?: CostTracker;
 	requestLogger?: RequestLogger;
+}
+
+export function buildStreamingFallbackChunkResponse(input: {
+	chatId: string;
+	result: {
+		text: string;
+		model: string;
+		tokensUsed?: number;
+	};
+	createdAtSeconds?: number;
+}) {
+	const { chatId, result, createdAtSeconds = Math.floor(Date.now() / 1000) } = input;
+	const usage = createOpenAIUsage({ totalTokens: result.tokensUsed });
+	const response = {
+		id: chatId,
+		model: result.model,
+		object: "chat.completion.chunk",
+		created: createdAtSeconds,
+		choices: [
+			{
+				index: 0,
+				delta: { content: result.text },
+				finish_reason: "stop",
+			},
+		],
+	};
+
+	return usage ? { ...response, usage } : response;
 }
 
 /**
@@ -83,27 +110,10 @@ function handleStreamingRequest(
 					});
 				},
 				writeFallbackResult: async (result) => {
-					const canonicalResponse = createCanonicalResponse(
-						chatId,
-						result.model,
-						result.text,
-						{ prompt: 0, completion: result.tokensUsed ?? 0 },
-					);
-
 					await stream.writeSSE({
-						data: JSON.stringify({
-							...canonicalResponse,
-							usage: createOpenAIUsage({ totalTokens: result.tokensUsed }),
-							object: "chat.completion.chunk",
-							created: Math.floor(Date.now() / 1000),
-							choices: [
-								{
-									index: 0,
-									delta: { content: result.text },
-									finish_reason: "stop",
-								},
-							],
-						}),
+						data: JSON.stringify(
+							buildStreamingFallbackChunkResponse({ chatId, result }),
+						),
 					});
 				},
 				writeTerminalError: async (error) => {

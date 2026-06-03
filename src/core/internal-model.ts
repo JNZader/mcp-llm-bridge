@@ -115,7 +115,7 @@ export const UsageSchema = z
   .object({
     inputTokens: z.number().int().nonnegative().optional(),
     outputTokens: z.number().int().nonnegative().optional(),
-    totalTokens: z.number().int().nonnegative(),
+    totalTokens: z.number().int().nonnegative().optional(),
   })
   .refine(
     (usage) =>

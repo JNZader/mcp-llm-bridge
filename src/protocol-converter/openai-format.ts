@@ -30,7 +30,9 @@ function hasExactSplit(usage: OpenAIUsageInput): usage is OpenAIUsageWithExactSp
 }
 
 export function createOpenAIUsage(usage: OpenAIUsageWithExactSplit): CanonicalUsage;
-export function createOpenAIUsage(usage: OpenAIUsageInput): { total_tokens: number } | CanonicalUsage;
+export function createOpenAIUsage(
+  usage: OpenAIUsageInput,
+): { total_tokens: number } | CanonicalUsage | undefined;
 export function createOpenAIUsage(usage: OpenAIUsageInput) {
   if (hasExactSplit(usage)) {
     return {
@@ -40,8 +42,12 @@ export function createOpenAIUsage(usage: OpenAIUsageInput) {
     };
   }
 
+  if (typeof usage.totalTokens !== 'number') {
+    return undefined;
+  }
+
   return {
-    total_tokens: usage.totalTokens ?? 0,
+    total_tokens: usage.totalTokens,
   };
 }
 

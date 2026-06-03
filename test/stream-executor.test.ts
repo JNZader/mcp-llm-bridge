@@ -10,6 +10,7 @@ import type { GenerateResponse } from "../src/core/types.js";
 import type { LLMProvider, ModelInfo } from "../src/core/types.js";
 import type { ResolvedStreamingProvider } from "../src/core/router.js";
 import { buildChatGenerateRequest } from "../src/server/http-helpers/chat-request.js";
+import { buildStreamingFallbackChunkResponse } from "../src/server/routes/execution.js";
 import { createStreamExecutor } from "../src/server/streaming/stream-executor.js";
 import type { InternalLLMChunk } from "../src/transformers/streaming.js";
 
@@ -365,6 +366,31 @@ describe("createStreamExecutor", () => {
 		assert.ok(
 			typeof (logged[0]?.responseData as GenerateResponse | undefined)?.latencyMs === "number",
 		);
+	});
+
+	it("omits usage in the zero-stream fallback SSE payload when usage is unknown", () => {
+		const response = buildStreamingFallbackChunkResponse({
+			chatId: "chatcmpl-test",
+			result: {
+				text: "fallback-via-internal",
+				model: "test-model",
+			},
+			createdAtSeconds: 1_700_000_000,
+		});
+
+		assert.deepEqual(response, {
+			id: "chatcmpl-test",
+			model: "test-model",
+			object: "chat.completion.chunk",
+			created: 1_700_000_000,
+			choices: [
+				{
+					index: 0,
+					delta: { content: "fallback-via-internal" },
+					finish_reason: "stop",
+				},
+			],
+		});
 	});
 
 	it("logs truthful routing metadata for successful streaming requests", async () => {

@@ -214,14 +214,13 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
 
     const latencyMs = Date.now() - attemptStartTime;
+    const usage = typeof result.tokensUsed === 'number' ? { totalTokens: result.tokensUsed } : {};
 
     const response: InternalLLMResponse = {
       content: result.text,
       model: result.model,
       finishReason: 'stop',
-      usage: {
-        totalTokens: result.tokensUsed ?? 0,
-      },
+      usage,
       metadata: {
         provider: result.provider,
         fallbackUsed: false,
@@ -234,7 +233,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     recordUsage(
       provider.id,
       result.model,
-      { totalTokens: result.tokensUsed },
+      usage,
       latencyMs,
       true,
       attempt,

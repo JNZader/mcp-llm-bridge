@@ -322,4 +322,47 @@ describe("chat-completions-service", () => {
 			routing: undefined,
 		});
 	});
+
+	it("omits usage when generateFromInternal reports usage as unknown", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+
+		const response = await executeNonStreamingChatCompletions({
+			prepared,
+			scope: {},
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "gpt-4o-mini", startTime: 0 }) as never,
+				captureEnd: async () => {},
+			} as never,
+			router: {
+				generateFromInternal: async () => ({
+					content: "done",
+					model: "gpt-4o-mini",
+					finishReason: "stop",
+					usage: {},
+					metadata: {
+						provider: "legacy-provider",
+						resolvedProvider: "legacy-provider",
+						resolvedModel: "gpt-4o-mini",
+						fallbackUsed: false,
+					},
+				}),
+			} as never,
+		});
+
+		assert.equal("usage" in response, false);
+		assert.deepEqual(response.x_gateway, {
+			requestedProvider: undefined,
+			requestedModel: undefined,
+			resolvedProvider: "legacy-provider",
+			resolvedModel: "gpt-4o-mini",
+			fallbackUsed: false,
+			tokensUsed: undefined,
+			inputTokens: undefined,
+			outputTokens: undefined,
+			routing: undefined,
+		});
+	});
 });
