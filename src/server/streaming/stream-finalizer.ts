@@ -1,5 +1,6 @@
 import type { StreamRecorder } from "../../core/cost-tracker.js";
 import { getCircuitBreakerV2, type ResolvedStreamingProvider } from "../../core/router.js";
+import { buildRoutingMetadata, type RoutingMetadataOptions } from "../../core/router-shaping.js";
 import type {
 	CaptureEndInput,
 	RequestLogger,
@@ -23,6 +24,7 @@ interface StreamingAttemptTelemetryInput {
 	totalTokens?: number;
 	inputTokens?: number;
 	outputTokens?: number;
+	routingMetadata?: ResolvedStreamingProvider["routingMetadata"];
 	streamRecorder?: StreamRecorder;
 	recordResult?: ResolvedStreamingProvider["recordResult"];
 }
@@ -87,6 +89,7 @@ export async function finalizeStreamingAttemptSuccess(
 		totalTokens,
 		inputTokens,
 		outputTokens,
+		routingMetadata,
 		streamRecorder,
 		recordResult,
 		finalizeRequestLog,
@@ -119,6 +122,7 @@ export async function finalizeStreamingAttemptSuccess(
 			resolvedModel,
 			responseModel,
 			attemptedProviders,
+			routingMetadata,
 		}),
 	});
 }
@@ -225,6 +229,7 @@ interface StreamingResponseDataInput {
 	resolvedModel: string;
 	responseModel?: string;
 	attemptedProviders?: string[];
+	routingMetadata?: Omit<RoutingMetadataOptions, "attemptedProviders">;
 }
 
 function buildStreamingResponseData(input: StreamingResponseDataInput) {
@@ -235,9 +240,22 @@ function buildStreamingResponseData(input: StreamingResponseDataInput) {
 		resolvedModel,
 		responseModel,
 		attemptedProviders,
+		routingMetadata,
 	} = input;
-	const routing =
-		attemptedProviders && attemptedProviders.length > 0
+	const fallbackUsed =
+		attemptedProviders !== undefined && attemptedProviders.length > 0
+			? attemptedProviders[0] !== providerId
+			: false;
+	const routing = routingMetadata
+		? buildRoutingMetadata(
+				{ provider: providerId },
+				fallbackUsed,
+				{
+					...routingMetadata,
+					attemptedProviders: [...(attemptedProviders ?? [providerId])],
+				},
+			)
+		: attemptedProviders && attemptedProviders.length > 0
 			? { attemptedProviders: [...attemptedProviders] }
 			: undefined;
 
@@ -249,10 +267,7 @@ function buildStreamingResponseData(input: StreamingResponseDataInput) {
 		requestedModel,
 		resolvedProvider: providerId,
 		resolvedModel,
-		fallbackUsed:
-			attemptedProviders !== undefined && attemptedProviders.length > 0
-				? attemptedProviders[0] !== providerId
-				: false,
+		fallbackUsed,
 		routing,
 	};
 }

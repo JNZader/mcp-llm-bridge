@@ -962,6 +962,12 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(alphaInternalRequest?.model, 'beta-model');
     assert.equal(streamingCandidates[0]?.provider.id, 'alpha');
     assert.equal(streamingCandidates[0]?.request.model, 'beta-model');
+    assert.deepEqual(streamingCandidates[0]?.routingMetadata, {
+      strategy: 'explicit-provider',
+      decisionReason: 'Provider alpha requested explicitly',
+      classification: null,
+      modelRouterDecision: null,
+    });
     assert.equal(streamingCandidates.length, 1);
     assert.equal(routeCalls, 0);
   });
@@ -1703,6 +1709,23 @@ describe('Router + ModelRouter integration', () => {
     });
 
     assert.ok(resolved);
+    assert.deepEqual(resolved?.routingMetadata, {
+      strategy: 'model-router',
+      classification: {
+        task: 'summarization',
+        confidence: 0.75,
+        shouldOffload: true,
+        reason: 'Matched 1 keyword(s) for summarization',
+      },
+      modelRouterDecision: {
+        endpoint: createMockEndpoint({ id: endpointId, provider: providerId, modelId: 'stream-model' }),
+        matchedRule: createMockRule({ id: 'rule-1', preferredModels: [endpointId] }),
+        reason: 'Primary model for summarization',
+        isFallback: false,
+        costTier: 'standard',
+      },
+      decisionReason: 'Primary model for summarization',
+    });
     resolved?.recordResult({
       model: 'stream-model',
       tokensIn: 3,

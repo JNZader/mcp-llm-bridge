@@ -51,6 +51,7 @@ import {
   buildRoutingMetadata,
   buildGenerateRequest,
   buildInternalRequest,
+  type RoutingMetadataOptions,
   withInternalResolutionMetadata,
   withResolutionMetadata,
 } from './router-shaping.js';
@@ -68,6 +69,7 @@ export interface ResolvedStreamingProvider {
   provider: LLMProvider;
   request: InternalLLMRequest;
   streamTransformer: StreamingOutboundTransformer;
+  routingMetadata?: Omit<RoutingMetadataOptions, 'attemptedProviders'>;
   onSuccess?: () => void;
   recordResult: (input: {
     model?: string;
@@ -665,6 +667,22 @@ export class Router {
     const orderedStreamingCandidates = plan.stickySession?.pinnedProviderId
       ? prioritizeProviderCandidate(plan.availableCandidates, plan.stickySession.pinnedProviderId)
       : plan.availableCandidates;
+    const routingMetadata = {
+      strategy: determineRoutingStrategy({
+        requestedProvider: plan.requestedProvider,
+        requestedModel: request.model,
+        modelRouterDecision: plan.appliedModelRouterDecision,
+        offloadClassification: plan.offloadClassification,
+      }),
+      classification: plan.classification ?? plan.offloadClassification,
+      modelRouterDecision: plan.appliedModelRouterDecision,
+      decisionReason: determineDecisionReason({
+        requestedProvider: plan.requestedProvider,
+        requestedModel: request.model,
+        modelRouterDecision: plan.appliedModelRouterDecision,
+        offloadClassification: plan.offloadClassification,
+      }),
+    } satisfies Omit<RoutingMetadataOptions, 'attemptedProviders'>;
     const resolvedProviders: ResolvedStreamingProvider[] = [];
 
     for (const provider of orderedStreamingCandidates) {
@@ -681,6 +699,7 @@ export class Router {
             routedEndpoint,
           ),
           streamTransformer,
+          routingMetadata,
           onSuccess:
             this._sessionManager && stickySession && stickyTtlMs !== null
               ? () => {

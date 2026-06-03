@@ -298,6 +298,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							requestedProvider: readCanonicalString(canonical, "provider"),
 							requestedModel: canonical.model,
 							attemptedProviders,
+							routingMetadata: resolved.routingMetadata,
 							attempts,
 							totalTokens,
 							inputTokens,

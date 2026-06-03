@@ -224,6 +224,10 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
+						routingMetadata: {
+							strategy: "explicit-provider",
+							decisionReason: "Provider primary-provider requested explicitly",
+						},
 					},
 					{
 						provider: { id: "backup-provider" },
@@ -236,6 +240,10 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
+						routingMetadata: {
+							strategy: "explicit-provider",
+							decisionReason: "Provider primary-provider requested explicitly",
+						},
 					},
 				],
 				generate: async () => {
@@ -290,7 +298,11 @@ describe("createStreamExecutor", () => {
 					resolvedModel: "backup-model",
 					fallbackUsed: true,
 					routing: {
+						strategy: "explicit-provider",
 						attemptedProviders: ["primary-provider", "backup-provider"],
+						fallbackFrom: "primary-provider",
+						fallbackTo: "backup-provider",
+						decisionReason: "Provider primary-provider requested explicitly",
 					},
 				},
 			},
