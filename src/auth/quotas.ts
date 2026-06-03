@@ -6,7 +6,7 @@
  */
 
 import type Database from 'better-sqlite3';
-import type { CostTracker } from '../core/cost-tracker.js';
+import { CostTracker } from '../core/cost-tracker.js';
 import type { RateLimitConfig } from './types.js';
 
 // ── Rate Limiting ────────────────────────────────────────────
@@ -40,16 +40,21 @@ interface CountRow {
  * @returns Whether the request is allowed and optional retry-after hint.
  */
 export function checkRateLimit(
-  db: Database.Database,
+  subject: Database.Database | CostTracker,
   apiKeyId: string,
   config: RateLimitConfig,
+  identity?: { userId?: string },
 ): RateLimitResult {
+  if (subject instanceof CostTracker) {
+    return subject.checkRateLimit({ apiKeyId, userId: identity?.userId }, config);
+  }
+
   // SQLite datetime('now') produces 'YYYY-MM-DD HH:MM:SS' (no T, no Z).
   // We must match that format for string comparison to work.
   const d = new Date(Date.now() - config.windowMs);
   const windowStart = d.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
 
-  const row = db
+  const row = subject
     .prepare<[string, string], CountRow>(
       `SELECT COUNT(*) as cnt, MIN(created_at) as oldest_at
        FROM usage_logs

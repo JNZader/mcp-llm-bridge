@@ -83,6 +83,22 @@ export interface UsageSummary {
   breakdown: UsageBreakdown[];
 }
 
+export interface AdmissionIdentity {
+  userId?: string;
+  apiKeyId?: string;
+}
+
+export interface AdmissionSnapshot extends UsageSummary {
+  oldestRequestAt: string | null;
+}
+
+export interface AdmissionQuery {
+  identity?: AdmissionIdentity;
+  from?: string;
+  to?: string;
+  scope?: 'budget' | 'rateLimit';
+}
+
 /** A single breakdown entry for aggregated queries. */
 export interface UsageBreakdown {
   key: string;
@@ -140,6 +156,33 @@ interface SummaryRow {
   avg_latency_ms: number;
 }
 
+interface OldestRow {
+  oldest_at: string | null;
+}
+
+interface BufferedUsageEntry extends UsageEntry {
+  keyName: string;
+  project: string;
+  recordedAt: string;
+  recordedAtMs: number;
+}
+
+interface InFlightUsageEntry {
+  id: number;
+  provider: string;
+  model: string;
+  project: string;
+  apiKeyId?: string;
+  userId?: string;
+  keyName: string;
+  startedAt: string;
+  startedAtMs: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  totalTokens?: number;
+  costUsd?: number | null;
+}
+
 // ── Configuration ──────────────────────────────────────────
 
 /** Default flush interval in milliseconds. */
@@ -161,9 +204,11 @@ export interface CostTrackerOptions {
 
 export class CostTracker {
   private readonly db: Database.Database;
-  private readonly buffer: UsageEntry[] = [];
+  private readonly buffer: BufferedUsageEntry[] = [];
+  private readonly inFlightStreams = new Map<number, InFlightUsageEntry>();
   private readonly flushInterval: ReturnType<typeof setInterval>;
   private readonly insertStmt: Database.Statement;
+  private nextInFlightStreamId = 1;
 
   constructor(options: CostTrackerOptions) {
     const { dbPath, flushIntervalMs = DEFAULT_FLUSH_INTERVAL_MS } = options;
@@ -208,10 +253,10 @@ export class CostTracker {
       entry.costUsd = calculateCost(entry.model, entry.tokensIn, entry.tokensOut);
     }
 
-    this.buffer.push({
+    this.buffer.push(this.createBufferedEntry({
       ...entry,
       totalTokens,
-    });
+    }));
   }
 
   /**
@@ -222,13 +267,13 @@ export class CostTracker {
 
     const entries = this.buffer.splice(0, this.buffer.length);
 
-    const insertMany = this.db.transaction((items: UsageEntry[]) => {
+    const insertMany = this.db.transaction((items: BufferedUsageEntry[]) => {
       for (const entry of items) {
         this.insertStmt.run({
           provider: entry.provider,
-          keyName: entry.apiKeyId ?? entry.keyName ?? 'default',
+          keyName: entry.keyName,
           model: entry.model,
-          project: entry.project ?? GLOBAL_PROJECT,
+          project: entry.project,
           userId: entry.userId ?? null,
           tokensIn: entry.tokensIn ?? null,
           tokensOut: entry.tokensOut ?? null,
@@ -403,6 +448,23 @@ export class CostTracker {
     return new StreamRecorder(this, provider, model, project, identity);
   }
 
+  admissionSnapshot(query: AdmissionQuery = {}): AdmissionSnapshot {
+    const filters = this.admissionQueryToUsageQuery(query);
+    const persisted = this.summary(filters);
+    const buffered = this.summarizeBufferedEntries(this.buffer, query);
+    const inFlight = this.summarizeInFlightEntries(query);
+    const oldestRequestAt = minIsoDate(
+      this.getOldestCreatedAt(filters),
+      buffered.oldestRequestAt,
+      inFlight.oldestRequestAt,
+    );
+
+    return {
+      ...mergeUsageSummaries([persisted, buffered, inFlight]),
+      oldestRequestAt,
+    };
+  }
+
   /**
    * Check whether a user has remaining budget for the current month.
    *
@@ -414,7 +476,7 @@ export class CostTracker {
    * @returns Whether the request is allowed and the remaining budget.
    */
   checkBudget(
-    identity: string | { userId?: string; apiKeyId?: string },
+    identity: string | AdmissionIdentity,
     budgetUsd: number,
   ): { allowed: boolean; remaining: number } {
     // Budget of 0 means unlimited
@@ -425,24 +487,50 @@ export class CostTracker {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-    const { userId, apiKeyId } = normalizeBudgetIdentity(identity);
-    const summary = this.summary({
-      ...(userId ? { userId } : apiKeyId ? { keyName: apiKeyId } : {}),
+    const normalizedIdentity = normalizeBudgetIdentity(identity);
+    const snapshot = this.admissionSnapshot({
+      identity: normalizedIdentity,
+      scope: 'budget',
       from: monthStart,
       to: now.toISOString(),
     });
 
-    if (summary.totalCostUsd === null) {
+    if (snapshot.totalCostUsd === null) {
       return { allowed: false, remaining: 0 };
     }
 
-    const used = summary.totalCostUsd;
+    const used = snapshot.totalCostUsd;
     const remaining = Math.max(0, budgetUsd - used);
 
     return {
       allowed: remaining > 0,
       remaining,
     };
+  }
+
+  checkRateLimit(
+    identity: AdmissionIdentity,
+    config: { max: number; windowMs: number },
+  ): { allowed: boolean; retryAfter?: number } {
+    const windowStart = new Date(Date.now() - config.windowMs).toISOString();
+    const snapshot = this.admissionSnapshot({
+      identity,
+      scope: 'rateLimit',
+      from: windowStart,
+      to: new Date().toISOString(),
+    });
+
+    if (snapshot.totalRequests >= config.max) {
+      const oldestAt = snapshot.oldestRequestAt
+        ? new Date(snapshot.oldestRequestAt).getTime()
+        : Date.now();
+      const windowEnd = oldestAt + config.windowMs;
+      const retryAfter = Math.max(0, windowEnd - Date.now());
+
+      return { allowed: false, retryAfter };
+    }
+
+    return { allowed: true };
   }
 
   /**
@@ -541,6 +629,157 @@ export class CostTracker {
       createdAt: row.created_at,
     };
   }
+
+  private createBufferedEntry(entry: UsageEntry): BufferedUsageEntry {
+    const recordedAtMs = Date.now();
+
+    return {
+      ...entry,
+      keyName: entry.apiKeyId ?? entry.keyName ?? 'default',
+      project: entry.project ?? GLOBAL_PROJECT,
+      recordedAt: new Date(recordedAtMs).toISOString(),
+      recordedAtMs,
+    };
+  }
+
+  private admissionQueryToUsageQuery(query: AdmissionQuery): UsageQuery {
+    const filters: UsageQuery = {
+      from: query.from ? toSqliteDateTime(query.from) : undefined,
+      to: query.to ? toSqliteDateTime(query.to) : undefined,
+    };
+
+    const identity = query.identity;
+    if (!identity) {
+      return filters;
+    }
+
+    if (query.scope === 'rateLimit') {
+      if (identity.apiKeyId) {
+        filters.keyName = identity.apiKeyId;
+      } else if (identity.userId) {
+        filters.userId = identity.userId;
+      }
+
+      return filters;
+    }
+
+    if (identity.userId) {
+      filters.userId = identity.userId;
+    } else if (identity.apiKeyId) {
+      filters.keyName = identity.apiKeyId;
+    }
+
+    return filters;
+  }
+
+  private buildWhereClause(filters: UsageQuery): { where: string; params: Record<string, unknown> } {
+    const conditions: string[] = [];
+    const params: Record<string, unknown> = {};
+
+    if (filters.provider) {
+      conditions.push('provider = @provider');
+      params['provider'] = filters.provider;
+    }
+    if (filters.keyName) {
+      conditions.push('key_name = @keyName');
+      params['keyName'] = filters.keyName;
+    }
+    if (filters.model) {
+      conditions.push('model = @model');
+      params['model'] = filters.model;
+    }
+    if (filters.project) {
+      conditions.push('project = @project');
+      params['project'] = filters.project;
+    }
+    if (filters.userId) {
+      conditions.push('user_id = @userId');
+      params['userId'] = filters.userId;
+    }
+    if (filters.from) {
+      conditions.push('created_at >= @from');
+      params['from'] = filters.from;
+    }
+    if (filters.to) {
+      conditions.push('created_at <= @to');
+      params['to'] = filters.to;
+    }
+
+    return {
+      where: conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '',
+      params,
+    };
+  }
+
+  private getOldestCreatedAt(filters: UsageQuery): string | null {
+    const { where, params } = this.buildWhereClause(filters);
+    const row = this.db.prepare(`SELECT MIN(created_at) as oldest_at FROM usage_logs ${where}`).get(params) as OldestRow;
+    return row?.oldest_at ?? null;
+  }
+
+  private summarizeBufferedEntries(
+    entries: readonly BufferedUsageEntry[],
+    query: AdmissionQuery,
+  ): AdmissionSnapshot {
+    return summarizeUsageEntries(
+      entries.filter((entry) => matchesAdmissionQuery(entry, query, entry.recordedAtMs)),
+      (entry) => entry.recordedAt,
+    );
+  }
+
+  private summarizeInFlightEntries(query: AdmissionQuery): AdmissionSnapshot {
+    return summarizeUsageEntries(
+      [...this.inFlightStreams.values()].filter((entry) => matchesAdmissionQuery(entry, query, entry.startedAtMs)),
+      (entry) => entry.startedAt,
+    );
+  }
+
+  registerInFlightStream(
+    provider: string,
+    model: string,
+    project?: string,
+    identity?: AdmissionIdentity,
+  ): number {
+    const streamId = this.nextInFlightStreamId++;
+    const startedAtMs = Date.now();
+
+    this.inFlightStreams.set(streamId, {
+      id: streamId,
+      provider,
+      model,
+      project: project ?? GLOBAL_PROJECT,
+      apiKeyId: identity?.apiKeyId,
+      userId: identity?.userId,
+      keyName: identity?.apiKeyId ?? 'default',
+      startedAt: new Date(startedAtMs).toISOString(),
+      startedAtMs,
+    });
+
+    return streamId;
+  }
+
+  updateInFlightStream(streamId: number, tokens?: { tokensIn?: number; tokensOut?: number }): void {
+    const current = this.inFlightStreams.get(streamId);
+    if (!current) {
+      return;
+    }
+
+    const nextTokensIn = tokens?.tokensIn !== undefined ? tokens.tokensIn : current.tokensIn;
+    const nextTokensOut = tokens?.tokensOut !== undefined ? tokens.tokensOut : current.tokensOut;
+    const hasExactSplit = typeof nextTokensIn === 'number' && typeof nextTokensOut === 'number';
+
+    this.inFlightStreams.set(streamId, {
+      ...current,
+      tokensIn: nextTokensIn,
+      tokensOut: nextTokensOut,
+      totalTokens: hasExactSplit ? nextTokensIn + nextTokensOut : undefined,
+      costUsd: hasExactSplit ? calculateCost(current.model, nextTokensIn, nextTokensOut) : undefined,
+    });
+  }
+
+  completeInFlightStream(streamId: number): void {
+    this.inFlightStreams.delete(streamId);
+  }
 }
 
 function hasExactSplitUsage(entry: Pick<UsageEntry, 'tokensIn' | 'tokensOut'>): entry is {
@@ -573,6 +812,7 @@ export class StreamRecorder {
   private _hasTokensOut = false;
   private _finished = false;
   private readonly _startTime: number;
+  private readonly _streamId: number;
 
   constructor(
     private readonly tracker: CostTracker,
@@ -582,6 +822,7 @@ export class StreamRecorder {
     private readonly identity?: { apiKeyId?: string; userId?: string },
   ) {
     this._startTime = Date.now();
+    this._streamId = this.tracker.registerInFlightStream(provider, model, project, identity);
   }
 
   /**
@@ -598,6 +839,8 @@ export class StreamRecorder {
       this._tokensOut = tokens.tokensOut;
       this._hasTokensOut = true;
     }
+
+    this.tracker.updateInFlightStream(this._streamId, tokens);
   }
 
   /**
@@ -606,6 +849,7 @@ export class StreamRecorder {
   finish(errorMessage?: string): void {
     if (this._finished) return;
     this._finished = true;
+    this.tracker.completeInFlightStream(this._streamId);
 
     const latencyMs = Date.now() - this._startTime;
 
@@ -637,4 +881,149 @@ export class StreamRecorder {
   get tokensOut(): number {
     return this._tokensOut;
   }
+}
+
+function matchesAdmissionQuery(
+  entry: { userId?: string | null; keyName?: string; apiKeyId?: string },
+  query: AdmissionQuery,
+  timestampMs: number,
+): boolean {
+  if (!matchesDateRange(timestampMs, query.from, query.to)) {
+    return false;
+  }
+
+  const identity = query.identity;
+  if (!identity?.userId && !identity?.apiKeyId) {
+    return true;
+  }
+
+  if (query.scope === 'rateLimit') {
+    if (identity.apiKeyId) {
+      return (entry.apiKeyId ?? entry.keyName ?? 'default') === identity.apiKeyId;
+    }
+
+    return entry.userId === identity.userId;
+  }
+
+  if (identity.userId) {
+    return entry.userId === identity.userId;
+  }
+
+  return (entry.apiKeyId ?? entry.keyName ?? 'default') === identity.apiKeyId;
+}
+
+function matchesDateRange(timestampMs: number, from?: string, to?: string): boolean {
+  const fromMs = from ? Date.parse(from) : undefined;
+  const toMs = to ? Date.parse(to) : undefined;
+
+  if (fromMs !== undefined && Number.isFinite(fromMs) && timestampMs < fromMs) {
+    return false;
+  }
+  if (toMs !== undefined && Number.isFinite(toMs) && timestampMs > toMs) {
+    return false;
+  }
+
+  return true;
+}
+
+function summarizeUsageEntries<T extends {
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+  totalTokens?: number | null;
+  costUsd?: number | null;
+  latencyMs?: number;
+}>(entries: readonly T[], getTimestamp: (entry: T) => string): AdmissionSnapshot {
+  const totalRequests = entries.length;
+  const totalTokensIn = entries.reduce((sum, entry) => sum + (entry.tokensIn ?? 0), 0);
+  const totalTokensOut = entries.reduce((sum, entry) => sum + (entry.tokensOut ?? 0), 0);
+  const totalTokens = entries.reduce(
+    (sum, entry) => sum + resolveTotalTokens(entry),
+    0,
+  );
+  const knownCostUsd = entries.reduce((sum, entry) => sum + (entry.costUsd ?? 0), 0);
+  const unknownCostRequestCount = entries.reduce(
+    (sum, entry) => sum + (entry.costUsd == null ? 1 : 0),
+    0,
+  );
+  const avgLatencyMs = totalRequests === 0
+    ? 0
+    : Math.round(entries.reduce((sum, entry) => sum + (entry.latencyMs ?? 0), 0) / totalRequests);
+
+  return {
+    totalRequests,
+    totalTokensIn,
+    totalTokensOut,
+    totalTokens,
+    totalCostUsd: totalRequests === 0
+      ? 0
+      : unknownCostRequestCount > 0
+        ? null
+        : knownCostUsd,
+    knownCostUsd,
+    unknownCostRequestCount,
+    hasUnknownCost: unknownCostRequestCount > 0,
+    avgLatencyMs,
+    breakdown: [],
+    oldestRequestAt: totalRequests > 0 ? minIsoDate(...entries.map(getTimestamp)) : null,
+  };
+}
+
+function resolveTotalTokens(entry: {
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+  totalTokens?: number | null;
+}): number {
+  if (typeof entry.tokensIn === 'number' && typeof entry.tokensOut === 'number') {
+    return entry.tokensIn + entry.tokensOut;
+  }
+
+  return entry.totalTokens ?? 0;
+}
+
+function mergeUsageSummaries(summaries: readonly UsageSummary[]): UsageSummary {
+  const totalRequests = summaries.reduce((sum, summary) => sum + summary.totalRequests, 0);
+  const knownCostUsd = summaries.reduce((sum, summary) => sum + summary.knownCostUsd, 0);
+  const unknownCostRequestCount = summaries.reduce(
+    (sum, summary) => sum + summary.unknownCostRequestCount,
+    0,
+  );
+  const weightedLatencySum = summaries.reduce(
+    (sum, summary) => sum + summary.avgLatencyMs * summary.totalRequests,
+    0,
+  );
+
+  return {
+    totalRequests,
+    totalTokensIn: summaries.reduce((sum, summary) => sum + summary.totalTokensIn, 0),
+    totalTokensOut: summaries.reduce((sum, summary) => sum + summary.totalTokensOut, 0),
+    totalTokens: summaries.reduce((sum, summary) => sum + summary.totalTokens, 0),
+    totalCostUsd: totalRequests === 0
+      ? 0
+      : unknownCostRequestCount > 0
+        ? null
+        : knownCostUsd,
+    knownCostUsd,
+    unknownCostRequestCount,
+    hasUnknownCost: unknownCostRequestCount > 0,
+    avgLatencyMs: totalRequests === 0 ? 0 : Math.round(weightedLatencySum / totalRequests),
+    breakdown: [],
+  };
+}
+
+function minIsoDate(...values: Array<string | null | undefined>): string | null {
+  const normalized = values.filter((value): value is string => typeof value === 'string');
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  return normalized.reduce((min, current) => current < min ? current : min);
+}
+
+function toSqliteDateTime(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
 }

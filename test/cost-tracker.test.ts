@@ -307,6 +307,80 @@ describe('CostTracker', () => {
     assert.equal(summary.breakdown.length, 2);
   });
 
+  it('admission snapshot includes buffered usage before flush', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    tracker.record({
+      provider: 'openai',
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      model: 'gpt-4o',
+      tokensIn: 10,
+      tokensOut: 20,
+      costUsd: 7,
+      latencyMs: 50,
+      success: true,
+    });
+
+    const snapshot = tracker.admissionSnapshot({
+      identity: { userId: 'user-1', apiKeyId: 'key-1' },
+      scope: 'budget',
+    });
+
+    assert.equal(snapshot.totalRequests, 1);
+    assert.equal(snapshot.totalCostUsd, 7);
+    assert.equal(snapshot.knownCostUsd, 7);
+  });
+
+  it('admission snapshot includes in-flight stream usage and removes it after finish', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    const recorder = tracker.recordStream('openai', 'gpt-4o', 'test-project', {
+      userId: 'user-1',
+      apiKeyId: 'key-1',
+    });
+    recorder.addChunk({ tokensIn: 10, tokensOut: 20 }, 0);
+
+    const activeSnapshot = tracker.admissionSnapshot({
+      identity: { userId: 'user-1', apiKeyId: 'key-1' },
+      scope: 'budget',
+    });
+    assert.equal(activeSnapshot.totalRequests, 1);
+    assert.ok(Math.abs((activeSnapshot.totalCostUsd ?? 0) - 0.000225) < 1e-12);
+
+    recorder.finish();
+
+    const finalizedSnapshot = tracker.admissionSnapshot({
+      identity: { userId: 'user-1', apiKeyId: 'key-1' },
+      scope: 'budget',
+    });
+    assert.equal(finalizedSnapshot.totalRequests, 1);
+    assert.ok(Math.abs((finalizedSnapshot.totalCostUsd ?? 0) - 0.000225) < 1e-12);
+  });
+
+  it('admission snapshot does not invent spend for unknown-cost streaming usage', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    const recorder = tracker.recordStream('anthropic', 'claude-3', 'test-project', {
+      userId: 'user-1',
+      apiKeyId: 'key-1',
+    });
+    recorder.addChunk({ tokensOut: 20 }, 0);
+
+    const snapshot = tracker.admissionSnapshot({
+      identity: { userId: 'user-1', apiKeyId: 'key-1' },
+      scope: 'budget',
+    });
+
+    assert.equal(snapshot.totalRequests, 1);
+    assert.equal(snapshot.totalCostUsd, null);
+    assert.equal(snapshot.knownCostUsd, 0);
+    assert.equal(snapshot.unknownCostRequestCount, 1);
+  });
+
   it('destroy flushes remaining buffer', () => {
     dbPath = tempDbPath();
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });

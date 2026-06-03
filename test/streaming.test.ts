@@ -322,6 +322,36 @@ describe('StreamRecorder', () => {
       teardown();
     }
   });
+
+  it('counts active stream usage during admission and removes in-flight state after finish without double-counting', () => {
+    setup();
+    try {
+      const recorder = tracker.recordStream('openai', 'gpt-4o', 'test-project', {
+        userId: 'user-1',
+        apiKeyId: 'key-1',
+      });
+
+      recorder.addChunk({ tokensIn: 10, tokensOut: 50 }, 200);
+
+      const activeSnapshot = tracker.admissionSnapshot({
+        identity: { userId: 'user-1', apiKeyId: 'key-1' },
+        scope: 'budget',
+      });
+      assert.equal(activeSnapshot.totalRequests, 1);
+      assert.equal(activeSnapshot.totalTokens, 60);
+
+      recorder.finish();
+
+      const finalizedSnapshot = tracker.admissionSnapshot({
+        identity: { userId: 'user-1', apiKeyId: 'key-1' },
+        scope: 'budget',
+      });
+      assert.equal(finalizedSnapshot.totalRequests, 1);
+      assert.equal(finalizedSnapshot.totalTokens, 60);
+    } finally {
+      teardown();
+    }
+  });
 });
 
 // ── OpenAI Stream Chunk Parsing ─────────────────────────────

@@ -63,10 +63,10 @@ export function apiKeyAuth(db: Database.Database, costTracker?: CostTracker) {
     }
 
     // Check rate limit
-    const rateLimitResult = checkRateLimit(db, apiKey.id, {
+    const rateLimitResult = checkRateLimit(costTracker ?? db, apiKey.id, {
       max: apiKey.rateLimitMax,
       windowMs: apiKey.rateLimitWindowMs,
-    });
+    }, { userId: apiKey.userId });
 
     if (!rateLimitResult.allowed) {
       const retryAfterSec = Math.ceil((rateLimitResult.retryAfter ?? 0) / 1000);

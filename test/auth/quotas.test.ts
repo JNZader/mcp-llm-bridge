@@ -101,6 +101,38 @@ describe('checkRateLimit', () => {
     const result = checkRateLimit(db, 'key-1', { max: 10, windowMs: 60_000 });
     assert.equal(result.allowed, true);
   });
+
+  it('counts buffered and in-flight requests for the same key when using CostTracker', () => {
+    const trackerPath = join(tmpdir(), `mlb-test-${randomUUID()}.db`);
+    const tracker = new CostTracker({ dbPath: trackerPath, flushIntervalMs: 999_999 });
+
+    try {
+      tracker.record({
+        provider: 'test',
+        apiKeyId: 'key-1',
+        userId: 'user-1',
+        model: 'test-model',
+        tokensIn: 1,
+        tokensOut: 1,
+        costUsd: 0.01,
+        latencyMs: 10,
+        success: true,
+      });
+      const recorder = tracker.recordStream('test', 'test-model', '_global', {
+        userId: 'user-1',
+        apiKeyId: 'key-1',
+      });
+
+      const result = checkRateLimit(tracker, 'key-1', { max: 2, windowMs: 60_000 }, { userId: 'user-1' });
+      assert.equal(result.allowed, false);
+      assert.ok((result.retryAfter ?? 0) >= 0);
+
+      recorder.finish();
+    } finally {
+      tracker.destroy();
+      try { unlinkSync(trackerPath); } catch { /* ignore */ }
+    }
+  });
 });
 
 describe('checkBudget (via CostTracker)', () => {
@@ -259,5 +291,55 @@ describe('checkBudget (via CostTracker)', () => {
     const result = checkBudget(costTracker, { apiKeyId: 'key-1' }, 50);
     assert.equal(result.allowed, true);
     assert.equal(result.remaining, 25);
+  });
+
+  it('includes buffered usage before flush', () => {
+    costTracker.record({
+      provider: 'test',
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      model: 'test-model',
+      tokensIn: 100,
+      tokensOut: 100,
+      costUsd: 80,
+      latencyMs: 100,
+      success: true,
+    });
+
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 100);
+    assert.equal(result.allowed, true);
+    assert.equal(result.remaining, 20);
+  });
+
+  it('counts active stream usage while streaming and does not double-count after finalization', () => {
+    const recorder = costTracker.recordStream('openai', 'gpt-4o', '_global', {
+      userId: 'user-1',
+      apiKeyId: 'key-1',
+    });
+    recorder.addChunk({ tokensIn: 1_000_000, tokensOut: 1_000_000 }, 0);
+
+    const activeResult = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 20);
+    assert.equal(activeResult.allowed, true);
+    assert.equal(activeResult.remaining, 7.5);
+
+    recorder.finish();
+
+    const finalizedResult = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 20);
+    assert.equal(finalizedResult.allowed, true);
+    assert.equal(finalizedResult.remaining, 7.5);
+  });
+
+  it('does not invent spend for unknown-cost active streams', () => {
+    const recorder = costTracker.recordStream('anthropic', 'claude-3', '_global', {
+      userId: 'user-1',
+      apiKeyId: 'key-1',
+    });
+    recorder.addChunk({ tokensOut: 200 }, 0);
+
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 100);
+    assert.equal(result.allowed, false);
+    assert.equal(result.remaining, 0);
+
+    recorder.finish();
   });
 });
