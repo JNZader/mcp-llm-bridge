@@ -5,6 +5,7 @@ import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import {
 	createCanonicalResponse,
+	createOpenAIUsage,
 	normalizeOpenAIRequest,
 } from "../../protocol-converter/index.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
@@ -23,6 +24,8 @@ interface GatewayMetadataInput {
 	resolvedModel?: string;
 	fallbackUsed?: boolean;
 	tokensUsed?: number;
+	inputTokens?: number;
+	outputTokens?: number;
 	routing?: { attemptedProviders?: string[] } & Record<string, unknown>;
 }
 
@@ -174,6 +177,8 @@ async function finalizeNonStreamingSuccess(
 		provider: result.resolvedProvider,
 		model: result.resolvedModel,
 		totalTokens: result.tokensUsed,
+		inputTokens: result.inputTokens,
+		outputTokens: result.outputTokens,
 		attempts: resolveAttemptsFromRouting(result),
 		responseData: JSON.stringify(result),
 	});
@@ -205,9 +210,19 @@ function buildNonStreamingChatResponse(input: {
 		result.text,
 		{ prompt: 0, completion: result.tokensUsed ?? 0 },
 	);
+	const usage =
+		typeof result.inputTokens === "number" && typeof result.outputTokens === "number"
+			? createOpenAIUsage({
+				promptTokens: result.inputTokens,
+				completionTokens: result.outputTokens,
+			})
+			: createOpenAIUsage({
+				totalTokens: result.tokensUsed,
+			});
 
 	return {
 		...canonicalResponse,
+		usage,
 		object: "chat.completion",
 		created: createdAtSeconds,
 		x_gateway: buildGatewayMetadata(result),
@@ -218,7 +233,7 @@ function mapInternalResultToNonStreamingChatResult(
 	result: {
 		content: string;
 		model: string;
-		usage: { totalTokens: number };
+		usage: { inputTokens: number; outputTokens: number; totalTokens: number };
 		metadata?: Record<string, unknown>;
 	},
 ): NonStreamingChatResult {
@@ -234,6 +249,8 @@ function mapInternalResultToNonStreamingChatResult(
 		provider,
 		model: result.model,
 		tokensUsed: result.usage.totalTokens,
+		inputTokens: result.usage.inputTokens,
+		outputTokens: result.usage.outputTokens,
 		requestedProvider: readMetadataString(metadata, "requestedProvider"),
 		requestedModel: readMetadataString(metadata, "requestedModel"),
 		resolvedProvider,
@@ -269,6 +286,8 @@ function buildGatewayMetadata(result: GatewayMetadataInput) {
 		resolvedModel: result.resolvedModel,
 		fallbackUsed: result.fallbackUsed,
 		tokensUsed: result.tokensUsed,
+		inputTokens: result.inputTokens,
+		outputTokens: result.outputTokens,
 		routing: result.routing,
 	};
 }

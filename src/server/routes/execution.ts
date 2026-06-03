@@ -5,7 +5,10 @@ import { streamSSE } from "hono/streaming";
 import type { CostTracker } from "../../core/cost-tracker.js";
 import type { Router } from "../../core/router.js";
 import { validateChatCompletions, validateGenerateRequest } from "../../core/schemas.js";
-import { createCanonicalResponse } from "../../protocol-converter/index.js";
+import {
+	createCanonicalResponse,
+	createOpenAIUsage,
+} from "../../protocol-converter/index.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { Vault } from "../../vault/vault.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
@@ -90,6 +93,7 @@ function handleStreamingRequest(
 					await stream.writeSSE({
 						data: JSON.stringify({
 							...canonicalResponse,
+							usage: createOpenAIUsage({ totalTokens: result.tokensUsed }),
 							object: "chat.completion.chunk",
 							created: Math.floor(Date.now() / 1000),
 							choices: [

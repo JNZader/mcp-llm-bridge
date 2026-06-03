@@ -795,9 +795,23 @@ describe('GET /v1/logs', () => {
         });
 
         assert.equal(res.status, 200);
-        assert.match(res.data, /"object":"chat\.completion\.chunk"/);
-        assert.match(res.data, /Fallback response/);
-        assert.match(res.data, /data: \[DONE\]/);
+			assert.match(res.data, /"object":"chat\.completion\.chunk"/);
+			assert.match(res.data, /Fallback response/);
+			assert.match(res.data, /data: \[DONE\]/);
+			const firstEventLine = res.data
+				.split('\n')
+				.find((line) => line.startsWith('data: {'));
+			assert.ok(firstEventLine);
+			const payload = JSON.parse(firstEventLine.slice(6)) as {
+				usage?: {
+					prompt_tokens?: number;
+					completion_tokens?: number;
+					total_tokens?: number;
+				};
+			};
+			assert.equal(payload.usage?.total_tokens, 5);
+			assert.equal(payload.usage?.prompt_tokens, undefined);
+			assert.equal(payload.usage?.completion_tokens, undefined);
 			assert.deepEqual(observedRequest, {
 				prompt: 'user: First question\nassistant: First answer\nuser: Second question',
 				system: 'You are terse.',

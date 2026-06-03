@@ -98,6 +98,8 @@ describe("chat-completions-service", () => {
 						provider?: string;
 						model?: string;
 						totalTokens?: number;
+						inputTokens?: number;
+						outputTokens?: number;
 						attempts?: number;
 						responseData?: string;
 						error?: Error;
@@ -114,8 +116,8 @@ describe("chat-completions-service", () => {
 						model: "gpt-4o-mini",
 						finishReason: "stop",
 						usage: {
-							inputTokens: 0,
-							outputTokens: 9,
+							inputTokens: 4,
+							outputTokens: 5,
 							totalTokens: 9,
 						},
 						metadata: {
@@ -160,12 +162,16 @@ describe("chat-completions-service", () => {
 				provider: "mock-provider",
 				model: "gpt-4o-mini",
 				totalTokens: 9,
+				inputTokens: 4,
+				outputTokens: 5,
 				attempts: 1,
 				responseData: JSON.stringify({
 					text: "Strict mode catches more bugs.",
 					provider: "mock-provider",
 					model: "gpt-4o-mini",
 					tokensUsed: 9,
+					inputTokens: 4,
+					outputTokens: 5,
 					requestedProvider: "openai",
 					requestedModel: "gpt-4o-mini",
 					resolvedProvider: "mock-provider",
@@ -190,8 +196,8 @@ describe("chat-completions-service", () => {
 				},
 			],
 			usage: {
-				prompt_tokens: 0,
-				completion_tokens: 9,
+				prompt_tokens: 4,
+				completion_tokens: 5,
 				total_tokens: 9,
 			},
 			object: "chat.completion",
@@ -203,6 +209,8 @@ describe("chat-completions-service", () => {
 				resolvedModel: "gpt-4o-mini",
 				fallbackUsed: false,
 				tokensUsed: 9,
+				inputTokens: 4,
+				outputTokens: 5,
 				routing: { strategy: "mock", attemptedProviders: ["mock-provider"] },
 			},
 		});

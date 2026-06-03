@@ -3,7 +3,47 @@
  * Canonical format helpers since OpenAI is the internal standard
  */
 
-import type { CanonicalRequest, CanonicalResponse, CanonicalMessage } from './types.js';
+import type {
+  CanonicalRequest,
+  CanonicalResponse,
+  CanonicalMessage,
+  CanonicalUsage,
+} from './types.js';
+
+export interface OpenAIUsageInput {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+interface OpenAIUsageWithExactSplit {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens?: number;
+}
+
+function hasExactSplit(usage: OpenAIUsageInput): usage is OpenAIUsageWithExactSplit {
+  return (
+    typeof usage.promptTokens === 'number' &&
+    typeof usage.completionTokens === 'number'
+  );
+}
+
+export function createOpenAIUsage(usage: OpenAIUsageWithExactSplit): CanonicalUsage;
+export function createOpenAIUsage(usage: OpenAIUsageInput): { total_tokens: number } | CanonicalUsage;
+export function createOpenAIUsage(usage: OpenAIUsageInput) {
+  if (hasExactSplit(usage)) {
+    return {
+      prompt_tokens: usage.promptTokens,
+      completion_tokens: usage.completionTokens,
+      total_tokens: usage.promptTokens + usage.completionTokens,
+    };
+  }
+
+  return {
+    total_tokens: usage.totalTokens ?? 0,
+  };
+}
 
 // OpenAI is the canonical format, so minimal transformation needed
 export function normalizeOpenAIRequest(request: unknown): CanonicalRequest {
@@ -76,10 +116,9 @@ export function createCanonicalResponse(
       },
       finish_reason: 'stop',
     }],
-    usage: {
-      prompt_tokens: usage.prompt,
-      completion_tokens: usage.completion,
-      total_tokens: usage.prompt + usage.completion,
-    },
+    usage: createOpenAIUsage({
+      promptTokens: usage.prompt,
+      completionTokens: usage.completion,
+    }),
   };
 }

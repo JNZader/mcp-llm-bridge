@@ -111,6 +111,9 @@ describe("createStreamExecutor", () => {
 			provider?: string;
 			model?: string;
 			attempts?: number;
+			totalTokens?: number;
+			inputTokens?: number;
+			outputTokens?: number;
 			responseData?: unknown;
 		}> = [];
 		const canonical = {
@@ -159,6 +162,9 @@ describe("createStreamExecutor", () => {
 						provider?: string;
 						model?: string;
 						attempts?: number;
+						totalTokens?: number;
+						inputTokens?: number;
+						outputTokens?: number;
 						responseData?: unknown;
 					},
 				) => {
@@ -166,6 +172,9 @@ describe("createStreamExecutor", () => {
 						provider: input?.provider,
 						model: input?.model,
 						attempts: input?.attempts,
+						totalTokens: input?.totalTokens,
+						inputTokens: input?.inputTokens,
+						outputTokens: input?.outputTokens,
 						responseData: input?.responseData,
 					});
 				},
@@ -194,6 +203,9 @@ describe("createStreamExecutor", () => {
 				provider: "mock",
 				model: "test-model",
 				attempts: 2,
+				totalTokens: 3,
+				inputTokens: undefined,
+				outputTokens: undefined,
 				responseData: fallbackResult,
 			},
 		]);

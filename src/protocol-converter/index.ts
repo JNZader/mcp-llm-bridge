@@ -37,4 +37,5 @@ export {
   normalizeOpenAIRequest,
   validateOpenAIResponse,
   createCanonicalResponse,
+  createOpenAIUsage,
 } from './openai-format.js';
