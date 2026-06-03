@@ -95,7 +95,7 @@ describe('router-telemetry', () => {
       assert.equal(records[0]?.tokensIn, null);
       assert.equal(records[0]?.tokensOut, null);
       assert.equal(records[0]?.totalTokens, 13);
-      assert.equal(records[0]?.costUsd, 0);
+      assert.equal(records[0]?.costUsd, null);
     } finally {
       tracker.destroy();
       rmSync(dbPath, { force: true });

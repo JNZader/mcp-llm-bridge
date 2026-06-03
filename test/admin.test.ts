@@ -179,7 +179,14 @@ describe('GET /v1/admin/overview', () => {
       providers: Array<{ id: string; name: string; type: string; available: boolean }>;
       groups: Array<{ id: string; name: string; memberCount: number }>;
       circuitBreakers: { total: number; open: number; closed: number; halfOpen: number };
-      usage: { totalRequests: number; totalCost: number; totalTokens: number };
+      usage: {
+        totalRequests: number;
+        totalCost: number | null;
+        knownCost: number;
+        unknownCostRequestCount: number;
+        hasUnknownCost: boolean;
+        totalTokens: number;
+      };
       system: { uptime: number; version: string; mode: string };
     };
 
@@ -197,7 +204,10 @@ describe('GET /v1/admin/overview', () => {
 
     // Usage section
     assert.ok(typeof data.usage.totalRequests === 'number');
-    assert.ok(typeof data.usage.totalCost === 'number');
+    assert.ok(data.usage.totalCost === null || typeof data.usage.totalCost === 'number');
+    assert.ok(typeof data.usage.knownCost === 'number');
+    assert.ok(typeof data.usage.unknownCostRequestCount === 'number');
+    assert.ok(typeof data.usage.hasUnknownCost === 'boolean');
     assert.ok(typeof data.usage.totalTokens === 'number');
 
     // System section
@@ -220,7 +230,7 @@ describe('GET /v1/admin/overview', () => {
     }
   });
 
-  it('reports truthful total token volume when usage is total-only', async () => {
+  it('reports truthful unknown-cost totals in admin overview', async () => {
     costTracker.record({
       provider: 'openai',
       model: 'gpt-4o',
@@ -243,17 +253,27 @@ describe('GET /v1/admin/overview', () => {
     assert.equal(res.status, 200);
 
     const data = res.data as {
-      usage: { totalRequests: number; totalCost: number; totalTokens: number };
+      usage: {
+        totalRequests: number;
+        totalCost: number | null;
+        knownCost: number;
+        unknownCostRequestCount: number;
+        hasUnknownCost: boolean;
+        totalTokens: number;
+      };
     };
 
     assert.ok(data.usage.totalRequests >= 2);
-    assert.ok(data.usage.totalCost >= 0.25);
+    assert.equal(data.usage.totalCost, null);
+    assert.ok(data.usage.knownCost >= 0.25);
+    assert.ok(data.usage.unknownCostRequestCount >= 1);
+    assert.equal(data.usage.hasUnknownCost, true);
     assert.ok(data.usage.totalTokens >= 24);
   });
 });
 
 describe('GET /v1/usage/summary', () => {
-  it('exposes truthful total tokens separately from exact splits', async () => {
+  it('exposes truthful totals when some rows have unknown cost', async () => {
     costTracker.record({
       provider: 'summary-provider',
       model: 'summary-model-exact',
@@ -280,14 +300,57 @@ describe('GET /v1/usage/summary', () => {
       totalTokensIn: number;
       totalTokensOut: number;
       totalTokens: number;
-      totalCostUsd: number;
+      totalCostUsd: number | null;
+      knownCostUsd: number;
+      unknownCostRequestCount: number;
+      hasUnknownCost: boolean;
     };
 
     assert.equal(data.totalRequests, 2);
     assert.equal(data.totalTokensIn, 4);
     assert.equal(data.totalTokensOut, 6);
     assert.equal(data.totalTokens, 21);
-    assert.equal(data.totalCostUsd, 0.1);
+    assert.equal(data.totalCostUsd, null);
+    assert.equal(data.knownCostUsd, 0.1);
+    assert.equal(data.unknownCostRequestCount, 1);
+    assert.equal(data.hasUnknownCost, true);
+  });
+
+  it('preserves exact known-cost totals when every row has a known cost', async () => {
+    costTracker.record({
+      provider: 'known-cost-provider',
+      model: 'known-cost-model-a',
+      tokensIn: 3,
+      tokensOut: 7,
+      costUsd: 0.2,
+      latencyMs: 8,
+      success: true,
+    });
+    costTracker.record({
+      provider: 'known-cost-provider',
+      model: 'known-cost-model-b',
+      tokensIn: 5,
+      tokensOut: 9,
+      costUsd: 0.3,
+      latencyMs: 9,
+      success: true,
+    });
+    costTracker.flush();
+
+    const res = await request('GET', '/v1/usage/summary?provider=known-cost-provider');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      totalCostUsd: number | null;
+      knownCostUsd: number;
+      unknownCostRequestCount: number;
+      hasUnknownCost: boolean;
+    };
+
+    assert.equal(data.totalCostUsd, 0.5);
+    assert.equal(data.knownCostUsd, 0.5);
+    assert.equal(data.unknownCostRequestCount, 0);
+    assert.equal(data.hasUnknownCost, false);
   });
 });
 

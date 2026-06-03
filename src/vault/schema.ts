@@ -119,7 +119,7 @@ export function initializeDb(db: Database.Database): void {
       tokens_in   INTEGER,
       tokens_out  INTEGER,
       total_tokens INTEGER,
-      cost_usd    REAL NOT NULL DEFAULT 0.0,
+      cost_usd    REAL,
       latency_ms  INTEGER NOT NULL DEFAULT 0,
       success     INTEGER NOT NULL DEFAULT 1,
       error_message TEXT,
@@ -137,13 +137,15 @@ export function initializeDb(db: Database.Database): void {
   }>;
   const usageColumnMap = new Map(usageColumns.map((column) => [column.name, column]));
   const hasUsageTotalTokens = usageColumnMap.has('total_tokens');
+  const costUsdColumn = usageColumnMap.get('cost_usd');
   const tokensInColumn = usageColumnMap.get('tokens_in');
   const tokensOutColumn = usageColumnMap.get('tokens_out');
   const usageTotalTokensSelect = hasUsageTotalTokens ? 'total_tokens' : 'NULL';
   const usageSplitColumnsAreNullable =
     tokensInColumn?.notnull === 0 && tokensOutColumn?.notnull === 0;
+  const usageCostColumnIsNullable = costUsdColumn?.notnull === 0;
 
-  if (!hasUsageTotalTokens || !usageSplitColumnsAreNullable) {
+  if (!hasUsageTotalTokens || !usageSplitColumnsAreNullable || !usageCostColumnIsNullable) {
     db.exec(`
       DROP INDEX IF EXISTS idx_usage_provider_time;
       DROP INDEX IF EXISTS idx_usage_model_time;
@@ -158,7 +160,7 @@ export function initializeDb(db: Database.Database): void {
         tokens_in    INTEGER,
         tokens_out   INTEGER,
         total_tokens INTEGER,
-        cost_usd     REAL NOT NULL DEFAULT 0.0,
+        cost_usd     REAL,
         latency_ms   INTEGER NOT NULL DEFAULT 0,
         success      INTEGER NOT NULL DEFAULT 1,
         error_message TEXT,

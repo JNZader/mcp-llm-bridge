@@ -30,7 +30,7 @@ export interface UsageEntry {
   tokensIn?: number;
   tokensOut?: number;
   totalTokens?: number;
-  costUsd?: number;
+  costUsd?: number | null;
   latencyMs: number;
   success: boolean;
   errorMessage?: string;
@@ -46,7 +46,7 @@ export interface UsageRecord {
   tokensIn: number | null;
   tokensOut: number | null;
   totalTokens: number | null;
-  costUsd: number;
+  costUsd: number | null;
   latencyMs: number;
   success: boolean;
   errorMessage: string | null;
@@ -70,7 +70,10 @@ export interface UsageSummary {
   totalTokensIn: number;
   totalTokensOut: number;
   totalTokens: number;
-  totalCostUsd: number;
+  totalCostUsd: number | null;
+  knownCostUsd: number;
+  unknownCostRequestCount: number;
+  hasUnknownCost: boolean;
   avgLatencyMs: number;
   breakdown: UsageBreakdown[];
 }
@@ -82,7 +85,10 @@ export interface UsageBreakdown {
   tokensIn: number;
   tokensOut: number;
   totalTokens: number;
-  costUsd: number;
+  costUsd: number | null;
+  knownCostUsd: number;
+  unknownCostRequestCount: number;
+  hasUnknownCost: boolean;
   avgLatencyMs: number;
 }
 
@@ -96,7 +102,7 @@ interface UsageRow {
   tokens_in: number | null;
   tokens_out: number | null;
   total_tokens: number | null;
-  cost_usd: number;
+  cost_usd: number | null;
   latency_ms: number;
   success: number;
   error_message: string | null;
@@ -110,7 +116,9 @@ interface AggregateRow {
   total_tokens_in: number;
   total_tokens_out: number;
   total_tokens: number;
-  total_cost_usd: number;
+  total_cost_usd: number | null;
+  known_cost_usd: number;
+  unknown_cost_request_count: number;
   avg_latency_ms: number;
 }
 
@@ -120,7 +128,9 @@ interface SummaryRow {
   total_tokens_in: number;
   total_tokens_out: number;
   total_tokens: number;
-  total_cost_usd: number;
+  total_cost_usd: number | null;
+  known_cost_usd: number;
+  unknown_cost_request_count: number;
   avg_latency_ms: number;
 }
 
@@ -222,7 +232,7 @@ export class CostTracker {
           totalTokens: hasExactSplitUsage(entry)
             ? entry.tokensIn + entry.tokensOut
             : entry.totalTokens ?? null,
-          costUsd: entry.costUsd ?? 0,
+          costUsd: entry.costUsd ?? null,
           latencyMs: entry.latencyMs,
           success: entry.success ? 1 : 0,
           errorMessage: entry.errorMessage ?? null,
@@ -324,7 +334,13 @@ export class CostTracker {
           WHEN total_tokens IS NOT NULL THEN total_tokens
           ELSE 0
         END), 0) as total_tokens,
-        COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
+        CASE
+          WHEN COUNT(*) = 0 THEN 0.0
+          WHEN SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) > 0 THEN NULL
+          ELSE COALESCE(SUM(cost_usd), 0.0)
+        END as total_cost_usd,
+        COALESCE(SUM(cost_usd), 0.0) as known_cost_usd,
+        COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) as unknown_cost_request_count,
         COALESCE(AVG(latency_ms), 0) as avg_latency_ms
       FROM usage_logs ${where}
     `;
@@ -343,6 +359,9 @@ export class CostTracker {
       totalTokensOut: totals.total_tokens_out,
       totalTokens: totals.total_tokens,
       totalCostUsd: totals.total_cost_usd,
+      knownCostUsd: totals.known_cost_usd,
+      unknownCostRequestCount: totals.unknown_cost_request_count,
+      hasUnknownCost: totals.unknown_cost_request_count > 0,
       avgLatencyMs: Math.round(totals.avg_latency_ms),
       breakdown,
     };
@@ -384,14 +403,22 @@ export class CostTracker {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
     const row = this.db
-      .prepare<[string, string], { total_cost: number }>(
-        `SELECT COALESCE(SUM(cost_usd), 0.0) as total_cost
-         FROM usage_logs
-         WHERE key_name = ? AND created_at >= ?`,
+      .prepare<[string, string], { total_cost: number | null }>(
+        `SELECT CASE
+            WHEN COUNT(*) = 0 THEN 0.0
+            WHEN SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) > 0 THEN NULL
+            ELSE COALESCE(SUM(cost_usd), 0.0)
+          END as total_cost
+          FROM usage_logs
+          WHERE key_name = ? AND created_at >= ?`,
       )
       .get(userId, monthStart);
 
-    const used = row?.total_cost ?? 0;
+    if (!row || row.total_cost === null) {
+      return { allowed: false, remaining: 0 };
+    }
+
+    const used = row.total_cost;
     const remaining = Math.max(0, budgetUsd - used);
 
     return {
@@ -449,11 +476,17 @@ export class CostTracker {
           WHEN total_tokens IS NOT NULL THEN total_tokens
           ELSE 0
         END), 0) as total_tokens,
-        COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
+        CASE
+          WHEN COUNT(*) = 0 THEN 0.0
+          WHEN SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) > 0 THEN NULL
+          ELSE COALESCE(SUM(cost_usd), 0.0)
+        END as total_cost_usd,
+        COALESCE(SUM(cost_usd), 0.0) as known_cost_usd,
+        COALESCE(SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END), 0) as unknown_cost_request_count,
         COALESCE(AVG(latency_ms), 0) as avg_latency_ms
       FROM usage_logs ${where}
       GROUP BY ${groupColumn}
-      ORDER BY total_cost_usd DESC
+      ORDER BY known_cost_usd DESC, request_count DESC
     `;
 
     const rows = this.db.prepare(sql).all(params) as AggregateRow[];
@@ -465,6 +498,9 @@ export class CostTracker {
       tokensOut: row.total_tokens_out,
       totalTokens: row.total_tokens,
       costUsd: row.total_cost_usd,
+      knownCostUsd: row.known_cost_usd,
+      unknownCostRequestCount: row.unknown_cost_request_count,
+      hasUnknownCost: row.unknown_cost_request_count > 0,
       avgLatencyMs: Math.round(row.avg_latency_ms),
     }));
   }

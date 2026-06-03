@@ -121,6 +121,13 @@ export function checkBudget(
   // Silence unused-var — userId will be used when user_id column is added
   void userId;
 
+  if (summary.totalCostUsd === null) {
+    return {
+      allowed: false,
+      remaining: 0,
+    };
+  }
+
   const used = summary.totalCostUsd;
   const remaining = Math.max(0, budgetUsd - used);
 

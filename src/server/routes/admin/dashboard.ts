@@ -39,7 +39,14 @@ export function registerAdminDashboardRoutes(
         halfOpen: cbStats.filter((s) => s.state === CircuitState.HALF_OPEN).length,
       };
 
-      let usage = { totalRequests: 0, totalCost: 0, totalTokens: 0 };
+      let usage = {
+        totalRequests: 0,
+        totalCost: 0 as number | null,
+        knownCost: 0,
+        unknownCostRequestCount: 0,
+        hasUnknownCost: false,
+        totalTokens: 0,
+      };
       if (costTracker) {
         const now = new Date();
         const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -50,6 +57,9 @@ export function registerAdminDashboardRoutes(
         usage = {
           totalRequests: summary.totalRequests,
           totalCost: summary.totalCostUsd,
+          knownCost: summary.knownCostUsd,
+          unknownCostRequestCount: summary.unknownCostRequestCount,
+          hasUnknownCost: summary.hasUnknownCost,
           totalTokens: summary.totalTokens,
         };
       }

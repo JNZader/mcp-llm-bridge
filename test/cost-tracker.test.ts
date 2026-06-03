@@ -192,7 +192,7 @@ describe('CostTracker', () => {
     assert.equal(summary.totalCostUsd, 3.50);
   });
 
-  it('records and summarizes total-only usage truthfully', () => {
+  it('persists total-only usage with unknown cost', () => {
     dbPath = tempDbPath();
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
 
@@ -223,14 +223,17 @@ describe('CostTracker', () => {
     assert.equal(totalOnlyRecord.tokensIn, null);
     assert.equal(totalOnlyRecord.tokensOut, null);
     assert.equal(totalOnlyRecord.totalTokens, 9);
-    assert.equal(totalOnlyRecord.costUsd, 0);
+    assert.equal(totalOnlyRecord.costUsd, null);
 
     const summary = tracker.summary();
     assert.equal(summary.totalRequests, 2);
     assert.equal(summary.totalTokensIn, 100);
     assert.equal(summary.totalTokensOut, 50);
     assert.equal(summary.totalTokens, 159);
-    assert.equal(summary.totalCostUsd, 1.25);
+    assert.equal(summary.totalCostUsd, null);
+    assert.equal(summary.knownCostUsd, 1.25);
+    assert.equal(summary.unknownCostRequestCount, 1);
+    assert.equal(summary.hasUnknownCost, true);
 
     const providerBreakdown = tracker.summary({ groupBy: 'provider' }).breakdown;
     const legacy = providerBreakdown.find((entry) => entry.key === 'legacy-provider');
@@ -238,6 +241,33 @@ describe('CostTracker', () => {
     assert.equal(legacy.tokensIn, 0);
     assert.equal(legacy.tokensOut, 0);
     assert.equal(legacy.totalTokens, 9);
+    assert.equal(legacy.costUsd, null);
+    assert.equal(legacy.knownCostUsd, 0);
+    assert.equal(legacy.unknownCostRequestCount, 1);
+    assert.equal(legacy.hasUnknownCost, true);
+  });
+
+  it('keeps exact known-cost summaries unchanged when all rows are known', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    tracker.record({ provider: 'openai', model: 'gpt-4o', tokensIn: 100, tokensOut: 50, costUsd: 1.00, latencyMs: 200, success: true });
+    tracker.record({ provider: 'anthropic', model: 'claude-3-haiku', tokensIn: 300, tokensOut: 150, costUsd: 0.50, latencyMs: 100, success: true });
+
+    tracker.flush();
+
+    const summary = tracker.summary({ groupBy: 'provider' });
+    assert.equal(summary.totalCostUsd, 1.50);
+    assert.equal(summary.knownCostUsd, 1.50);
+    assert.equal(summary.unknownCostRequestCount, 0);
+    assert.equal(summary.hasUnknownCost, false);
+
+    const openai = summary.breakdown.find((entry) => entry.key === 'openai');
+    assert.ok(openai);
+    assert.equal(openai.costUsd, 1.00);
+    assert.equal(openai.knownCostUsd, 1.00);
+    assert.equal(openai.unknownCostRequestCount, 0);
+    assert.equal(openai.hasUnknownCost, false);
   });
 
   it('summary with groupBy provider returns breakdown', () => {
