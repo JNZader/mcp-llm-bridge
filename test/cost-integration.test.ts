@@ -90,6 +90,8 @@ describe('Cost tracking integration', () => {
     assert.equal(records.length, 1);
     assert.equal(records[0]!.provider, 'openai');
     assert.equal(records[0]!.model, 'gpt-4o');
+    assert.equal(records[0]!.tokensIn, 0);
+    assert.equal(records[0]!.tokensOut, 150);
     assert.equal(records[0]!.success, true);
     assert.ok(records[0]!.latencyMs >= 0);
   });
@@ -113,6 +115,8 @@ describe('Cost tracking integration', () => {
 
     const records = tracker.query();
     assert.equal(records.length, 1);
+    assert.equal(records[0]!.tokensIn, 0);
+    assert.equal(records[0]!.tokensOut, 0);
     assert.equal(records[0]!.success, false);
     assert.ok(records[0]!.errorMessage);
   });

@@ -119,6 +119,20 @@ export function recordUsage(
       ? input.tokensIn + input.tokensOut
       : undefined
   );
+  const tokensIn = typeof input.tokensIn === 'number'
+    ? input.tokensIn
+    : typeof totalTokens === 'number'
+      ? 0
+      : !input.success
+        ? 0
+      : undefined;
+  const tokensOut = typeof input.tokensOut === 'number'
+    ? input.tokensOut
+    : typeof totalTokens === 'number'
+      ? totalTokens
+      : !input.success
+        ? 0
+      : undefined;
 
   recordLlmAttemptMetric({
     provider: input.provider,
@@ -138,8 +152,8 @@ export function recordUsage(
 
       telemetry.analyticsAggregator.record(input.provider, input.model, {
         totalTokens,
-        inputTokens: input.tokensIn,
-        outputTokens: input.tokensOut,
+        inputTokens: tokensIn,
+        outputTokens: tokensOut,
         cost,
         latencyMs: input.latencyMs,
         success: input.success,
@@ -153,7 +167,7 @@ export function recordUsage(
 
   if (!telemetry.costTracker) return;
 
-  if (typeof input.tokensIn !== 'number' || typeof input.tokensOut !== 'number') {
+  if (typeof tokensIn !== 'number' || typeof tokensOut !== 'number') {
     return;
   }
 
@@ -161,8 +175,8 @@ export function recordUsage(
     telemetry.costTracker.record({
       provider: input.provider,
       model: input.model,
-      tokensIn: input.tokensIn,
-      tokensOut: input.tokensOut,
+      tokensIn,
+      tokensOut,
       latencyMs: input.latencyMs,
       success: input.success,
       project: input.project,
