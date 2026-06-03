@@ -256,12 +256,11 @@ describe('StreamRecorder', () => {
     }
   });
 
-  it('estimates output tokens from character count when not reported', () => {
+  it('persists unknown usage as null token and cost fields when not reported', () => {
     setup();
     try {
       const recorder = tracker.recordStream('anthropic', 'claude-3');
 
-      // 400 chars → ~100 tokens
       recorder.addChunk({}, 200);
       recorder.addChunk({}, 200);
       recorder.finish();
@@ -269,7 +268,10 @@ describe('StreamRecorder', () => {
       tracker.flush();
       const records = tracker.query({ provider: 'anthropic' });
       assert.equal(records.length, 1);
-      assert.equal(records[0]?.tokensOut, 100); // 400/4
+      assert.equal(records[0]?.tokensIn, null);
+      assert.equal(records[0]?.tokensOut, null);
+      assert.equal(records[0]?.totalTokens, null);
+      assert.equal(records[0]?.costUsd, null);
     } finally {
       teardown();
     }

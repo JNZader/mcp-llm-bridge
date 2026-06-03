@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { CostTracker } from '../../src/core/cost-tracker.js';
-import { recordUsage } from '../../src/core/router-telemetry.js';
+import {
+  createStreamingRecordResult,
+  recordUsage,
+} from '../../src/core/router-telemetry.js';
 
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'router-telemetry-test-'));
@@ -138,6 +141,51 @@ describe('router-telemetry', () => {
       assert.equal(records.length, 1);
       assert.equal(records[0]?.keyName, 'default');
       assert.equal(records[0]?.userId, null);
+    } finally {
+      tracker.destroy();
+      rmSync(dbPath, { force: true });
+      rmSync(`${dbPath}-wal`, { force: true });
+      rmSync(`${dbPath}-shm`, { force: true });
+    }
+  });
+
+  it('persists unknown streaming usage as a single truthful row', () => {
+    const dbPath = tempDbPath();
+    const tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    try {
+      const recordStreamingResult = createStreamingRecordResult({
+        telemetry: {
+          analyticsAggregator: null,
+          costTracker: tracker,
+          modelRouter: null,
+        },
+        provider: {
+          id: 'stream-provider',
+        } as never,
+      });
+
+      recordStreamingResult({
+        model: 'stream-model',
+        latencyMs: 18,
+        success: true,
+        project: 'stream-project',
+        apiKeyId: 'key-stream',
+        userId: 'user-stream',
+      });
+
+      tracker.flush();
+
+      const records = tracker.query({ provider: 'stream-provider' });
+      assert.equal(records.length, 1);
+      assert.equal(records[0]?.model, 'stream-model');
+      assert.equal(records[0]?.project, 'stream-project');
+      assert.equal(records[0]?.keyName, 'key-stream');
+      assert.equal(records[0]?.userId, 'user-stream');
+      assert.equal(records[0]?.tokensIn, null);
+      assert.equal(records[0]?.tokensOut, null);
+      assert.equal(records[0]?.totalTokens, null);
+      assert.equal(records[0]?.costUsd, null);
     } finally {
       tracker.destroy();
       rmSync(dbPath, { force: true });

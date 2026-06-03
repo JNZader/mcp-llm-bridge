@@ -1,4 +1,3 @@
-import type { StreamRecorder } from "../../core/cost-tracker.js";
 import {
   buildStreamingExecutionResponseData,
   type RouterExecutionContract,
@@ -25,7 +24,6 @@ interface StreamingAttemptTelemetryInput {
 	inputTokens?: number;
 	outputTokens?: number;
 	executionContract: RouterExecutionContract;
-	streamRecorder?: StreamRecorder;
 	recordResult?: ResolvedStreamingProvider["recordResult"];
 }
 
@@ -86,14 +84,12 @@ export async function finalizeStreamingAttemptSuccess(
 		totalTokens,
 		inputTokens,
 		outputTokens,
-		streamRecorder,
 		recordResult,
 		finalizeRequestLog,
 		responseModel,
 	} = input;
 
 	getCircuitBreakerV2().recordSuccess(providerId, "default", resolvedModel);
-	streamRecorder?.finish();
 	recordResult?.({
 		model: resolvedModel,
 		totalTokens,
@@ -132,7 +128,6 @@ export async function finalizeStreamingAttemptFailure(
 		totalTokens,
 		inputTokens,
 		outputTokens,
-		streamRecorder,
 		recordResult,
 		error,
 		emittedMeaningfulContent,
@@ -142,7 +137,6 @@ export async function finalizeStreamingAttemptFailure(
 	const message = resolvedError.message;
 
 	getCircuitBreakerV2().recordFailure(providerId, "default", resolvedModel);
-	streamRecorder?.finish(message);
 	recordResult?.({
 		model: resolvedModel,
 		totalTokens,
@@ -182,7 +176,6 @@ export async function finalizeStreamingAttemptAbort(
 		totalTokens,
 		inputTokens,
 		outputTokens,
-		streamRecorder,
 		recordResult,
 		error,
 		finalizeRequestLog,
@@ -190,7 +183,6 @@ export async function finalizeStreamingAttemptAbort(
 	const resolvedError = normalizeStreamingError(error);
 	const message = resolvedError.message;
 
-	streamRecorder?.finish(message);
 	recordResult?.({
 		model: resolvedModel,
 		totalTokens,

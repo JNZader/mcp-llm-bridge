@@ -25,6 +25,7 @@ export interface RouterUsageRecordInput {
   tokensIn?: number;
   tokensOut?: number;
   costUsd?: number;
+  persistUnknownUsage?: boolean;
   latencyMs: number;
   success: boolean;
   attempt?: number;
@@ -169,7 +170,7 @@ export function recordUsage(
 
   if (!telemetry.costTracker) return;
 
-  if (!hasExactSplit && typeof totalTokens !== 'number') {
+  if (!hasExactSplit && typeof totalTokens !== 'number' && input.persistUnknownUsage !== true) {
     return;
   }
 
@@ -309,6 +310,7 @@ export function createStreamingRecordResult(
       totalTokens,
       tokensIn,
       tokensOut,
+      persistUnknownUsage: true,
       latencyMs,
       success,
       attempt,

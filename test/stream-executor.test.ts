@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
+import { CostTracker } from "../src/core/cost-tracker.js";
 import { Router } from "../src/core/router.js";
 import { createRouterExecutionContract } from "../src/core/router-execution-contract.js";
 import { GroupStore } from "../src/core/groups.js";
@@ -20,6 +24,11 @@ function createCanonicalRequest() {
 		messages: [{ role: "user" as const, content: "hello" }],
 		stream: true,
 	};
+}
+
+function tempDbPath(): string {
+	const dir = mkdtempSync(join(tmpdir(), "stream-executor-test-"));
+	return join(dir, "test.db");
 }
 
 function createStreamingExecutionContract(options?: {
@@ -519,6 +528,74 @@ describe("createStreamExecutor", () => {
 				},
 			},
 		]);
+	});
+
+	it("persists exactly one truthful usage row for a successful stream", async () => {
+		const dbPath = tempDbPath();
+		const tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+		const router = new Router();
+		const registry = new TransformerRegistry();
+		router.setCostTracker(tracker);
+		router.setTransformerRegistry(registry);
+		router.register(createProvider("stream-provider", "stream-model"));
+		registry.registerStreamOutbound("stream-provider", {
+			name: "stream-provider",
+			async *transformStream() {
+				yield { content: "hello", done: false, model: "stream-model" };
+				yield {
+					content: "",
+					done: true,
+					model: "stream-model",
+					finishReason: "stop",
+					tokensIn: 11,
+					tokensOut: 29,
+				};
+			},
+		});
+
+		try {
+			const executor = createStreamExecutor({
+				canonical: {
+					model: "stream-model",
+					messages: [{ role: "user", content: "hello" }],
+					stream: true,
+				},
+				router,
+				costTracker: tracker,
+				scope: {
+					project: "stream-project",
+					apiKeyId: "key-stream",
+					userId: "user-stream",
+				},
+			});
+
+			await executor.execute({
+				writeChunk: async () => {},
+				writeFallbackResult: async () => {
+					assert.fail("should not use fallback result");
+				},
+				writeTerminalError: async (error) => {
+					assert.fail(`unexpected terminal error: ${error.message}`);
+				},
+				writeDone: async () => {},
+			});
+
+			tracker.flush();
+			const records = tracker.query({ provider: "stream-provider" });
+			assert.equal(records.length, 1);
+			assert.equal(records[0]?.model, "stream-model");
+			assert.equal(records[0]?.project, "stream-project");
+			assert.equal(records[0]?.keyName, "key-stream");
+			assert.equal(records[0]?.userId, "user-stream");
+			assert.equal(records[0]?.tokensIn, 11);
+			assert.equal(records[0]?.tokensOut, 29);
+			assert.equal(records[0]?.totalTokens, 40);
+		} finally {
+			tracker.destroy();
+			rmSync(dbPath, { force: true });
+			rmSync(`${dbPath}-wal`, { force: true });
+			rmSync(`${dbPath}-shm`, { force: true });
+		}
 	});
 
 	it("reuses shared chat metadata for streaming provider resolution", async () => {

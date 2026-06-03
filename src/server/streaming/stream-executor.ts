@@ -47,7 +47,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 	const {
 		canonical,
 		router,
-		costTracker,
 		vault,
 		requestLogger,
 		scope,
@@ -65,23 +64,18 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 	let outputTokens: number | undefined;
 	let totalTokens: number | undefined;
 	let attempts = 0;
-	const attemptedProviders: string[] = [];
 	let streamingExecutionContract: RouterExecutionContract | undefined;
 	let aborted = abortSignal?.aborted ?? false;
 	let abortFinalization: Promise<void> | undefined;
 	let activeProviderId: string | undefined;
 	let activeResolvedModel: string | undefined;
 	let activeAttemptStartTime: number | undefined;
-	let activeStreamRecorder:
-		| ReturnType<NonNullable<CostTracker["recordStream"]>>
-		| undefined;
 	let activeRecordResult: ResolvedStreamingProvider["recordResult"] | undefined;
 
 	const clearActiveAttemptTelemetry = () => {
 		activeProviderId = undefined;
 		activeResolvedModel = undefined;
 		activeAttemptStartTime = undefined;
-		activeStreamRecorder = undefined;
 		activeRecordResult = undefined;
 	};
 
@@ -114,7 +108,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						totalTokens,
 						inputTokens,
 						outputTokens,
-						streamRecorder: activeStreamRecorder,
 						recordResult: activeRecordResult,
 						error: abortError,
 						finalizeRequestLog,
@@ -201,7 +194,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						resolved;
 					const executionContract = requireResolvedExecutionContract(resolved);
 					streamingExecutionContract ??= executionContract;
-					attemptedProviders.push(provider.id);
 					executionContract.recordAttempt(provider.id);
 					const attemptStartTime = Date.now();
 					let breakerModel = resolvedRequest.model || canonical.model || "unknown";
@@ -215,16 +207,9 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						logCtx.model = breakerModel;
 					}
 
-					const streamRecorder = costTracker?.recordStream(
-						provider.id,
-						breakerModel,
-						scope.project,
-						{ apiKeyId: scope.apiKeyId, userId: scope.userId },
-					);
 					activeProviderId = provider.id;
 					activeResolvedModel = breakerModel;
 					activeAttemptStartTime = attemptStartTime;
-					activeStreamRecorder = streamRecorder;
 					activeRecordResult = recordResult;
 
 					try {
@@ -240,11 +225,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							if (aborted) {
 								break;
 							}
-
-							streamRecorder?.addChunk(
-								{ tokensIn: chunk.tokensIn, tokensOut: chunk.tokensOut },
-								chunk.content.length,
-							);
 
 							if (chunk.tokensIn !== undefined) {
 								attemptInputTokens = chunk.tokensIn;
@@ -307,7 +287,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							totalTokens,
 							inputTokens,
 							outputTokens,
-							streamRecorder,
 							recordResult,
 							finalizeRequestLog,
 							responseModel: logCtx?.model,
@@ -339,7 +318,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 									: undefined,
 							inputTokens: attemptInputTokens,
 							outputTokens: attemptOutputTokens,
-							streamRecorder,
 							recordResult,
 							error,
 							emittedMeaningfulContent,

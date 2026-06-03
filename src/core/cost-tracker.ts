@@ -203,10 +203,6 @@ export class CostTracker {
       ? entry.tokensIn + entry.tokensOut
       : entry.totalTokens;
 
-    if (!hasExactSplit && typeof totalTokens !== 'number') {
-      return;
-    }
-
     // Auto-calculate cost if not provided
     if (entry.costUsd === undefined && hasExactSplit) {
       entry.costUsd = calculateCost(entry.model, entry.tokensIn, entry.tokensOut);
@@ -573,7 +569,8 @@ function normalizeBudgetIdentity(
 export class StreamRecorder {
   private _tokensIn = 0;
   private _tokensOut = 0;
-  private _charCount = 0;
+  private _hasTokensIn = false;
+  private _hasTokensOut = false;
   private _finished = false;
   private readonly _startTime: number;
 
@@ -591,27 +588,26 @@ export class StreamRecorder {
    * Accumulate token counts from a streaming chunk.
    * Call this for every chunk that reports partial usage.
    */
-  addChunk(tokens?: { tokensIn?: number; tokensOut?: number }, contentLength = 0): void {
+  addChunk(tokens?: { tokensIn?: number; tokensOut?: number }, _contentLength = 0): void {
     if (this._finished) return;
-    if (tokens?.tokensIn !== undefined) this._tokensIn = tokens.tokensIn;
-    if (tokens?.tokensOut !== undefined) this._tokensOut = tokens.tokensOut;
-    this._charCount += contentLength;
+    if (tokens?.tokensIn !== undefined) {
+      this._tokensIn = tokens.tokensIn;
+      this._hasTokensIn = true;
+    }
+    if (tokens?.tokensOut !== undefined) {
+      this._tokensOut = tokens.tokensOut;
+      this._hasTokensOut = true;
+    }
   }
 
   /**
    * Finalize the stream and write the usage record.
-   *
-   * If the provider didn't report per-chunk tokens, estimates
-   * output tokens from accumulated character count (~4 chars/token).
    */
   finish(errorMessage?: string): void {
     if (this._finished) return;
     this._finished = true;
 
     const latencyMs = Date.now() - this._startTime;
-    const tokensOut = this._tokensOut > 0
-      ? this._tokensOut
-      : Math.ceil(this._charCount / 4);
 
     this.tracker.record({
       provider: this.provider,
@@ -619,8 +615,8 @@ export class StreamRecorder {
       model: this.model,
       project: this.project,
       userId: this.identity?.userId,
-      tokensIn: this._tokensIn,
-      tokensOut,
+      tokensIn: this._hasTokensIn ? this._tokensIn : undefined,
+      tokensOut: this._hasTokensOut ? this._tokensOut : undefined,
       latencyMs,
       success: !errorMessage,
       errorMessage,
