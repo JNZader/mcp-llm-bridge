@@ -116,6 +116,7 @@ export function initializeDb(db: Database.Database): void {
       key_name    TEXT NOT NULL DEFAULT 'default',
       model       TEXT NOT NULL,
       project     TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
+      user_id     TEXT,
       tokens_in   INTEGER,
       tokens_out  INTEGER,
       total_tokens INTEGER,
@@ -129,6 +130,7 @@ export function initializeDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_usage_provider_time ON usage_logs(provider, created_at);
     CREATE INDEX IF NOT EXISTS idx_usage_model_time ON usage_logs(model, created_at);
     CREATE INDEX IF NOT EXISTS idx_usage_project_time ON usage_logs(project, created_at);
+    CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage_logs(user_id, created_at);
   `);
 
   const usageColumns = db.pragma('table_info(usage_logs)') as Array<{
@@ -137,19 +139,22 @@ export function initializeDb(db: Database.Database): void {
   }>;
   const usageColumnMap = new Map(usageColumns.map((column) => [column.name, column]));
   const hasUsageTotalTokens = usageColumnMap.has('total_tokens');
+  const hasUsageUserId = usageColumnMap.has('user_id');
   const costUsdColumn = usageColumnMap.get('cost_usd');
   const tokensInColumn = usageColumnMap.get('tokens_in');
   const tokensOutColumn = usageColumnMap.get('tokens_out');
   const usageTotalTokensSelect = hasUsageTotalTokens ? 'total_tokens' : 'NULL';
+  const usageUserIdSelect = hasUsageUserId ? 'user_id' : 'NULL';
   const usageSplitColumnsAreNullable =
     tokensInColumn?.notnull === 0 && tokensOutColumn?.notnull === 0;
   const usageCostColumnIsNullable = costUsdColumn?.notnull === 0;
 
-  if (!hasUsageTotalTokens || !usageSplitColumnsAreNullable || !usageCostColumnIsNullable) {
+  if (!hasUsageTotalTokens || !hasUsageUserId || !usageSplitColumnsAreNullable || !usageCostColumnIsNullable) {
     db.exec(`
       DROP INDEX IF EXISTS idx_usage_provider_time;
       DROP INDEX IF EXISTS idx_usage_model_time;
       DROP INDEX IF EXISTS idx_usage_project_time;
+      DROP INDEX IF EXISTS idx_usage_user_time;
 
       CREATE TABLE usage_logs_new (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,6 +162,7 @@ export function initializeDb(db: Database.Database): void {
         key_name     TEXT NOT NULL DEFAULT 'default',
         model        TEXT NOT NULL,
         project      TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
+        user_id      TEXT,
         tokens_in    INTEGER,
         tokens_out   INTEGER,
         total_tokens INTEGER,
@@ -173,6 +179,7 @@ export function initializeDb(db: Database.Database): void {
         key_name,
         model,
         project,
+        user_id,
         tokens_in,
         tokens_out,
         total_tokens,
@@ -188,6 +195,7 @@ export function initializeDb(db: Database.Database): void {
         key_name,
         model,
         project,
+        ${usageUserIdSelect},
         tokens_in,
         tokens_out,
         CASE
@@ -207,6 +215,7 @@ export function initializeDb(db: Database.Database): void {
       CREATE INDEX idx_usage_provider_time ON usage_logs(provider, created_at);
       CREATE INDEX idx_usage_model_time ON usage_logs(model, created_at);
       CREATE INDEX idx_usage_project_time ON usage_logs(project, created_at);
+      CREATE INDEX idx_usage_user_time ON usage_logs(user_id, created_at);
     `);
   }
 

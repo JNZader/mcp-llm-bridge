@@ -48,5 +48,7 @@ export function prepareGenerateRequest(
 		maxTokens: validated.maxTokens,
 		strict: validated.strict,
 		project,
+		apiKeyId: scope.apiKeyId,
+		userId: scope.userId,
 	};
 }

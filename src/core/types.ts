@@ -33,6 +33,8 @@ export interface GenerateRequest {
   strict?: boolean;
   maxTokens?: number;
   project?: string;
+  apiKeyId?: string;
+  userId?: string;
 }
 
 export interface GenerateResponse {

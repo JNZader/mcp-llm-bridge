@@ -95,7 +95,7 @@ export interface BudgetResult {
  */
 export function checkBudget(
   costTracker: CostTracker,
-  userId: string,
+  identity: { userId?: string; apiKeyId?: string },
   budgetUsd: number,
 ): BudgetResult {
   // Budget of 0 means unlimited
@@ -103,36 +103,5 @@ export function checkBudget(
     return { allowed: true, remaining: Infinity };
   }
 
-  // Get the start of the current month and query total cost for this user.
-  // We use CostTracker.summary() which queries by project — but until
-  // user_id is added to usage_logs (task 7.8), we approximate by querying
-  // the full summary. The caller (auth middleware) should pass the userId
-  // for future per-user filtering.
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-
-  // Use project-scoped summary as best available approximation.
-  // Task 7.8 will add proper user_id-based filtering.
-  const summary = costTracker.summary({
-    from: monthStart,
-    to: now.toISOString(),
-  });
-
-  // Silence unused-var — userId will be used when user_id column is added
-  void userId;
-
-  if (summary.totalCostUsd === null) {
-    return {
-      allowed: false,
-      remaining: 0,
-    };
-  }
-
-  const used = summary.totalCostUsd;
-  const remaining = Math.max(0, budgetUsd - used);
-
-  return {
-    allowed: remaining > 0,
-    remaining,
-  };
+  return costTracker.checkBudget(identity, budgetUsd);
 }

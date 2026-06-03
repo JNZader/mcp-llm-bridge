@@ -219,6 +219,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						provider.id,
 						breakerModel,
 						scope.project,
+						{ apiKeyId: scope.apiKeyId, userId: scope.userId },
 					);
 					activeProviderId = provider.id;
 					activeResolvedModel = breakerModel;

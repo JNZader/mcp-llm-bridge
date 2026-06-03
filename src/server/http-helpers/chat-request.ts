@@ -81,6 +81,14 @@ export function buildChatInternalMetadata(
 		metadata["project"] = scope.project;
 	}
 
+	if (scope?.apiKeyId) {
+		metadata["apiKeyId"] = scope.apiKeyId;
+	}
+
+	if (scope?.userId) {
+		metadata["userId"] = scope.userId;
+	}
+
 	return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
@@ -129,6 +137,8 @@ export function buildChatGenerateRequestFromMessages(
 			? { strict: true }
 			: {}),
 		project: scope?.project,
+		apiKeyId: scope?.apiKeyId,
+		userId: scope?.userId,
 	};
 }
 

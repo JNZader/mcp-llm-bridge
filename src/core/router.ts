@@ -403,6 +403,8 @@ export class Router {
               attemptedModel,
               startTime,
               project: request.project,
+              apiKeyId: request.apiKeyId,
+              userId: request.userId,
               message,
             });
             return;
@@ -736,6 +738,14 @@ export class Router {
             requestModel: request.model,
             routedEndpoint,
             classification: plan.classification,
+            apiKeyId:
+              typeof request.metadata?.['apiKeyId'] === 'string'
+                ? request.metadata['apiKeyId']
+                : undefined,
+            userId:
+              typeof request.metadata?.['userId'] === 'string'
+                ? request.metadata['userId']
+                : undefined,
           }),
         });
       }

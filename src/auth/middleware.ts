@@ -79,7 +79,11 @@ export function apiKeyAuth(db: Database.Database, costTracker?: CostTracker) {
 
     // Check budget (if costTracker available and budget is set)
     if (costTracker && apiKey.budgetUsd > 0) {
-      const budgetResult = checkBudget(costTracker, apiKey.userId, apiKey.budgetUsd);
+      const budgetResult = checkBudget(
+        costTracker,
+        { userId: apiKey.userId, apiKeyId: apiKey.id },
+        apiKey.budgetUsd,
+      );
 
       if (!budgetResult.allowed) {
         return c.json(

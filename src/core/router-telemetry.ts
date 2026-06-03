@@ -29,6 +29,8 @@ export interface RouterUsageRecordInput {
   success: boolean;
   attempt?: number;
   project?: string;
+  apiKeyId?: string;
+  userId?: string;
   errorMessage?: string;
 }
 
@@ -44,6 +46,8 @@ export interface RouterLocalFallbackMetricInput {
   attemptedModel: string;
   startTime: number;
   project?: string;
+  apiKeyId?: string;
+  userId?: string;
   message: string;
 }
 
@@ -56,6 +60,8 @@ export interface RouterStreamingRecordResultInput {
   success: boolean;
   attempt?: number;
   project?: string;
+  apiKeyId?: string;
+  userId?: string;
   errorMessage?: string;
 }
 
@@ -79,6 +85,10 @@ export interface RouterAttemptTelemetryCallbacks {
     attempt?: number,
     project?: string,
     errorMessage?: string,
+    identity?: {
+      apiKeyId?: string;
+      userId?: string;
+    },
   ) => void;
   recordModelFeedback: (
     endpointId: string,
@@ -95,6 +105,8 @@ export interface RouterStreamingTelemetryOptions {
   requestModel?: string;
   routedEndpoint?: ModelEndpoint;
   classification?: TaskClassification | null;
+  apiKeyId?: string;
+  userId?: string;
 }
 
 export function resolveFeedbackEndpointId(
@@ -164,7 +176,9 @@ export function recordUsage(
   try {
     telemetry.costTracker.record({
       provider: input.provider,
+      keyName: input.apiKeyId,
       model: input.model,
+      userId: input.userId,
       tokensIn,
       tokensOut,
       totalTokens,
@@ -208,7 +222,9 @@ export function recordLocalFallbackMetric(
   try {
     telemetry.costTracker.record({
       provider: 'local-llm-fallback',
+      keyName: input.apiKeyId,
       model: input.attemptedModel,
+      userId: input.userId,
       tokensIn: 0,
       tokensOut: 0,
       latencyMs: Date.now() - input.startTime,
@@ -236,6 +252,7 @@ export function createAttemptTelemetryCallbacks(
       attempt,
       project,
       errorMessage,
+      identity,
     ) => {
       recordUsage(telemetry, {
         provider,
@@ -248,6 +265,8 @@ export function createAttemptTelemetryCallbacks(
         success,
         attempt,
         project,
+        apiKeyId: identity?.apiKeyId,
+        userId: identity?.userId,
         errorMessage,
       });
     },
@@ -275,6 +294,8 @@ export function createStreamingRecordResult(
     success,
     attempt,
     project,
+    apiKeyId,
+    userId,
     errorMessage,
   }) => {
     const resolvedModel =
@@ -292,6 +313,8 @@ export function createStreamingRecordResult(
       success,
       attempt,
       project,
+      apiKeyId: apiKeyId ?? options.apiKeyId,
+      userId: userId ?? options.userId,
       errorMessage,
     });
 

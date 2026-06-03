@@ -37,6 +37,8 @@ describe('router-telemetry', () => {
         totalTokens: 9,
         latencyMs: 25,
         success: true,
+        apiKeyId: 'key-123',
+        userId: 'user-123',
       },
     );
 
@@ -63,6 +65,8 @@ describe('router-telemetry', () => {
         latencyMs: 25,
         success: true,
         project: undefined,
+        keyName: 'key-123',
+        userId: 'user-123',
         errorMessage: undefined,
       },
     ]);
@@ -85,6 +89,8 @@ describe('router-telemetry', () => {
           totalTokens: 13,
           latencyMs: 40,
           success: true,
+          apiKeyId: 'key-789',
+          userId: 'user-789',
         },
       );
 
@@ -96,6 +102,42 @@ describe('router-telemetry', () => {
       assert.equal(records[0]?.tokensOut, null);
       assert.equal(records[0]?.totalTokens, 13);
       assert.equal(records[0]?.costUsd, null);
+      assert.equal(records[0]?.keyName, 'key-789');
+      assert.equal(records[0]?.userId, 'user-789');
+    } finally {
+      tracker.destroy();
+      rmSync(dbPath, { force: true });
+      rmSync(`${dbPath}-wal`, { force: true });
+      rmSync(`${dbPath}-shm`, { force: true });
+    }
+  });
+
+  it('preserves anonymous defaults when identity is unavailable', () => {
+    const dbPath = tempDbPath();
+    const tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    try {
+      recordUsage(
+        {
+          analyticsAggregator: null,
+          costTracker: tracker,
+          modelRouter: null,
+        },
+        {
+          provider: 'anonymous-provider',
+          model: 'anonymous-model',
+          totalTokens: 7,
+          latencyMs: 12,
+          success: true,
+        },
+      );
+
+      tracker.flush();
+
+      const records = tracker.query({ provider: 'anonymous-provider' });
+      assert.equal(records.length, 1);
+      assert.equal(records[0]?.keyName, 'default');
+      assert.equal(records[0]?.userId, null);
     } finally {
       tracker.destroy();
       rmSync(dbPath, { force: true });

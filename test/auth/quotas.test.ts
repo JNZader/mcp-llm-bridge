@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
 
-import { checkRateLimit } from '../../src/auth/quotas.js';
+import { checkBudget, checkRateLimit } from '../../src/auth/quotas.js';
 import { initializeDb } from '../../src/vault/schema.js';
 import { CostTracker } from '../../src/core/cost-tracker.js';
 
@@ -118,13 +118,13 @@ describe('checkBudget (via CostTracker)', () => {
   });
 
   it('allows within budget', () => {
-    const result = costTracker.checkBudget('user-1', 100);
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 100);
     assert.equal(result.allowed, true);
     assert.equal(result.remaining, 100);
   });
 
   it('allows unlimited budget (budgetUsd=0)', () => {
-    const result = costTracker.checkBudget('user-1', 0);
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 0);
     assert.equal(result.allowed, true);
     assert.equal(result.remaining, Infinity);
   });
@@ -133,7 +133,8 @@ describe('checkBudget (via CostTracker)', () => {
     // Record usage that exceeds the budget
     costTracker.record({
       provider: 'test',
-      keyName: 'user-1',
+      keyName: 'key-1',
+      userId: 'user-1',
       model: 'test-model',
       tokensIn: 1000,
       tokensOut: 1000,
@@ -145,7 +146,8 @@ describe('checkBudget (via CostTracker)', () => {
 
     costTracker.record({
       provider: 'test',
-      keyName: 'user-1',
+      keyName: 'key-1',
+      userId: 'user-1',
       model: 'test-model',
       tokensIn: 1000,
       tokensOut: 1000,
@@ -156,7 +158,7 @@ describe('checkBudget (via CostTracker)', () => {
     costTracker.flush();
 
     // Total cost = 110, budget = 100
-    const result = costTracker.checkBudget('user-1', 100);
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 100);
     assert.equal(result.allowed, false);
     assert.equal(result.remaining, 0);
   });
@@ -165,7 +167,8 @@ describe('checkBudget (via CostTracker)', () => {
     // Record usage of $85 against $100 budget → remaining is $15 which is < 20% ($20)
     costTracker.record({
       provider: 'test',
-      keyName: 'user-1',
+      keyName: 'key-1',
+      userId: 'user-1',
       model: 'test-model',
       tokensIn: 1000,
       tokensOut: 1000,
@@ -175,7 +178,7 @@ describe('checkBudget (via CostTracker)', () => {
     });
     costTracker.flush();
 
-    const result = costTracker.checkBudget('user-1', 100);
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 100);
     assert.equal(result.allowed, true);
     assert.ok(result.remaining < 100 * 0.2, 'remaining should be less than 20% of budget');
     assert.equal(result.remaining, 15);
@@ -184,7 +187,8 @@ describe('checkBudget (via CostTracker)', () => {
   it('does not count usage from other users', () => {
     costTracker.record({
       provider: 'test',
-      keyName: 'other-user',
+      keyName: 'other-key',
+      userId: 'other-user',
       model: 'test-model',
       tokensIn: 1000,
       tokensOut: 1000,
@@ -194,8 +198,66 @@ describe('checkBudget (via CostTracker)', () => {
     });
     costTracker.flush();
 
-    const result = costTracker.checkBudget('user-1', 100);
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 100);
     assert.equal(result.allowed, true);
     assert.equal(result.remaining, 100);
+  });
+
+  it('uses keyed user identity instead of global summary when identity exists', () => {
+    costTracker.record({
+      provider: 'test',
+      keyName: 'key-1',
+      userId: 'user-1',
+      model: 'test-model',
+      tokensIn: 100,
+      tokensOut: 100,
+      costUsd: 40,
+      latencyMs: 100,
+      success: true,
+    });
+    costTracker.record({
+      provider: 'test',
+      keyName: 'key-2',
+      userId: 'user-2',
+      model: 'test-model',
+      tokensIn: 100,
+      tokensOut: 100,
+      costUsd: 500,
+      latencyMs: 100,
+      success: true,
+    });
+    costTracker.flush();
+
+    const result = checkBudget(costTracker, { userId: 'user-1', apiKeyId: 'key-1' }, 100);
+    assert.equal(result.allowed, true);
+    assert.equal(result.remaining, 60);
+  });
+
+  it('falls back to apiKey identity when user identity is unavailable', () => {
+    costTracker.record({
+      provider: 'test',
+      keyName: 'key-1',
+      model: 'test-model',
+      tokensIn: 100,
+      tokensOut: 100,
+      costUsd: 25,
+      latencyMs: 100,
+      success: true,
+    });
+    costTracker.record({
+      provider: 'test',
+      keyName: 'key-2',
+      model: 'test-model',
+      tokensIn: 100,
+      tokensOut: 100,
+      costUsd: 90,
+      latencyMs: 100,
+      success: true,
+    });
+    costTracker.flush();
+
+    const result = checkBudget(costTracker, { apiKeyId: 'key-1' }, 50);
+    assert.equal(result.allowed, true);
+    assert.equal(result.remaining, 25);
   });
 });

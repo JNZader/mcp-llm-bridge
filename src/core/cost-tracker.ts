@@ -25,6 +25,8 @@ export interface UsageEntry {
   keyName?: string;
   model: string;
   project?: string;
+  /** Optional API key ID for truthful per-key correlation. */
+  apiKeyId?: string;
   /** Optional user ID for multi-tenant tracking. */
   userId?: string;
   tokensIn?: number;
@@ -43,6 +45,7 @@ export interface UsageRecord {
   keyName: string;
   model: string;
   project: string;
+  userId: string | null;
   tokensIn: number | null;
   tokensOut: number | null;
   totalTokens: number | null;
@@ -56,8 +59,10 @@ export interface UsageRecord {
 /** Query filters for usage records. */
 export interface UsageQuery {
   provider?: string;
+  keyName?: string;
   model?: string;
   project?: string;
+  userId?: string;
   from?: string;       // ISO date string
   to?: string;         // ISO date string
   groupBy?: 'provider' | 'model' | 'project' | 'hour' | 'day';
@@ -99,6 +104,7 @@ interface UsageRow {
   key_name: string;
   model: string;
   project: string;
+  user_id: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
   total_tokens: number | null;
@@ -176,8 +182,8 @@ export class CostTracker {
 
     // Prepare the insert statement once
     this.insertStmt = this.db.prepare(`
-      INSERT INTO usage_logs (provider, key_name, model, project, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at)
-      VALUES (@provider, @keyName, @model, @project, @tokensIn, @tokensOut, @totalTokens, @costUsd, @latencyMs, @success, @errorMessage, datetime('now'))
+      INSERT INTO usage_logs (provider, key_name, model, project, user_id, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at)
+      VALUES (@provider, @keyName, @model, @project, @userId, @tokensIn, @tokensOut, @totalTokens, @costUsd, @latencyMs, @success, @errorMessage, datetime('now'))
     `);
 
     // Periodic flush — unref so it doesn't keep the process alive
@@ -224,9 +230,10 @@ export class CostTracker {
       for (const entry of items) {
         this.insertStmt.run({
           provider: entry.provider,
-          keyName: entry.keyName ?? 'default',
+          keyName: entry.apiKeyId ?? entry.keyName ?? 'default',
           model: entry.model,
           project: entry.project ?? GLOBAL_PROJECT,
+          userId: entry.userId ?? null,
           tokensIn: entry.tokensIn ?? null,
           tokensOut: entry.tokensOut ?? null,
           totalTokens: hasExactSplitUsage(entry)
@@ -266,6 +273,10 @@ export class CostTracker {
       conditions.push('provider = @provider');
       params['provider'] = filters.provider;
     }
+    if (filters.keyName) {
+      conditions.push('key_name = @keyName');
+      params['keyName'] = filters.keyName;
+    }
     if (filters.model) {
       conditions.push('model = @model');
       params['model'] = filters.model;
@@ -273,6 +284,10 @@ export class CostTracker {
     if (filters.project) {
       conditions.push('project = @project');
       params['project'] = filters.project;
+    }
+    if (filters.userId) {
+      conditions.push('user_id = @userId');
+      params['userId'] = filters.userId;
     }
     if (filters.from) {
       conditions.push('created_at >= @from');
@@ -286,7 +301,7 @@ export class CostTracker {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = filters.limit ?? DEFAULT_QUERY_LIMIT;
 
-    const sql = `SELECT id, provider, key_name, model, project, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at FROM usage_logs ${where} ORDER BY created_at DESC LIMIT @limit`;
+    const sql = `SELECT id, provider, key_name, model, project, user_id, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at FROM usage_logs ${where} ORDER BY created_at DESC LIMIT @limit`;
 
     const rows = this.db.prepare(sql).all({ ...params, limit }) as UsageRow[];
 
@@ -304,6 +319,10 @@ export class CostTracker {
       conditions.push('provider = @provider');
       params['provider'] = filters.provider;
     }
+    if (filters.keyName) {
+      conditions.push('key_name = @keyName');
+      params['keyName'] = filters.keyName;
+    }
     if (filters.model) {
       conditions.push('model = @model');
       params['model'] = filters.model;
@@ -311,6 +330,10 @@ export class CostTracker {
     if (filters.project) {
       conditions.push('project = @project');
       params['project'] = filters.project;
+    }
+    if (filters.userId) {
+      conditions.push('user_id = @userId');
+      params['userId'] = filters.userId;
     }
     if (filters.from) {
       conditions.push('created_at >= @from');
@@ -379,8 +402,9 @@ export class CostTracker {
     provider: string,
     model: string,
     project?: string,
+    identity?: { apiKeyId?: string; userId?: string },
   ): StreamRecorder {
-    return new StreamRecorder(this, provider, model, project);
+    return new StreamRecorder(this, provider, model, project, identity);
   }
 
   /**
@@ -393,7 +417,10 @@ export class CostTracker {
    * @param budgetUsd - The maximum monthly budget in USD. 0 = unlimited.
    * @returns Whether the request is allowed and the remaining budget.
    */
-  checkBudget(userId: string, budgetUsd: number): { allowed: boolean; remaining: number } {
+  checkBudget(
+    identity: string | { userId?: string; apiKeyId?: string },
+    budgetUsd: number,
+  ): { allowed: boolean; remaining: number } {
     // Budget of 0 means unlimited
     if (budgetUsd <= 0) {
       return { allowed: true, remaining: Infinity };
@@ -402,23 +429,18 @@ export class CostTracker {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-    const row = this.db
-      .prepare<[string, string], { total_cost: number | null }>(
-        `SELECT CASE
-            WHEN COUNT(*) = 0 THEN 0.0
-            WHEN SUM(CASE WHEN cost_usd IS NULL THEN 1 ELSE 0 END) > 0 THEN NULL
-            ELSE COALESCE(SUM(cost_usd), 0.0)
-          END as total_cost
-          FROM usage_logs
-          WHERE key_name = ? AND created_at >= ?`,
-      )
-      .get(userId, monthStart);
+    const { userId, apiKeyId } = normalizeBudgetIdentity(identity);
+    const summary = this.summary({
+      ...(userId ? { userId } : apiKeyId ? { keyName: apiKeyId } : {}),
+      from: monthStart,
+      to: now.toISOString(),
+    });
 
-    if (!row || row.total_cost === null) {
+    if (summary.totalCostUsd === null) {
       return { allowed: false, remaining: 0 };
     }
 
-    const used = row.total_cost;
+    const used = summary.totalCostUsd;
     const remaining = Math.max(0, budgetUsd - used);
 
     return {
@@ -512,6 +534,7 @@ export class CostTracker {
       keyName: row.key_name,
       model: row.model,
       project: row.project,
+      userId: row.user_id,
       tokensIn: row.tokens_in,
       tokensOut: row.tokens_out,
       totalTokens: row.total_tokens,
@@ -529,6 +552,16 @@ function hasExactSplitUsage(entry: Pick<UsageEntry, 'tokensIn' | 'tokensOut'>): 
   tokensOut: number;
 } {
   return typeof entry.tokensIn === 'number' && typeof entry.tokensOut === 'number';
+}
+
+function normalizeBudgetIdentity(
+  identity: string | { userId?: string; apiKeyId?: string },
+): { userId?: string; apiKeyId?: string } {
+  if (typeof identity === 'string') {
+    return { userId: identity };
+  }
+
+  return identity;
 }
 
 // ── StreamRecorder ─────────────────────────────────────────
@@ -549,6 +582,7 @@ export class StreamRecorder {
     private readonly provider: string,
     private readonly model: string,
     private readonly project?: string,
+    private readonly identity?: { apiKeyId?: string; userId?: string },
   ) {
     this._startTime = Date.now();
   }
@@ -581,8 +615,10 @@ export class StreamRecorder {
 
     this.tracker.record({
       provider: this.provider,
+      apiKeyId: this.identity?.apiKeyId,
       model: this.model,
       project: this.project,
+      userId: this.identity?.userId,
       tokensIn: this._tokensIn,
       tokensOut,
       latencyMs,

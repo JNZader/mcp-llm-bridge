@@ -137,6 +137,14 @@ export function buildInternalRequestFromGenerate(request: GenerateRequest): Inte
     metadata['project'] = request.project;
   }
 
+  if (request.apiKeyId) {
+    metadata['apiKeyId'] = request.apiKeyId;
+  }
+
+  if (request.userId) {
+    metadata['userId'] = request.userId;
+  }
+
   return {
     messages: [
       ...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
