@@ -254,4 +254,72 @@ describe("chat-completions-service", () => {
 
 		assert.deepEqual(captured, [{ phase: "end", attempts: 3 }]);
 	});
+
+	it("preserves total-only usage when generateFromInternal came from the legacy adapter path", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+		const captured: Array<Record<string, unknown>> = [];
+
+		const response = await executeNonStreamingChatCompletions({
+			prepared,
+			scope: {},
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "gpt-4o-mini", startTime: 0 }) as never,
+				captureEnd: async (
+					_ctx: unknown,
+					input?: {
+						totalTokens?: number;
+						inputTokens?: number;
+						outputTokens?: number;
+					},
+				) => {
+					captured.push({
+						phase: "end",
+						totalTokens: input?.totalTokens,
+						inputTokens: input?.inputTokens,
+						outputTokens: input?.outputTokens,
+					});
+				},
+			} as never,
+			router: {
+				generateFromInternal: async () => ({
+					content: "done",
+					model: "gpt-4o-mini",
+					finishReason: "stop",
+					usage: { totalTokens: 9 },
+					metadata: {
+						provider: "legacy-provider",
+						resolvedProvider: "legacy-provider",
+						resolvedModel: "gpt-4o-mini",
+						fallbackUsed: false,
+					},
+				}),
+			} as never,
+		});
+
+		assert.deepEqual(captured, [
+			{
+				phase: "end",
+				totalTokens: 9,
+				inputTokens: undefined,
+				outputTokens: undefined,
+			},
+		]);
+		assert.deepEqual(response.usage, {
+			total_tokens: 9,
+		});
+		assert.deepEqual(response.x_gateway, {
+			requestedProvider: undefined,
+			requestedModel: undefined,
+			resolvedProvider: "legacy-provider",
+			resolvedModel: "gpt-4o-mini",
+			fallbackUsed: false,
+			tokensUsed: 9,
+			inputTokens: undefined,
+			outputTokens: undefined,
+			routing: undefined,
+		});
+	});
 });

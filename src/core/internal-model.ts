@@ -111,11 +111,20 @@ export type InternalLLMRequest = z.infer<typeof InternalLLMRequestSchema>;
 
 // ── Usage ───────────────────────────────────────────────────
 
-export const UsageSchema = z.object({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-  totalTokens: z.number().int().nonnegative(),
-});
+export const UsageSchema = z
+  .object({
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    totalTokens: z.number().int().nonnegative(),
+  })
+  .refine(
+    (usage) =>
+      (typeof usage.inputTokens === 'number' && typeof usage.outputTokens === 'number') ||
+      (usage.inputTokens === undefined && usage.outputTokens === undefined),
+    {
+      message: 'usage must include both inputTokens and outputTokens when split usage is known',
+    },
+  );
 
 export type Usage = z.infer<typeof UsageSchema>;
 

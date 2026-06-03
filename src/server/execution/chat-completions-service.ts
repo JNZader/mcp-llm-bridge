@@ -233,7 +233,11 @@ function mapInternalResultToNonStreamingChatResult(
 	result: {
 		content: string;
 		model: string;
-		usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+		usage: {
+			inputTokens?: number;
+			outputTokens?: number;
+			totalTokens: number;
+		};
 		metadata?: Record<string, unknown>;
 	},
 ): NonStreamingChatResult {

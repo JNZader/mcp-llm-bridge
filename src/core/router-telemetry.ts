@@ -114,25 +114,15 @@ export function recordUsage(
   telemetry: RouterTelemetryContext,
   input: RouterUsageRecordInput,
 ): void {
+  const hasExactSplit =
+    typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number';
   const totalTokens = input.totalTokens ?? (
-    typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
+    hasExactSplit
       ? input.tokensIn + input.tokensOut
       : undefined
   );
-  const tokensIn = typeof input.tokensIn === 'number'
-    ? input.tokensIn
-    : typeof totalTokens === 'number'
-      ? 0
-      : !input.success
-        ? 0
-      : undefined;
-  const tokensOut = typeof input.tokensOut === 'number'
-    ? input.tokensOut
-    : typeof totalTokens === 'number'
-      ? totalTokens
-      : !input.success
-        ? 0
-      : undefined;
+  const tokensIn = hasExactSplit ? input.tokensIn : !input.success ? 0 : undefined;
+  const tokensOut = hasExactSplit ? input.tokensOut : !input.success ? 0 : undefined;
 
   recordLlmAttemptMetric({
     provider: input.provider,
@@ -145,7 +135,7 @@ export function recordUsage(
   if (telemetry.analyticsAggregator) {
     try {
       const cost = input.costUsd ?? (
-        typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
+        hasExactSplit
           ? calculateCost(input.model, input.tokensIn, input.tokensOut)
           : undefined
       );

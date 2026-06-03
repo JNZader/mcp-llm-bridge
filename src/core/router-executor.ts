@@ -220,8 +220,6 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       model: result.model,
       finishReason: 'stop',
       usage: {
-        inputTokens: 0,
-        outputTokens: 0,
         totalTokens: result.tokensUsed ?? 0,
       },
       metadata: {
