@@ -50,7 +50,7 @@ export function registerAdminDashboardRoutes(
         usage = {
           totalRequests: summary.totalRequests,
           totalCost: summary.totalCostUsd,
-          totalTokens: summary.totalTokensIn + summary.totalTokensOut,
+          totalTokens: summary.totalTokens,
         };
       }
 

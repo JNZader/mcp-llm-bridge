@@ -188,7 +188,56 @@ describe('CostTracker', () => {
     assert.equal(summary.totalRequests, 3);
     assert.equal(summary.totalTokensIn, 600);
     assert.equal(summary.totalTokensOut, 300);
+    assert.equal(summary.totalTokens, 900);
     assert.equal(summary.totalCostUsd, 3.50);
+  });
+
+  it('records and summarizes total-only usage truthfully', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    tracker.record({
+      provider: 'openai',
+      model: 'gpt-4o',
+      tokensIn: 100,
+      tokensOut: 50,
+      costUsd: 1.25,
+      latencyMs: 200,
+      success: true,
+    });
+    tracker.record({
+      provider: 'legacy-provider',
+      model: 'legacy-model',
+      totalTokens: 9,
+      latencyMs: 25,
+      success: true,
+    });
+
+    tracker.flush();
+
+    const records = tracker.query();
+    assert.equal(records.length, 2);
+
+    const totalOnlyRecord = records.find((record) => record.provider === 'legacy-provider');
+    assert.ok(totalOnlyRecord);
+    assert.equal(totalOnlyRecord.tokensIn, null);
+    assert.equal(totalOnlyRecord.tokensOut, null);
+    assert.equal(totalOnlyRecord.totalTokens, 9);
+    assert.equal(totalOnlyRecord.costUsd, 0);
+
+    const summary = tracker.summary();
+    assert.equal(summary.totalRequests, 2);
+    assert.equal(summary.totalTokensIn, 100);
+    assert.equal(summary.totalTokensOut, 50);
+    assert.equal(summary.totalTokens, 159);
+    assert.equal(summary.totalCostUsd, 1.25);
+
+    const providerBreakdown = tracker.summary({ groupBy: 'provider' }).breakdown;
+    const legacy = providerBreakdown.find((entry) => entry.key === 'legacy-provider');
+    assert.ok(legacy);
+    assert.equal(legacy.tokensIn, 0);
+    assert.equal(legacy.tokensOut, 0);
+    assert.equal(legacy.totalTokens, 9);
   });
 
   it('summary with groupBy provider returns breakdown', () => {

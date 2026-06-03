@@ -219,6 +219,76 @@ describe('GET /v1/admin/overview', () => {
       assert.ok(typeof provider.available === 'boolean');
     }
   });
+
+  it('reports truthful total token volume when usage is total-only', async () => {
+    costTracker.record({
+      provider: 'openai',
+      model: 'gpt-4o',
+      tokensIn: 10,
+      tokensOut: 5,
+      costUsd: 0.25,
+      latencyMs: 50,
+      success: true,
+    });
+    costTracker.record({
+      provider: 'legacy-provider',
+      model: 'legacy-model',
+      totalTokens: 9,
+      latencyMs: 25,
+      success: true,
+    });
+    costTracker.flush();
+
+    const res = await request('GET', '/v1/admin/overview');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      usage: { totalRequests: number; totalCost: number; totalTokens: number };
+    };
+
+    assert.ok(data.usage.totalRequests >= 2);
+    assert.ok(data.usage.totalCost >= 0.25);
+    assert.ok(data.usage.totalTokens >= 24);
+  });
+});
+
+describe('GET /v1/usage/summary', () => {
+  it('exposes truthful total tokens separately from exact splits', async () => {
+    costTracker.record({
+      provider: 'summary-provider',
+      model: 'summary-model-exact',
+      tokensIn: 4,
+      tokensOut: 6,
+      costUsd: 0.1,
+      latencyMs: 10,
+      success: true,
+    });
+    costTracker.record({
+      provider: 'summary-provider',
+      model: 'summary-model-total-only',
+      totalTokens: 11,
+      latencyMs: 12,
+      success: true,
+    });
+    costTracker.flush();
+
+    const res = await request('GET', '/v1/usage/summary?provider=summary-provider');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      totalRequests: number;
+      totalTokensIn: number;
+      totalTokensOut: number;
+      totalTokens: number;
+      totalCostUsd: number;
+    };
+
+    assert.equal(data.totalRequests, 2);
+    assert.equal(data.totalTokensIn, 4);
+    assert.equal(data.totalTokensOut, 6);
+    assert.equal(data.totalTokens, 21);
+    assert.equal(data.totalCostUsd, 0.1);
+  });
 });
 
 // ── GET /v1/admin/providers ─────────────────────────────

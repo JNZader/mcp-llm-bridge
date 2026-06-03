@@ -121,8 +121,8 @@ export function recordUsage(
       ? input.tokensIn + input.tokensOut
       : undefined
   );
-  const tokensIn = hasExactSplit ? input.tokensIn : !input.success ? 0 : undefined;
-  const tokensOut = hasExactSplit ? input.tokensOut : !input.success ? 0 : undefined;
+  const tokensIn = hasExactSplit ? input.tokensIn : undefined;
+  const tokensOut = hasExactSplit ? input.tokensOut : undefined;
 
   recordLlmAttemptMetric({
     provider: input.provider,
@@ -157,7 +157,7 @@ export function recordUsage(
 
   if (!telemetry.costTracker) return;
 
-  if (typeof tokensIn !== 'number' || typeof tokensOut !== 'number') {
+  if (!hasExactSplit && typeof totalTokens !== 'number') {
     return;
   }
 
@@ -167,6 +167,8 @@ export function recordUsage(
       model: input.model,
       tokensIn,
       tokensOut,
+      totalTokens,
+      costUsd: input.costUsd,
       latencyMs: input.latencyMs,
       success: input.success,
       project: input.project,

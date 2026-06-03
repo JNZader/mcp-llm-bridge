@@ -116,8 +116,9 @@ export function initializeDb(db: Database.Database): void {
       key_name    TEXT NOT NULL DEFAULT 'default',
       model       TEXT NOT NULL,
       project     TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
-      tokens_in   INTEGER NOT NULL DEFAULT 0,
-      tokens_out  INTEGER NOT NULL DEFAULT 0,
+      tokens_in   INTEGER,
+      tokens_out  INTEGER,
+      total_tokens INTEGER,
       cost_usd    REAL NOT NULL DEFAULT 0.0,
       latency_ms  INTEGER NOT NULL DEFAULT 0,
       success     INTEGER NOT NULL DEFAULT 1,
@@ -129,6 +130,83 @@ export function initializeDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_usage_model_time ON usage_logs(model, created_at);
     CREATE INDEX IF NOT EXISTS idx_usage_project_time ON usage_logs(project, created_at);
   `);
+
+  const usageColumns = db.pragma('table_info(usage_logs)') as Array<{
+    name: string;
+    notnull: number;
+  }>;
+  const usageColumnMap = new Map(usageColumns.map((column) => [column.name, column]));
+  const hasUsageTotalTokens = usageColumnMap.has('total_tokens');
+  const tokensInColumn = usageColumnMap.get('tokens_in');
+  const tokensOutColumn = usageColumnMap.get('tokens_out');
+  const usageTotalTokensSelect = hasUsageTotalTokens ? 'total_tokens' : 'NULL';
+  const usageSplitColumnsAreNullable =
+    tokensInColumn?.notnull === 0 && tokensOutColumn?.notnull === 0;
+
+  if (!hasUsageTotalTokens || !usageSplitColumnsAreNullable) {
+    db.exec(`
+      DROP INDEX IF EXISTS idx_usage_provider_time;
+      DROP INDEX IF EXISTS idx_usage_model_time;
+      DROP INDEX IF EXISTS idx_usage_project_time;
+
+      CREATE TABLE usage_logs_new (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider     TEXT NOT NULL,
+        key_name     TEXT NOT NULL DEFAULT 'default',
+        model        TEXT NOT NULL,
+        project      TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
+        tokens_in    INTEGER,
+        tokens_out   INTEGER,
+        total_tokens INTEGER,
+        cost_usd     REAL NOT NULL DEFAULT 0.0,
+        latency_ms   INTEGER NOT NULL DEFAULT 0,
+        success      INTEGER NOT NULL DEFAULT 1,
+        error_message TEXT,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT INTO usage_logs_new (
+        id,
+        provider,
+        key_name,
+        model,
+        project,
+        tokens_in,
+        tokens_out,
+        total_tokens,
+        cost_usd,
+        latency_ms,
+        success,
+        error_message,
+        created_at
+      )
+      SELECT
+        id,
+        provider,
+        key_name,
+        model,
+        project,
+        tokens_in,
+        tokens_out,
+        CASE
+          WHEN tokens_in IS NOT NULL AND tokens_out IS NOT NULL THEN tokens_in + tokens_out
+          ELSE ${usageTotalTokensSelect}
+        END,
+        cost_usd,
+        latency_ms,
+        success,
+        error_message,
+        created_at
+      FROM usage_logs;
+
+      DROP TABLE usage_logs;
+      ALTER TABLE usage_logs_new RENAME TO usage_logs;
+
+      CREATE INDEX idx_usage_provider_time ON usage_logs(provider, created_at);
+      CREATE INDEX idx_usage_model_time ON usage_logs(model, created_at);
+      CREATE INDEX idx_usage_project_time ON usage_logs(project, created_at);
+    `);
+  }
 
   // ── Price config table (Phase 4: Cost Tracking) ──
   db.exec(`

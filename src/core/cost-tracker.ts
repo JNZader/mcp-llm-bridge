@@ -27,8 +27,9 @@ export interface UsageEntry {
   project?: string;
   /** Optional user ID for multi-tenant tracking. */
   userId?: string;
-  tokensIn: number;
-  tokensOut: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  totalTokens?: number;
   costUsd?: number;
   latencyMs: number;
   success: boolean;
@@ -42,8 +43,9 @@ export interface UsageRecord {
   keyName: string;
   model: string;
   project: string;
-  tokensIn: number;
-  tokensOut: number;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  totalTokens: number | null;
   costUsd: number;
   latencyMs: number;
   success: boolean;
@@ -67,6 +69,7 @@ export interface UsageSummary {
   totalRequests: number;
   totalTokensIn: number;
   totalTokensOut: number;
+  totalTokens: number;
   totalCostUsd: number;
   avgLatencyMs: number;
   breakdown: UsageBreakdown[];
@@ -78,6 +81,7 @@ export interface UsageBreakdown {
   requests: number;
   tokensIn: number;
   tokensOut: number;
+  totalTokens: number;
   costUsd: number;
   avgLatencyMs: number;
 }
@@ -89,8 +93,9 @@ interface UsageRow {
   key_name: string;
   model: string;
   project: string;
-  tokens_in: number;
-  tokens_out: number;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  total_tokens: number | null;
   cost_usd: number;
   latency_ms: number;
   success: number;
@@ -104,6 +109,7 @@ interface AggregateRow {
   request_count: number;
   total_tokens_in: number;
   total_tokens_out: number;
+  total_tokens: number;
   total_cost_usd: number;
   avg_latency_ms: number;
 }
@@ -113,6 +119,7 @@ interface SummaryRow {
   total_requests: number;
   total_tokens_in: number;
   total_tokens_out: number;
+  total_tokens: number;
   total_cost_usd: number;
   avg_latency_ms: number;
 }
@@ -159,8 +166,8 @@ export class CostTracker {
 
     // Prepare the insert statement once
     this.insertStmt = this.db.prepare(`
-      INSERT INTO usage_logs (provider, key_name, model, project, tokens_in, tokens_out, cost_usd, latency_ms, success, error_message, created_at)
-      VALUES (@provider, @keyName, @model, @project, @tokensIn, @tokensOut, @costUsd, @latencyMs, @success, @errorMessage, datetime('now'))
+      INSERT INTO usage_logs (provider, key_name, model, project, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at)
+      VALUES (@provider, @keyName, @model, @project, @tokensIn, @tokensOut, @totalTokens, @costUsd, @latencyMs, @success, @errorMessage, datetime('now'))
     `);
 
     // Periodic flush — unref so it doesn't keep the process alive
@@ -175,11 +182,24 @@ export class CostTracker {
    * Automatically calculates cost if not provided.
    */
   record(entry: UsageEntry): void {
+    const hasExactSplit = hasExactSplitUsage(entry);
+    const totalTokens = hasExactSplit
+      ? entry.tokensIn + entry.tokensOut
+      : entry.totalTokens;
+
+    if (!hasExactSplit && typeof totalTokens !== 'number') {
+      return;
+    }
+
     // Auto-calculate cost if not provided
-    if (entry.costUsd === undefined) {
+    if (entry.costUsd === undefined && hasExactSplit) {
       entry.costUsd = calculateCost(entry.model, entry.tokensIn, entry.tokensOut);
     }
-    this.buffer.push(entry);
+
+    this.buffer.push({
+      ...entry,
+      totalTokens,
+    });
   }
 
   /**
@@ -197,8 +217,11 @@ export class CostTracker {
           keyName: entry.keyName ?? 'default',
           model: entry.model,
           project: entry.project ?? GLOBAL_PROJECT,
-          tokensIn: entry.tokensIn,
-          tokensOut: entry.tokensOut,
+          tokensIn: entry.tokensIn ?? null,
+          tokensOut: entry.tokensOut ?? null,
+          totalTokens: hasExactSplitUsage(entry)
+            ? entry.tokensIn + entry.tokensOut
+            : entry.totalTokens ?? null,
           costUsd: entry.costUsd ?? 0,
           latencyMs: entry.latencyMs,
           success: entry.success ? 1 : 0,
@@ -253,7 +276,7 @@ export class CostTracker {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = filters.limit ?? DEFAULT_QUERY_LIMIT;
 
-    const sql = `SELECT id, provider, key_name, model, project, tokens_in, tokens_out, cost_usd, latency_ms, success, error_message, created_at FROM usage_logs ${where} ORDER BY created_at DESC LIMIT @limit`;
+    const sql = `SELECT id, provider, key_name, model, project, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at FROM usage_logs ${where} ORDER BY created_at DESC LIMIT @limit`;
 
     const rows = this.db.prepare(sql).all({ ...params, limit }) as UsageRow[];
 
@@ -294,8 +317,13 @@ export class CostTracker {
     const totalSql = `
       SELECT
         COUNT(*) as total_requests,
-        COALESCE(SUM(tokens_in), 0) as total_tokens_in,
-        COALESCE(SUM(tokens_out), 0) as total_tokens_out,
+        COALESCE(SUM(CASE WHEN tokens_in IS NOT NULL THEN tokens_in ELSE 0 END), 0) as total_tokens_in,
+        COALESCE(SUM(CASE WHEN tokens_out IS NOT NULL THEN tokens_out ELSE 0 END), 0) as total_tokens_out,
+        COALESCE(SUM(CASE
+          WHEN tokens_in IS NOT NULL AND tokens_out IS NOT NULL THEN tokens_in + tokens_out
+          WHEN total_tokens IS NOT NULL THEN total_tokens
+          ELSE 0
+        END), 0) as total_tokens,
         COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
         COALESCE(AVG(latency_ms), 0) as avg_latency_ms
       FROM usage_logs ${where}
@@ -313,6 +341,7 @@ export class CostTracker {
       totalRequests: totals.total_requests,
       totalTokensIn: totals.total_tokens_in,
       totalTokensOut: totals.total_tokens_out,
+      totalTokens: totals.total_tokens,
       totalCostUsd: totals.total_cost_usd,
       avgLatencyMs: Math.round(totals.avg_latency_ms),
       breakdown,
@@ -413,8 +442,13 @@ export class CostTracker {
       SELECT
         ${groupColumn} as group_key,
         COUNT(*) as request_count,
-        COALESCE(SUM(tokens_in), 0) as total_tokens_in,
-        COALESCE(SUM(tokens_out), 0) as total_tokens_out,
+        COALESCE(SUM(CASE WHEN tokens_in IS NOT NULL THEN tokens_in ELSE 0 END), 0) as total_tokens_in,
+        COALESCE(SUM(CASE WHEN tokens_out IS NOT NULL THEN tokens_out ELSE 0 END), 0) as total_tokens_out,
+        COALESCE(SUM(CASE
+          WHEN tokens_in IS NOT NULL AND tokens_out IS NOT NULL THEN tokens_in + tokens_out
+          WHEN total_tokens IS NOT NULL THEN total_tokens
+          ELSE 0
+        END), 0) as total_tokens,
         COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
         COALESCE(AVG(latency_ms), 0) as avg_latency_ms
       FROM usage_logs ${where}
@@ -429,6 +463,7 @@ export class CostTracker {
       requests: row.request_count,
       tokensIn: row.total_tokens_in,
       tokensOut: row.total_tokens_out,
+      totalTokens: row.total_tokens,
       costUsd: row.total_cost_usd,
       avgLatencyMs: Math.round(row.avg_latency_ms),
     }));
@@ -443,6 +478,7 @@ export class CostTracker {
       project: row.project,
       tokensIn: row.tokens_in,
       tokensOut: row.tokens_out,
+      totalTokens: row.total_tokens,
       costUsd: row.cost_usd,
       latencyMs: row.latency_ms,
       success: row.success === 1,
@@ -450,6 +486,13 @@ export class CostTracker {
       createdAt: row.created_at,
     };
   }
+}
+
+function hasExactSplitUsage(entry: Pick<UsageEntry, 'tokensIn' | 'tokensOut'>): entry is {
+  tokensIn: number;
+  tokensOut: number;
+} {
+  return typeof entry.tokensIn === 'number' && typeof entry.tokensOut === 'number';
 }
 
 // ── StreamRecorder ─────────────────────────────────────────
