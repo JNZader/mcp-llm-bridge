@@ -18,7 +18,11 @@ describe("generate-service", () => {
 				maxTokens: 64,
 				strict: true,
 			},
-			scope: { project: "header-project" },
+			scope: {
+				project: "header-project",
+				apiKeyId: "key-123",
+				userId: "user-456",
+			},
 			now: () => 1_700_000_000_000,
 			requestLogger: {
 				captureStart: (input: {
@@ -84,6 +88,8 @@ describe("generate-service", () => {
 					maxTokens: 64,
 					strict: true,
 					project: "header-project",
+					apiKeyId: "key-123",
+					userId: "user-456",
 				},
 			},
 			{

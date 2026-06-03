@@ -171,7 +171,11 @@ describe("createStreamExecutor", () => {
 					return fallbackResult;
 				},
 			} as never,
-			scope: { project: "stream-project" },
+			scope: {
+				project: "stream-project",
+				apiKeyId: "key-123",
+				userId: "user-456",
+			},
 			requestLogger: {
 				captureStart: () => ({}) as never,
 				captureEnd: async (
@@ -215,7 +219,13 @@ describe("createStreamExecutor", () => {
 		});
 
 		assert.deepEqual(events, ["fallback:fallback", "done"]);
-		assert.deepEqual(generateRequests, [buildChatGenerateRequest(canonical, { project: "stream-project" })]);
+		assert.deepEqual(generateRequests, [
+			buildChatGenerateRequest(canonical, {
+				project: "stream-project",
+				apiKeyId: "key-123",
+				userId: "user-456",
+			}),
+		]);
 		assert.deepEqual(logged, [
 			{
 				provider: "mock",
@@ -282,7 +292,11 @@ describe("createStreamExecutor", () => {
 				strict: true,
 			},
 			router,
-			scope: { project: "stream-project" },
+			scope: {
+				project: "stream-project",
+				apiKeyId: "key-123",
+				userId: "user-456",
+			},
 			requestLogger: {
 				captureStart: () => ({}) as never,
 				captureEnd: async (
@@ -334,6 +348,8 @@ describe("createStreamExecutor", () => {
 				model: "test-model",
 				maxTokens: undefined,
 				project: "stream-project",
+				apiKeyId: "key-123",
+				userId: "user-456",
 			},
 		]);
 		assert.deepEqual(logged, [
@@ -531,7 +547,11 @@ describe("createStreamExecutor", () => {
 					fallbackUsed: false,
 				}),
 			} as never,
-			scope: { project: "stream-project" },
+			scope: {
+				project: "stream-project",
+				apiKeyId: "key-123",
+				userId: "user-456",
+			},
 		});
 
 		await executor.execute({
@@ -555,6 +575,8 @@ describe("createStreamExecutor", () => {
 					clientId: "client-1",
 					strict: true,
 					project: "stream-project",
+					apiKeyId: "key-123",
+					userId: "user-456",
 				},
 			},
 		]);

@@ -77,7 +77,11 @@ describe("chat-completions-service", () => {
 
 		const response = await executeNonStreamingChatCompletions({
 			prepared,
-			scope: { project: "project-alpha" },
+			scope: {
+				project: "project-alpha",
+				apiKeyId: "key-123",
+				userId: "user-456",
+			},
 			now: () => 1_700_000_000_000,
 			createChatCompletionId: () => "chatcmpl-test",
 			requestLogger: {
@@ -154,6 +158,8 @@ describe("chat-completions-service", () => {
 					maxTokens: 42,
 					metadata: {
 						project: "project-alpha",
+						apiKeyId: "key-123",
+						userId: "user-456",
 					},
 				},
 			},
