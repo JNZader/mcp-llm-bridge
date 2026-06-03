@@ -75,6 +75,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		| ReturnType<NonNullable<CostTracker["recordStream"]>>
 		| undefined;
 	let activeRecordResult: ResolvedStreamingProvider["recordResult"] | undefined;
+	let activeRoutingMetadata: ResolvedStreamingProvider["routingMetadata"] | undefined;
 
 	const clearActiveAttemptTelemetry = () => {
 		activeProviderId = undefined;
@@ -82,6 +83,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		activeAttemptStartTime = undefined;
 		activeStreamRecorder = undefined;
 		activeRecordResult = undefined;
+		activeRoutingMetadata = undefined;
 	};
 
 	const internalRequest: InternalLLMRequest = buildChatInternalRequestFromMessages(
@@ -108,10 +110,14 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						resolvedModel: activeResolvedModel,
 						attemptStartTime: activeAttemptStartTime,
 						project: scope.project,
+						requestedProvider: readCanonicalString(canonical, "provider"),
+						requestedModel: canonical.model,
+						attemptedProviders,
 						attempts,
 						totalTokens,
 						inputTokens,
 						outputTokens,
+						routingMetadata: activeRoutingMetadata,
 						streamRecorder: activeStreamRecorder,
 						recordResult: activeRecordResult,
 						error: abortError,
@@ -219,6 +225,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 					activeAttemptStartTime = attemptStartTime;
 					activeStreamRecorder = streamRecorder;
 					activeRecordResult = recordResult;
+					activeRoutingMetadata = resolved.routingMetadata;
 
 					try {
 						const providerCall = providerStreamCallFactory(

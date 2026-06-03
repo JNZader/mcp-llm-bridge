@@ -43,6 +43,9 @@ interface StreamingAttemptFailureInput extends StreamingAttemptTelemetryInput {
 interface StreamingAttemptAbortInput extends StreamingAttemptTelemetryInput {
 	error: unknown;
 	finalizeRequestLog: (input?: CaptureEndInput) => Promise<void>;
+	requestedProvider?: string;
+	requestedModel?: string;
+	attemptedProviders?: string[];
 }
 
 export function normalizeStreamingError(error: unknown): Error {
@@ -185,10 +188,14 @@ export async function finalizeStreamingAttemptAbort(
 		resolvedModel,
 		attemptStartTime,
 		project,
+		requestedProvider,
+		requestedModel,
+		attemptedProviders,
 		attempts,
 		totalTokens,
 		inputTokens,
 		outputTokens,
+		routingMetadata,
 		streamRecorder,
 		recordResult,
 		error,
@@ -217,6 +224,14 @@ export async function finalizeStreamingAttemptAbort(
 		inputTokens,
 		outputTokens,
 		error: resolvedError,
+		responseData: buildStreamingResponseData({
+			providerId,
+			requestedProvider,
+			requestedModel,
+			resolvedModel,
+			attemptedProviders,
+			routingMetadata,
+		}),
 	});
 
 	return resolvedError;

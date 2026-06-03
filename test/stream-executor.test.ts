@@ -545,6 +545,7 @@ describe("createStreamExecutor", () => {
 			outputTokens?: number;
 			totalTokens?: number;
 			error?: Error;
+			responseData?: unknown;
 		}> = [];
 		const recordedResults: Array<{
 			model?: string;
@@ -586,6 +587,10 @@ describe("createStreamExecutor", () => {
 					recordResult: (input: Parameters<ResolvedStreamingProvider["recordResult"]>[0]) => {
 						recordedResults.push(input);
 					},
+					routingMetadata: {
+						strategy: "direct",
+						decisionReason: "Only abortable-provider was available",
+					},
 				},
 			],
 				generate: async () => {
@@ -604,6 +609,7 @@ describe("createStreamExecutor", () => {
 						outputTokens?: number;
 						totalTokens?: number;
 						error?: Error;
+						responseData?: unknown;
 					},
 				) => {
 					loggedEnds.push({
@@ -614,6 +620,7 @@ describe("createStreamExecutor", () => {
 						outputTokens: input?.outputTokens,
 						totalTokens: input?.totalTokens,
 						error: input?.error,
+						responseData: input?.responseData,
 					});
 				},
 			} as never,
@@ -650,6 +657,21 @@ describe("createStreamExecutor", () => {
 				outputTokens: 3,
 				totalTokens: 5,
 				error: new Error("Stream aborted by client"),
+				responseData: {
+					stream: true,
+					provider: "abortable-provider",
+					model: "abort-model",
+					requestedProvider: undefined,
+					requestedModel: "test-model",
+					resolvedProvider: "abortable-provider",
+					resolvedModel: "abort-model",
+					fallbackUsed: false,
+					routing: {
+						strategy: "direct",
+						attemptedProviders: ["abortable-provider"],
+						decisionReason: "Only abortable-provider was available",
+					},
+				},
 			},
 		]);
 		assert.equal(recordedResults.length, 1);
