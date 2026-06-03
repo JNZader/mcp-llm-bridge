@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { Router } from "../src/core/router.js";
+import { createRouterExecutionContract } from "../src/core/router-execution-contract.js";
 import { GroupStore } from "../src/core/groups.js";
 import { SessionManager } from "../src/session/index.js";
 import { TransformerRegistry } from "../src/core/transformer.js";
@@ -18,6 +19,22 @@ function createCanonicalRequest() {
 		messages: [{ role: "user" as const, content: "hello" }],
 		stream: true,
 	};
+}
+
+function createStreamingExecutionContract(options?: {
+	requestedProvider?: string;
+	requestedModel?: string;
+	strategy?: string;
+	decisionReason?: string;
+}) {
+	return createRouterExecutionContract({
+		requestedProvider: options?.requestedProvider,
+		requestedModel: options?.requestedModel ?? "test-model",
+		routingMetadata: {
+			strategy: options?.strategy ?? "direct",
+			decisionReason: options?.decisionReason ?? "Streaming test contract",
+		},
+	});
 }
 
 function createProvider(id: string, modelId = "test-model"): LLMProvider {
@@ -225,7 +242,14 @@ describe("createStreamExecutor", () => {
 				provider: "primary-provider",
 			},
 			router: {
-				resolveStreamingProviders: async () => [
+				resolveStreamingProviders: async () => {
+					const executionContract = createStreamingExecutionContract({
+						requestedProvider: "primary-provider",
+						decisionReason: "Provider primary-provider requested explicitly",
+						strategy: "explicit-provider",
+					});
+
+					return [
 					{
 						provider: { id: "primary-provider" },
 						request: { model: "primary-model", messages: [] },
@@ -236,10 +260,7 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
-						routingMetadata: {
-							strategy: "explicit-provider",
-							decisionReason: "Provider primary-provider requested explicitly",
-						},
+						executionContract,
 					},
 					{
 						provider: { id: "backup-provider" },
@@ -252,12 +273,10 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
-						routingMetadata: {
-							strategy: "explicit-provider",
-							decisionReason: "Provider primary-provider requested explicitly",
-						},
+						executionContract,
 					},
-				],
+					];
+				},
 				generate: async () => {
 					assert.fail("should not use router.generate");
 				},
@@ -415,7 +434,9 @@ describe("createStreamExecutor", () => {
 		const executor = createStreamExecutor({
 			canonical: createCanonicalRequest(),
 			router: {
-				resolveStreamingProviders: async () => [
+				resolveStreamingProviders: async () => {
+					const executionContract = createStreamingExecutionContract();
+					return [
 					{
 						provider: { id: "first-provider" },
 						request: { model: "test-model", messages: [] },
@@ -428,6 +449,7 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
+						executionContract,
 					},
 					{
 						provider: { id: "second-provider" },
@@ -442,8 +464,10 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
+						executionContract,
 					},
-				],
+					];
+				},
 				generate: async () => {
 					assert.fail("should not use non-streaming fallback");
 				},
@@ -482,7 +506,9 @@ describe("createStreamExecutor", () => {
 		const executor = createStreamExecutor({
 			canonical: createCanonicalRequest(),
 			router: {
-				resolveStreamingProviders: async () => [
+				resolveStreamingProviders: async () => {
+					const executionContract = createStreamingExecutionContract();
+					return [
 					{
 						provider: { id: "primary-provider" },
 						request: { model: "test-model", messages: [] },
@@ -494,6 +520,7 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
+						executionContract,
 					},
 					{
 						provider: { id: "recovery-provider" },
@@ -506,8 +533,10 @@ describe("createStreamExecutor", () => {
 							},
 						},
 						recordResult: () => {},
+						executionContract,
 					},
-				],
+					];
+				},
 				generate: async () => {
 					assert.fail("should not use router.generate");
 				},
@@ -569,7 +598,11 @@ describe("createStreamExecutor", () => {
 		executor = createStreamExecutor({
 			canonical: createCanonicalRequest(),
 			router: {
-				resolveStreamingProviders: async () => [
+				resolveStreamingProviders: async () => {
+					const executionContract = createStreamingExecutionContract({
+						decisionReason: "Only abortable-provider was available",
+					});
+					return [
 					{
 						provider: { id: "abortable-provider" },
 						request: { model: "test-model", messages: [] },
@@ -587,12 +620,10 @@ describe("createStreamExecutor", () => {
 					recordResult: (input: Parameters<ResolvedStreamingProvider["recordResult"]>[0]) => {
 						recordedResults.push(input);
 					},
-					routingMetadata: {
-						strategy: "direct",
-						decisionReason: "Only abortable-provider was available",
-					},
+					executionContract,
 				},
-			],
+					];
+				},
 				generate: async () => {
 					assert.fail("should not use router.generate");
 				},

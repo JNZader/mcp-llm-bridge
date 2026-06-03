@@ -73,8 +73,7 @@ export interface ResolvedStreamingProvider {
   provider: LLMProvider;
   request: InternalLLMRequest;
   streamTransformer: StreamingOutboundTransformer;
-  routingMetadata?: Omit<RoutingMetadataOptions, 'attemptedProviders'>;
-  executionContract?: RouterExecutionContract;
+  executionContract: RouterExecutionContract;
   onSuccess?: () => void;
   recordResult: (input: {
     model?: string;
@@ -690,7 +689,6 @@ export class Router {
             routedEndpoint,
           ),
           streamTransformer,
-          routingMetadata,
           executionContract,
           onSuccess:
             this._sessionManager && stickySession && stickyTtlMs !== null

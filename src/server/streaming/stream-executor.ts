@@ -1,13 +1,9 @@
 import type { CostTracker } from "../../core/cost-tracker.js";
 import type { InternalLLMRequest } from "../../core/internal-model.js";
-import {
-	createRouterExecutionContract,
-	type RouterExecutionContract,
-} from "../../core/router-execution-contract.js";
+import type { RouterExecutionContract } from "../../core/router-execution-contract.js";
 import type { ResolvedStreamingProvider, Router } from "../../core/router.js";
 import type { GenerateResponse } from "../../core/types.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
-import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { Vault } from "../../vault/vault.js";
 import {
@@ -80,7 +76,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		| ReturnType<NonNullable<CostTracker["recordStream"]>>
 		| undefined;
 	let activeRecordResult: ResolvedStreamingProvider["recordResult"] | undefined;
-	let activeRoutingMetadata: ResolvedStreamingProvider["routingMetadata"] | undefined;
 
 	const clearActiveAttemptTelemetry = () => {
 		activeProviderId = undefined;
@@ -88,7 +83,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 		activeAttemptStartTime = undefined;
 		activeStreamRecorder = undefined;
 		activeRecordResult = undefined;
-		activeRoutingMetadata = undefined;
 	};
 
 	const internalRequest: InternalLLMRequest = buildChatInternalRequestFromMessages(
@@ -115,15 +109,11 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						resolvedModel: activeResolvedModel,
 						attemptStartTime: activeAttemptStartTime,
 						project: scope.project,
-					requestedProvider: readCanonicalString(canonical, "provider"),
-					requestedModel: canonical.model,
-					attemptedProviders,
-					executionContract: streamingExecutionContract,
-					attempts,
+						executionContract: requireStreamingExecutionContract(streamingExecutionContract),
+						attempts,
 						totalTokens,
 						inputTokens,
 						outputTokens,
-						routingMetadata: activeRoutingMetadata,
 						streamRecorder: activeStreamRecorder,
 						recordResult: activeRecordResult,
 						error: abortError,
@@ -159,15 +149,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 				}
 
 				const resolvedCandidates = await router.resolveStreamingProviders(internalRequest);
-				streamingExecutionContract =
-					resolvedCandidates.find((candidate) => candidate.executionContract)?.executionContract ??
-					(resolvedCandidates[0]?.routingMetadata
-						? createRouterExecutionContract({
-							requestedProvider: readCanonicalString(canonical, "provider"),
-							requestedModel: canonical.model,
-							routingMetadata: resolvedCandidates[0].routingMetadata,
-						})
-						: undefined);
+				streamingExecutionContract = resolvedCandidates[0]?.executionContract;
 
 				if (resolvedCandidates.length === 0) {
 					let result: GenerateResponse;
@@ -217,9 +199,10 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 
 					const { provider, request: resolvedRequest, streamTransformer, onSuccess, recordResult } =
 						resolved;
-					streamingExecutionContract ??= resolved.executionContract;
+					const executionContract = requireResolvedExecutionContract(resolved);
+					streamingExecutionContract ??= executionContract;
 					attemptedProviders.push(provider.id);
-					streamingExecutionContract?.recordAttempt(provider.id);
+					executionContract.recordAttempt(provider.id);
 					const attemptStartTime = Date.now();
 					let breakerModel = resolvedRequest.model || canonical.model || "unknown";
 					let attemptInputTokens: number | undefined;
@@ -242,7 +225,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 					activeAttemptStartTime = attemptStartTime;
 					activeStreamRecorder = streamRecorder;
 					activeRecordResult = recordResult;
-					activeRoutingMetadata = resolved.routingMetadata;
 
 					try {
 						const providerCall = providerStreamCallFactory(
@@ -319,12 +301,8 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							resolvedModel: breakerModel,
 							attemptStartTime,
 							project: scope.project,
-						requestedProvider: readCanonicalString(canonical, "provider"),
-						requestedModel: canonical.model,
-						attemptedProviders,
-						routingMetadata: resolved.routingMetadata,
-						executionContract: streamingExecutionContract,
-						attempts,
+							executionContract,
+							attempts,
 							totalTokens,
 							inputTokens,
 							outputTokens,
@@ -403,9 +381,26 @@ function resolveAttemptsFromRouting(result: {
 	return result.routing?.attemptedProviders?.length ?? 1;
 }
 
-function readCanonicalString(canonical: CanonicalRequest, key: string): string | undefined {
-	const value = canonical[key];
-	return typeof value === "string" ? value : undefined;
+function requireResolvedExecutionContract(
+	resolved: Pick<ResolvedStreamingProvider, "provider" | "executionContract">,
+): RouterExecutionContract {
+	if (!resolved.executionContract) {
+		throw new Error(
+			`Streaming provider ${resolved.provider.id} resolved without executionContract`,
+		);
+	}
+
+	return resolved.executionContract;
+}
+
+function requireStreamingExecutionContract(
+	contract: RouterExecutionContract | undefined,
+): RouterExecutionContract {
+	if (!contract) {
+		throw new Error("Streaming execution contract was not initialized");
+	}
+
+	return contract;
 }
 
 function isAbortError(error: unknown): boolean {

@@ -977,7 +977,7 @@ describe('Router + ModelRouter integration', () => {
     assert.equal(alphaInternalRequest?.model, 'beta-model');
     assert.equal(streamingCandidates[0]?.provider.id, 'alpha');
     assert.equal(streamingCandidates[0]?.request.model, 'beta-model');
-    assert.deepEqual(streamingCandidates[0]?.routingMetadata, {
+    assert.deepEqual(streamingCandidates[0]?.executionContract.routingMetadata, {
       strategy: 'explicit-provider',
       decisionReason: 'Provider alpha requested explicitly',
       classification: null,
@@ -1724,7 +1724,7 @@ describe('Router + ModelRouter integration', () => {
     });
 
     assert.ok(resolved);
-    assert.deepEqual(resolved?.routingMetadata, {
+    assert.deepEqual(resolved?.executionContract.routingMetadata, {
       strategy: 'model-router',
       classification: {
         task: 'summarization',
