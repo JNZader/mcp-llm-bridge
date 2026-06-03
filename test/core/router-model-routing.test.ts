@@ -476,6 +476,21 @@ describe('Router + ModelRouter integration', () => {
 
     assert.equal(result.provider, 'backup');
     assert.equal(result.fallbackUsed, true);
+    assert.deepEqual(result.routing, {
+      strategy: 'model-router',
+      classification: {
+        task: 'summarization',
+        confidence: 0.75,
+        shouldOffload: true,
+        reason: 'Matched 1 keyword(s) for summarization',
+      },
+      matchedRuleId: 'rule-1',
+      selectedEndpointId: endpointId,
+      attemptedProviders: [endpointId, 'backup'],
+      fallbackFrom: endpointId,
+      fallbackTo: 'backup',
+      decisionReason: 'Primary model for summarization',
+    });
 
     // Two feedback entries: one for the failing provider, one for the backup
     assert.equal(feedbacks.length, 2);

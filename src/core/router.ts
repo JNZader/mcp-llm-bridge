@@ -49,13 +49,12 @@ import {
 } from './router-policy-plan.js';
 import {
   buildGenerateRequest,
-  buildRoutingMetadata,
   buildInternalRequest,
   type RoutingMetadataOptions,
   withInternalResolutionMetadata,
-  withResolutionMetadata,
 } from './router-shaping.js';
 import {
+  buildGenerateExecutionResponse,
   buildInternalResolutionMetadataOptions,
   createRouterExecutionContract,
   type RouterExecutionContract,
@@ -252,7 +251,6 @@ export class Router {
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const startTime = Date.now();
     const telemetry = createAttemptTelemetryCallbacks(this.getTelemetryContext());
-    const attemptedProviders: string[] = [];
     const circuitBreaker = getCircuitBreakerV2();
     const plan = await buildRoutingPolicyPlan({
       providers: this._providers,
@@ -271,6 +269,27 @@ export class Router {
       fallbackModel: 'unknown',
     });
     const candidates = plan.orderedCandidates;
+    const routingMetadata = {
+      strategy: determineRoutingStrategy({
+        requestedProvider: request.provider,
+        requestedModel: request.model,
+        modelRouterDecision: plan.appliedModelRouterDecision,
+        offloadClassification: plan.offloadClassification,
+      }),
+      classification: plan.classification ?? plan.offloadClassification,
+      modelRouterDecision: plan.appliedModelRouterDecision,
+      decisionReason: determineDecisionReason({
+        requestedProvider: request.provider,
+        requestedModel: request.model,
+        modelRouterDecision: plan.appliedModelRouterDecision,
+        offloadClassification: plan.offloadClassification,
+      }),
+    } satisfies Omit<RoutingMetadataOptions, 'attemptedProviders'>;
+    const executionContract = createRouterExecutionContract({
+      requestedProvider: request.provider,
+      requestedModel: request.model,
+      routingMetadata,
+    });
 
     if (candidates.length === 0) {
       throw new Error(
@@ -301,7 +320,7 @@ export class Router {
         );
       }
 
-      attemptedProviders.push(provider.id);
+      executionContract.recordAttempt(provider.id);
       const result = await executeGenerateAttempt({
         provider,
         request: buildGenerateRequest(
@@ -319,35 +338,16 @@ export class Router {
           logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
         },
       });
-      const latencyMs = Date.now() - startTime;
-      return withResolutionMetadata(
+      return buildGenerateExecutionResponse(executionContract, {
         request,
         result,
-        false,
-        latencyMs,
-        buildRoutingMetadata(result, false, {
-          strategy: determineRoutingStrategy({
-            requestedProvider: request.provider,
-            requestedModel: request.model,
-            modelRouterDecision: plan.appliedModelRouterDecision,
-            offloadClassification: plan.offloadClassification,
-          }),
-          attemptedProviders,
-          classification: plan.classification ?? plan.offloadClassification,
-          modelRouterDecision: plan.appliedModelRouterDecision,
-          decisionReason: determineDecisionReason({
-            requestedProvider: request.provider,
-            requestedModel: request.model,
-            modelRouterDecision: plan.appliedModelRouterDecision,
-            offloadClassification: plan.offloadClassification,
-          }),
-        }),
-      );
+        latencyMs: Date.now() - startTime,
+      });
     }
 
     const providerErrors = createProviderErrorAccumulator();
     const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) => {
-      attemptedProviders.push(provider.id);
+      executionContract.recordAttempt(provider.id);
       return executeGenerateAttempt({
         provider,
         request: buildGenerateRequest(
@@ -391,30 +391,11 @@ export class Router {
     );
 
     if (attemptedResult) {
-      const latencyMs = Date.now() - startTime;
-      return withResolutionMetadata(
+      return buildGenerateExecutionResponse(executionContract, {
         request,
-        attemptedResult.result,
-        attemptedResult.index > 0,
-        latencyMs,
-        buildRoutingMetadata(attemptedResult.result, attemptedResult.index > 0, {
-          strategy: determineRoutingStrategy({
-            requestedProvider: request.provider,
-            requestedModel: request.model,
-            modelRouterDecision: plan.appliedModelRouterDecision,
-            offloadClassification: plan.offloadClassification,
-          }),
-          attemptedProviders,
-          classification: plan.classification ?? plan.offloadClassification,
-          modelRouterDecision: plan.appliedModelRouterDecision,
-          decisionReason: determineDecisionReason({
-            requestedProvider: request.provider,
-            requestedModel: request.model,
-            modelRouterDecision: plan.appliedModelRouterDecision,
-            offloadClassification: plan.offloadClassification,
-          }),
-        }),
-      );
+        result: attemptedResult.result,
+        latencyMs: Date.now() - startTime,
+      });
     }
 
     // Try free model fallback before giving up
@@ -422,25 +403,25 @@ export class Router {
       try {
         logger.info('All paid providers failed, attempting free model fallback');
         const freeResult = await this._freeModelRouter.generate(request);
-        attemptedProviders.push('free-models');
-        const latencyMs = Date.now() - startTime;
-        return withResolutionMetadata(
-          request,
-          freeResult,
-          true,
-          latencyMs,
-          buildRoutingMetadata(freeResult, true, {
-            strategy: determineRoutingStrategy({
-              requestedProvider: request.provider,
-              requestedModel: request.model,
-              modelRouterDecision: plan.appliedModelRouterDecision,
-              offloadClassification: plan.offloadClassification,
-            }),
-            attemptedProviders,
-            classification: plan.classification ?? plan.offloadClassification,
-            modelRouterDecision: plan.appliedModelRouterDecision,
+        executionContract.recordAttempt('free-models');
+        const freeModelExecutionContract = createRouterExecutionContract({
+          requestedProvider: request.provider,
+          requestedModel: request.model,
+          routingMetadata: {
+            ...routingMetadata,
             decisionReason: 'All paid providers failed; free model fallback succeeded',
-          }),
+          },
+        });
+        for (const providerId of executionContract.attemptedProviders) {
+          freeModelExecutionContract.recordAttempt(providerId);
+        }
+        return buildGenerateExecutionResponse(
+          freeModelExecutionContract,
+          {
+            request,
+            result: freeResult,
+            latencyMs: Date.now() - startTime,
+          },
         );
       } catch (freeError) {
         providerErrors.errors.push(

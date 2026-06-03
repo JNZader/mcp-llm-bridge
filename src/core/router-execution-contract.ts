@@ -1,8 +1,9 @@
-import type { RoutingMetadata } from './types.js';
+import type { GenerateRequest, GenerateResponse, RoutingMetadata } from './types.js';
 import {
   buildRoutingMetadata,
   type InternalResolutionMetadataOptions,
   type RoutingMetadataOptions,
+  withResolutionMetadata,
 } from './router-shaping.js';
 
 export interface RouterExecutionContractOptions {
@@ -91,6 +92,25 @@ export function buildInternalResolutionMetadataOptions(
     latencyMs: input.latencyMs,
     ...contract.routingMetadata,
   };
+}
+
+export function buildGenerateExecutionResponse(
+  contract: RouterExecutionContract,
+  input: {
+    request: GenerateRequest;
+    result: GenerateResponse;
+    latencyMs: number;
+  },
+): GenerateResponse {
+  const snapshot = contract.snapshot(input.result.provider);
+
+  return withResolutionMetadata(
+    input.request,
+    input.result,
+    snapshot.fallbackUsed,
+    input.latencyMs,
+    snapshot.routing,
+  );
 }
 
 export function buildStreamingExecutionResponseData(
