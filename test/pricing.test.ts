@@ -26,9 +26,9 @@ describe('calculateCost', () => {
     assert.equal(cost, 0);
   });
 
-  it('returns $0 for unknown model (does not throw)', () => {
+  it('returns null for unknown model (does not throw)', () => {
     const cost = calculateCost('unknown-model-xyz', 1_000_000, 1_000_000);
-    assert.equal(cost, 0);
+    assert.equal(cost, null);
   });
 });
 

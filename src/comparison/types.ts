@@ -44,7 +44,7 @@ export interface CompareModelResult {
 	/** Output tokens consumed. */
 	tokensOut: number;
 	/** Cost in USD for this model's response. */
-	costUsd: number;
+	costUsd: number | null;
 	/** Latency in milliseconds. */
 	latencyMs: number;
 	/** Why the model stopped generating. */

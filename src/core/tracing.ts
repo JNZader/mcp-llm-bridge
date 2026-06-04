@@ -138,7 +138,7 @@ export interface GenAISpanAttributes {
   'gen_ai.request.model': string;
   'gen_ai.usage.input_tokens': number;
   'gen_ai.usage.output_tokens': number;
-  'gen_ai.usage.cost': number;
+  'gen_ai.usage.cost'?: number;
   'gen_ai.response.finish_reason': string;
 }
 
@@ -148,8 +148,8 @@ export interface GenAISpanAttributes {
  * Sets gen_ai.* attributes on the span for observability dashboards
  * that understand the GenAI conventions (e.g., Grafana, Datadog).
  *
- * Cost is computed via calculateCost(). Unknown models get cost=0
- * with a warning logged (handled inside calculateCost).
+ * Cost is computed via calculateCost(). Unknown models omit the
+ * cost attribute and log a warning (handled inside calculateCost).
  *
  * @param span - The active OTel span to enrich
  * @param attrs - GenAI attributes to set
@@ -159,7 +159,9 @@ export function enrichGenerateSpan(span: Span, attrs: GenAISpanAttributes): void
   span.setAttribute('gen_ai.request.model', attrs['gen_ai.request.model']);
   span.setAttribute('gen_ai.usage.input_tokens', attrs['gen_ai.usage.input_tokens']);
   span.setAttribute('gen_ai.usage.output_tokens', attrs['gen_ai.usage.output_tokens']);
-  span.setAttribute('gen_ai.usage.cost', attrs['gen_ai.usage.cost']);
+  if (typeof attrs['gen_ai.usage.cost'] === 'number') {
+    span.setAttribute('gen_ai.usage.cost', attrs['gen_ai.usage.cost']);
+  }
   span.setAttribute('gen_ai.response.finish_reason', attrs['gen_ai.response.finish_reason']);
 }
 
@@ -191,7 +193,7 @@ export function enrichGenerateSpanFromUsage(
     'gen_ai.request.model': model,
     'gen_ai.usage.input_tokens': tokensIn,
     'gen_ai.usage.output_tokens': tokensOut,
-    'gen_ai.usage.cost': cost,
+    ...(cost === null ? {} : { 'gen_ai.usage.cost': cost }),
     'gen_ai.response.finish_reason': success ? 'stop' : 'error',
   });
 }

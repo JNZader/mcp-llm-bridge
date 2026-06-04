@@ -118,13 +118,13 @@ describe('enrichGenerateSpanFromUsage', () => {
     assert.equal(attributes.get('gen_ai.response.finish_reason'), 'stop');
   });
 
-  it('sets cost=0 for unknown model (does not throw)', () => {
+  it('omits cost for unknown model (does not throw)', () => {
     const { span, attributes } = createMockSpan();
 
-    // Unknown model — calculateCost returns 0 with a warning
+    // Unknown model — calculateCost returns null with a warning
     enrichGenerateSpanFromUsage(span, 'custom-provider', 'nonexistent-model-xyz', 500, 200, true);
 
-    assert.equal(attributes.get('gen_ai.usage.cost'), 0);
+    assert.equal(attributes.has('gen_ai.usage.cost'), false);
     assert.equal(attributes.get('gen_ai.system'), 'custom-provider');
     assert.equal(attributes.get('gen_ai.request.model'), 'nonexistent-model-xyz');
   });

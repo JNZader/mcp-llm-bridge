@@ -101,6 +101,47 @@ describe('CostTracker', () => {
     assert.equal(record.costUsd, 12.50);
   });
 
+  it('keeps exact-token unknown-priced usage truthful with null cost', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    tracker.record({
+      provider: 'custom-provider',
+      model: 'unknown-model-xyz',
+      tokensIn: 100,
+      tokensOut: 50,
+      latencyMs: 200,
+      success: true,
+    });
+    tracker.record({
+      provider: 'openai',
+      model: 'gpt-4o',
+      tokensIn: 100,
+      tokensOut: 50,
+      latencyMs: 100,
+      success: true,
+    });
+
+    tracker.flush();
+
+    const records = tracker.query();
+    const unknownRecord = records.find((record) => record.model === 'unknown-model-xyz');
+    const knownRecord = records.find((record) => record.model === 'gpt-4o');
+
+    assert.ok(unknownRecord);
+    assert.equal(unknownRecord.costUsd, null);
+
+    assert.ok(knownRecord);
+    assert.ok(Math.abs((knownRecord.costUsd ?? 0) - 0.00075) < 1e-12);
+
+    const summary = tracker.summary();
+    assert.equal(summary.totalRequests, 2);
+    assert.equal(summary.totalCostUsd, null);
+    assert.ok(Math.abs(summary.knownCostUsd - 0.00075) < 1e-12);
+    assert.equal(summary.unknownCostRequestCount, 1);
+    assert.equal(summary.hasUnknownCost, true);
+  });
+
   it('respects explicit cost override', () => {
     dbPath = tempDbPath();
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
@@ -379,6 +420,34 @@ describe('CostTracker', () => {
     assert.equal(snapshot.totalCostUsd, null);
     assert.equal(snapshot.knownCostUsd, 0);
     assert.equal(snapshot.unknownCostRequestCount, 1);
+  });
+
+  it('admission snapshot stays truthful for exact-token unknown-priced usage', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+
+    tracker.record({
+      provider: 'custom-provider',
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      model: 'unknown-model-xyz',
+      tokensIn: 10,
+      tokensOut: 20,
+      latencyMs: 50,
+      success: true,
+    });
+
+    const snapshot = tracker.admissionSnapshot({
+      identity: { userId: 'user-1', apiKeyId: 'key-1' },
+      scope: 'budget',
+    });
+
+    assert.equal(snapshot.totalRequests, 1);
+    assert.equal(snapshot.totalTokens, 30);
+    assert.equal(snapshot.totalCostUsd, null);
+    assert.equal(snapshot.knownCostUsd, 0);
+    assert.equal(snapshot.unknownCostRequestCount, 1);
+    assert.equal(snapshot.hasUnknownCost, true);
   });
 
   it('destroy flushes remaining buffer', () => {

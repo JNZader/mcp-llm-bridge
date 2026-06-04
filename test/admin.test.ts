@@ -352,6 +352,41 @@ describe('GET /v1/usage/summary', () => {
     assert.equal(data.unknownCostRequestCount, 0);
     assert.equal(data.hasUnknownCost, false);
   });
+
+  it('returns null total cost for exact-token unknown-priced rows in usage summary', async () => {
+    costTracker.record({
+      provider: 'truthful-cost-provider',
+      model: 'unknown-model-xyz',
+      tokensIn: 8,
+      tokensOut: 12,
+      latencyMs: 11,
+      success: true,
+    });
+    costTracker.record({
+      provider: 'truthful-cost-provider',
+      model: 'gpt-4o',
+      tokensIn: 4,
+      tokensOut: 6,
+      latencyMs: 10,
+      success: true,
+    });
+    costTracker.flush();
+
+    const res = await request('GET', '/v1/usage/summary?provider=truthful-cost-provider');
+    assert.equal(res.status, 200);
+
+    const data = res.data as {
+      totalCostUsd: number | null;
+      knownCostUsd: number;
+      unknownCostRequestCount: number;
+      hasUnknownCost: boolean;
+    };
+
+    assert.equal(data.totalCostUsd, null);
+    assert.ok(Math.abs(data.knownCostUsd - 0.00007) < 1e-12);
+    assert.equal(data.unknownCostRequestCount, 1);
+    assert.equal(data.hasUnknownCost, true);
+  });
 });
 
 // ── GET /v1/admin/providers ─────────────────────────────

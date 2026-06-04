@@ -5,7 +5,7 @@
  * Uses fuzzy matching to handle model name variations
  * (e.g., "claude-3-5-sonnet" matches "claude-3.5-sonnet").
  *
- * Unknown models default to $0 cost — we log a warning but don't fail.
+ * Unknown models return null cost — we log a warning but don't fail.
  */
 
 import { logger } from './logger.js';
@@ -112,20 +112,20 @@ function findPrice(model: string): ModelPrice | null {
  * @param model - Model name (e.g., "claude-3.5-sonnet-20240620")
  * @param inputTokens - Number of input/prompt tokens
  * @param outputTokens - Number of output/completion tokens
- * @returns Cost in USD. Returns 0 for unknown models (with warning).
+ * @returns Cost in USD. Returns null for unknown models (with warning).
  */
 export function calculateCost(
   model: string,
   inputTokens: number,
   outputTokens: number,
-): number {
+): number | null {
   // Strip provider prefix (e.g., "gemini-cli/gemini-2.5-flash" → "gemini-2.5-flash")
   const strippedModel = model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model;
   const price = findPrice(strippedModel);
 
   if (!price) {
-    logger.warn({ model }, 'Unknown model for pricing — cost defaulting to $0');
-    return 0;
+    logger.warn({ model }, 'Unknown model for pricing — cost unavailable');
+    return null;
   }
 
   const inputCost = (inputTokens / 1_000_000) * price.inputPerMTok;
