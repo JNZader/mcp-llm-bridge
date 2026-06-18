@@ -8,16 +8,34 @@ import { createBalancer, memberKey } from './balancer.js';
 import { resolveModel } from './fuzzy.js';
 import { buildLatencyMap, selectProviderWithLatency } from '../latency/selector.js';
 
+/** Provider that can refresh its dynamic model cache (TTL-gated). */
+export interface RefreshableModelProvider {
+  refreshModels(): Promise<void>;
+}
+
+export function hasRefreshableModels(
+  provider: unknown,
+): provider is RefreshableModelProvider {
+  return typeof (provider as { refreshModels?: unknown }).refreshModels === 'function';
+}
+
 export async function resolveCandidates(
   providers: LLMProvider[],
   request: GenerateRequest,
   reorderCandidates: (candidates: LLMProvider[]) => LLMProvider[],
 ): Promise<LLMProvider[]> {
   const availabilityResults = await Promise.all(
-    providers.map(async (provider) => ({
-      provider,
-      available: await provider.isAvailable(),
-    })),
+    providers.map(async (provider) => {
+      const available = await provider.isAvailable();
+      // Warm the dynamic model cache (TTL-gated) BEFORE model-based candidate
+      // matching reads provider.models synchronously below — otherwise a cold
+      // cache hides dynamically-discovered models from model-only routing
+      // (3vr finding B). Never throws.
+      if (available && hasRefreshableModels(provider)) {
+        await provider.refreshModels().catch(() => {});
+      }
+      return { provider, available };
+    }),
   );
   const available = availabilityResults
     .filter((result) => result.available)

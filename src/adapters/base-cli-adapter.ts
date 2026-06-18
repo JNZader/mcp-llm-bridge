@@ -18,6 +18,10 @@ import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
 import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
 import { sanitizeErrorMessage } from '../security/sanitize.js';
+import { logger } from '../core/logger.js';
+
+/** After a discovery error, retry this soon instead of waiting the full TTL. */
+const MODEL_DISCOVERY_ERROR_RETRY_MS = 30 * 1000;
 
 /**
  * Interface for CLI adapter configuration.
@@ -29,6 +33,21 @@ export interface CliAdapterConfig {
   readonly defaultModel: string;
   readonly models: ModelInfo[];
   readonly supportsSystemPrompt?: boolean;
+}
+
+/**
+ * Merge discovered models with the declared fallback, deduping by id.
+ * Discovered entries take precedence on collision; declared-only entries
+ * are appended so the baseline is never lost.
+ */
+export function mergeModels(declared: ModelInfo[], discovered: ModelInfo[]): ModelInfo[] {
+  const byId = new Map<string, ModelInfo>();
+  for (const model of [...discovered, ...declared]) {
+    if (!byId.has(model.id)) {
+      byId.set(model.id, model);
+    }
+  }
+  return [...byId.values()];
 }
 
 /**
@@ -55,8 +74,63 @@ export abstract class BaseCliAdapter implements LLMProvider {
     return 'cli';
   }
 
+  /**
+   * Cached model list. Seeded lazily from `config.models` (the declared
+   * fallback) and replaced by `refreshModels()` with dynamically discovered
+   * models. Null until the first read or refresh.
+   */
+  private modelCache: ModelInfo[] | null = null;
+  private modelsFetchedAt = 0;
+  /** TTL for the dynamic model cache. */
+  protected readonly modelCacheTtlMs = 5 * 60 * 1000;
+
   get models(): ModelInfo[] {
-    return this.config.models;
+    return this.modelCache ?? this.config.models;
+  }
+
+  /**
+   * Discover models from a dynamic source (config file, CLI, API).
+   * Default: no dynamic source — returns null to keep the declared list.
+   * Subclasses override to read e.g. a config file.
+   *
+   * MUST be idempotent and side-effect-free: refreshModels has no
+   * single-flight guard, so concurrent callers may invoke this in parallel
+   * and last-writer-wins on the cache. Equal inputs must yield equal output.
+   */
+  protected async discoverModels(): Promise<ModelInfo[] | null> {
+    return null;
+  }
+
+  /**
+   * Refresh the model cache if the TTL has elapsed. Merges dynamically
+   * discovered models with the declared fallback (`config.models`), with
+   * discovered entries taking precedence on id collision. Failures degrade
+   * to the declared list and never throw.
+   *
+   * `now` is injectable for deterministic testing.
+   */
+  async refreshModels(now: number = Date.now()): Promise<void> {
+    if (this.modelCache && now - this.modelsFetchedAt < this.modelCacheTtlMs) {
+      return;
+    }
+    try {
+      const discovered = await this.discoverModels();
+      // null = "no dynamic source / nothing discovered" — a stable answer, so
+      // it gets the full TTL like a success. Only a thrown error retries sooner.
+      this.modelCache = discovered
+        ? mergeModels(this.config.models, discovered)
+        : this.config.models;
+      this.modelsFetchedAt = now;
+    } catch (error) {
+      logger.warn(
+        { provider: this.config.id, err: error },
+        'discoverModels threw; serving declared model fallback',
+      );
+      this.modelCache = this.modelCache ?? this.config.models;
+      // Back-date so the next call retries after the short error window
+      // instead of suppressing discovery for a full TTL.
+      this.modelsFetchedAt = now - this.modelCacheTtlMs + MODEL_DISCOVERY_ERROR_RETRY_MS;
+    }
   }
 
   /**
