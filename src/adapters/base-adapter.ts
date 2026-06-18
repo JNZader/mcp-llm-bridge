@@ -10,6 +10,7 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 
 import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { DynamicModelCache, DEFAULT_DISCOVERED_MAX_TOKENS } from './model-cache.js';
 
 /**
  * Configuration for OpenAI-compatible API adapters.
@@ -37,7 +38,8 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
   abstract readonly id: string;
   abstract readonly name: string;
   abstract readonly baseURL: string;
-  abstract readonly models: ModelInfo[];
+  /** Curated baseline models — discovery via /models adds to these. */
+  protected abstract readonly declaredModels: ModelInfo[];
   abstract readonly defaultModel: string;
   protected readonly defaultHeaders?: Record<string, string>;
 
@@ -47,6 +49,61 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
 
   // Client cache per apiKey to avoid recreating TLS connections
   private clientCache = new Map<string, OpenAI>();
+
+  /**
+   * Lazily-built model cache (lazy: subclass fields like `declaredModels`
+   * initialize after the base constructor).
+   */
+  private _modelCache?: DynamicModelCache;
+  private get modelCache(): DynamicModelCache {
+    if (!this._modelCache) {
+      this._modelCache = new DynamicModelCache(
+        this.declaredModels,
+        () => this.discoverModels(),
+        this.id,
+      );
+    }
+    return this._modelCache;
+  }
+
+  get models(): ModelInfo[] {
+    return this.modelCache.get();
+  }
+
+  /** Refresh the dynamic model cache (TTL-gated, never throws). */
+  async refreshModels(now: number = Date.now()): Promise<void> {
+    return this.modelCache.refresh(now);
+  }
+
+  /**
+   * Discover models from the provider's /models endpoint. Returns null when
+   * no credentials are available (keep declared) or nothing is reported.
+   * Idempotent and side-effect-free.
+   *
+   * Uses global-scope credentials — the advertised model list is provider-level,
+   * not per-request. A project with narrower per-project credentials may not be
+   * able to call every advertised model (known limitation, backlog).
+   */
+  protected async discoverModels(): Promise<ModelInfo[] | null> {
+    let apiKey: string;
+    try {
+      apiKey = this.vault.getDecrypted(this.id, 'default');
+    } catch {
+      return null; // no credentials — keep declared baseline
+    }
+    // Auto-paginate: providers like OpenRouter list hundreds of models across
+    // pages; first-page-only would silently truncate the catalog.
+    const discovered: ModelInfo[] = [];
+    for await (const model of await this.getClient(apiKey).models.list()) {
+      discovered.push({
+        id: model.id,
+        name: model.id,
+        provider: this.id,
+        maxTokens: DEFAULT_DISCOVERED_MAX_TOKENS,
+      });
+    }
+    return discovered.length > 0 ? discovered : null;
+  }
 
   /**
    * Get or create a cached OpenAI client for the given apiKey.
@@ -80,7 +137,7 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
 
     const response = await client.chat.completions.create({
       model,
-      max_tokens: request.maxTokens ?? this.models[0]?.maxTokens ?? 4096,
+      max_tokens: request.maxTokens ?? this.models.find((m) => m.id === model)?.maxTokens ?? 4096,
       messages,
     });
 

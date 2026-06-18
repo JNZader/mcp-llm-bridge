@@ -12,7 +12,7 @@ export class OpenRouterAdapter extends BaseOpenAICompatibleAdapter {
   readonly id = 'openrouter';
   readonly name = 'OpenRouter';
   readonly baseURL = 'https://openrouter.ai/api/v1';
-  readonly models = [
+  protected readonly declaredModels = [
     { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', provider: 'openrouter', maxTokens: 4096 },
     { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', provider: 'openrouter', maxTokens: 4096 },
     { id: 'openai/gpt-4o', name: 'GPT-4o', provider: 'openrouter', maxTokens: 4096 },

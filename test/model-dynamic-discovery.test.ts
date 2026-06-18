@@ -14,7 +14,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { Vault } from '../src/vault/vault.js';
-import { BaseCliAdapter, mergeModels, type CliAdapterConfig } from '../src/adapters/base-cli-adapter.js';
+import { BaseCliAdapter, type CliAdapterConfig } from '../src/adapters/base-cli-adapter.js';
+import { mergeModels, MODEL_DISCOVERY_ERROR_RETRY_MS } from '../src/adapters/model-cache.js';
+import { OpenAIAdapter, AnthropicAdapter, GoogleAdapter } from '../src/adapters/index.js';
 import { CodexCliAdapter, parseCodexModel } from '../src/adapters/cli-codex.js';
 import type { GatewayConfig, ModelInfo } from '../src/core/types.js';
 
@@ -66,15 +68,21 @@ describe('parseCodexModel', () => {
 describe('mergeModels', () => {
   const m = (id: string, name = id): ModelInfo => ({ id, name, provider: 'p', maxTokens: 1 });
 
-  it('appends declared-only entries after discovered', () => {
+  it('keeps declared first and appends discovered-only ids', () => {
     const result = mergeModels([m('a'), m('b')], [m('c')]);
-    assert.deepEqual(result.map((x) => x.id), ['c', 'a', 'b']);
+    assert.deepEqual(result.map((x) => x.id), ['a', 'b', 'c']);
   });
 
-  it('discovered takes precedence on id collision', () => {
+  it('declared (curated) metadata wins on id collision', () => {
     const result = mergeModels([m('a', 'DECLARED')], [m('a', 'DISCOVERED')]);
     assert.equal(result.length, 1);
-    assert.equal(result[0]?.name, 'DISCOVERED');
+    assert.equal(result[0]?.name, 'DECLARED');
+  });
+
+  it('handles empty discovered and empty declared', () => {
+    assert.deepEqual(mergeModels([m('a')], []).map((x) => x.id), ['a']);
+    assert.deepEqual(mergeModels([], [m('a')]).map((x) => x.id), ['a']);
+    assert.deepEqual(mergeModels([], []), []);
   });
 });
 
@@ -96,7 +104,7 @@ class CountingAdapter extends BaseCliAdapter {
   protected parseResponse(output: string): string {
     return output;
   }
-  protected async discoverModels(): Promise<ModelInfo[]> {
+  protected async discoverModels(): Promise<ModelInfo[] | null> {
     this.discoverCalls++;
     return [{ id: 'dyn', name: 'dyn', provider: 'count-cli', maxTokens: 1 }];
   }
@@ -137,16 +145,22 @@ describe('BaseCliAdapter.refreshModels (TTL)', () => {
     const a = new ThrowingAdapter(vault);
     await a.refreshModels(0);
     assert.deepEqual(a.models.map((x) => x.id), ['decl']); // degraded, not thrown
-    await a.refreshModels(29_999); // still inside the 30s error window
+    await a.refreshModels(MODEL_DISCOVERY_ERROR_RETRY_MS - 1); // still inside the error window
     assert.equal(a.discoverCalls, 1);
-    await a.refreshModels(30_000); // error window elapsed → retry
+    await a.refreshModels(MODEL_DISCOVERY_ERROR_RETRY_MS); // window elapsed → retry
     assert.equal(a.discoverCalls, 2);
   });
 
-  it('merges discovered + declared after refresh', async () => {
+  it('single-flights concurrent refreshes into one discovery', async () => {
+    const a = new CountingAdapter(vault);
+    await Promise.all([a.refreshModels(0), a.refreshModels(0), a.refreshModels(0)]);
+    assert.equal(a.discoverCalls, 1); // not 3
+  });
+
+  it('merges declared + discovered after refresh', async () => {
     const a = new CountingAdapter(vault);
     await a.refreshModels(0);
-    assert.deepEqual(a.models.map((x) => x.id), ['dyn', 'decl']);
+    assert.deepEqual(a.models.map((x) => x.id), ['decl', 'dyn']);
     assert.equal(a.discoverCalls, 1);
   });
 
@@ -162,6 +176,45 @@ describe('BaseCliAdapter.refreshModels (TTL)', () => {
     await a.refreshModels(0);
     await a.refreshModels(5 * 60 * 1000 + 1);
     assert.equal(a.discoverCalls, 2);
+  });
+});
+
+// ── API adapters: graceful degradation without credentials ─────
+
+describe('API adapters refreshModels (no credentials)', () => {
+  const emptyVault = () =>
+    new Vault({ masterKey: randomBytes(32), dbPath: `/tmp/test-dyn-api-${randomBytes(6).toString('hex')}.db`, httpPort: 0 });
+
+  it('lazy cache returns declared models before any refresh', () => {
+    const v = emptyVault();
+    // GoogleAdapter uses the base lazy getter; .models must work pre-refresh.
+    const a = new GoogleAdapter(v);
+    assert.deepEqual(a.models.map((x) => x.id), ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash']);
+    v.close();
+  });
+
+  it('OpenAI keeps declared models when no API key is present', async () => {
+    const v = emptyVault();
+    const a = new OpenAIAdapter(v);
+    await a.refreshModels(0); // discover hits no creds → null → declared, no network
+    assert.deepEqual(a.models.map((x) => x.id), ['gpt-4o', 'gpt-4o-mini', 'o3-mini']);
+    v.close();
+  });
+
+  it('Anthropic keeps declared models when no credentials are present', async () => {
+    const v = emptyVault();
+    const a = new AnthropicAdapter(v);
+    await a.refreshModels(0);
+    assert.ok(a.models.some((x) => x.id === 'claude-sonnet-4-20250514'));
+    v.close();
+  });
+
+  it('Google (OpenAI-compatible base) keeps declared models with no key', async () => {
+    const v = emptyVault();
+    const a = new GoogleAdapter(v);
+    await a.refreshModels(0);
+    assert.deepEqual(a.models.map((x) => x.id), ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash']);
+    v.close();
   });
 });
 

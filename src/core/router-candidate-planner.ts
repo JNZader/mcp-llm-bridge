@@ -24,15 +24,17 @@ export async function resolveCandidates(
   request: GenerateRequest,
   reorderCandidates: (candidates: LLMProvider[]) => LLMProvider[],
 ): Promise<LLMProvider[]> {
+  // Model-based candidate matching below reads provider.models synchronously,
+  // so a cold cache would hide dynamically-discovered models (3vr B1). But with
+  // an explicit request.provider the candidate is picked by id and the model
+  // list is never consulted — so we skip discovery (now potentially a network
+  // call, 3vr B2) on that path to keep the explicit-provider route fast.
+  const needsModelDiscovery = request.model != null && request.provider == null;
   const availabilityResults = await Promise.all(
     providers.map(async (provider) => {
       const available = await provider.isAvailable();
-      // Warm the dynamic model cache (TTL-gated) BEFORE model-based candidate
-      // matching reads provider.models synchronously below — otherwise a cold
-      // cache hides dynamically-discovered models from model-only routing
-      // (3vr finding B). Never throws.
-      if (available && hasRefreshableModels(provider)) {
-        await provider.refreshModels().catch(() => {});
+      if (needsModelDiscovery && available && hasRefreshableModels(provider)) {
+        await provider.refreshModels().catch(() => {}); // TTL-gated; never throws
       }
       return { provider, available };
     }),
