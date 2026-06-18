@@ -8,16 +8,36 @@ import { createBalancer, memberKey } from './balancer.js';
 import { resolveModel } from './fuzzy.js';
 import { buildLatencyMap, selectProviderWithLatency } from '../latency/selector.js';
 
+/** Provider that can refresh its dynamic model cache (TTL-gated). */
+export interface RefreshableModelProvider {
+  refreshModels(): Promise<void>;
+}
+
+export function hasRefreshableModels(
+  provider: unknown,
+): provider is RefreshableModelProvider {
+  return typeof (provider as { refreshModels?: unknown }).refreshModels === 'function';
+}
+
 export async function resolveCandidates(
   providers: LLMProvider[],
   request: GenerateRequest,
   reorderCandidates: (candidates: LLMProvider[]) => LLMProvider[],
 ): Promise<LLMProvider[]> {
+  // Model-based candidate matching below reads provider.models synchronously,
+  // so a cold cache would hide dynamically-discovered models (3vr B1). But with
+  // an explicit request.provider the candidate is picked by id and the model
+  // list is never consulted — so we skip discovery (now potentially a network
+  // call, 3vr B2) on that path to keep the explicit-provider route fast.
+  const needsModelDiscovery = request.model != null && request.provider == null;
   const availabilityResults = await Promise.all(
-    providers.map(async (provider) => ({
-      provider,
-      available: await provider.isAvailable(),
-    })),
+    providers.map(async (provider) => {
+      const available = await provider.isAvailable();
+      if (needsModelDiscovery && available && hasRefreshableModels(provider)) {
+        await provider.refreshModels().catch(() => {}); // TTL-gated; never throws
+      }
+      return { provider, available };
+    }),
   );
   const available = availabilityResults
     .filter((result) => result.available)

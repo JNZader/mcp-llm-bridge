@@ -12,7 +12,7 @@ export class GroqAdapter extends BaseOpenAICompatibleAdapter {
   readonly id = 'groq';
   readonly name = 'Groq';
   readonly baseURL = 'https://api.groq.com/openai/v1';
-  readonly models = [
+  protected readonly declaredModels = [
     { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B', provider: 'groq', maxTokens: 4096 },
     { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', provider: 'groq', maxTokens: 4096 },
     { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', provider: 'groq', maxTokens: 4096 },

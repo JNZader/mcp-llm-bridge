@@ -18,6 +18,7 @@ import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
 import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
 import { sanitizeErrorMessage } from '../security/sanitize.js';
+import { DynamicModelCache } from './model-cache.js';
 
 /**
  * Interface for CLI adapter configuration.
@@ -55,8 +56,43 @@ export abstract class BaseCliAdapter implements LLMProvider {
     return 'cli';
   }
 
+  /**
+   * Lazily-built model cache. Lazy because `this.config` is a subclass field
+   * initializer that runs AFTER the base constructor — so it isn't available
+   * at construction time, only by the time `models`/`refreshModels` are called.
+   */
+  private _modelCache?: DynamicModelCache;
+  private get modelCache(): DynamicModelCache {
+    if (!this._modelCache) {
+      this._modelCache = new DynamicModelCache(
+        this.config.models,
+        () => this.discoverModels(),
+        this.config.id,
+      );
+    }
+    return this._modelCache;
+  }
+
   get models(): ModelInfo[] {
-    return this.config.models;
+    return this.modelCache.get();
+  }
+
+  /**
+   * Discover models from a dynamic source (config file, CLI, API).
+   * Default: no dynamic source — returns null to keep the declared list.
+   * Subclasses override to read e.g. a config file.
+   *
+   * MUST be idempotent and side-effect-free: the cache has no single-flight
+   * guard, so concurrent callers may invoke this in parallel and last-writer
+   * wins. Equal inputs must yield equal output.
+   */
+  protected async discoverModels(): Promise<ModelInfo[] | null> {
+    return null;
+  }
+
+  /** Refresh the dynamic model cache (TTL-gated, never throws). */
+  async refreshModels(now: number = Date.now()): Promise<void> {
+    return this.modelCache.refresh(now);
   }
 
   /**

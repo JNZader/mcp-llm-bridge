@@ -33,7 +33,7 @@ import type { ModelRouter } from '../model-routing/router.js';
 import type { AnalyticsAggregator } from '../analytics/index.js';
 import { LocalLLMError } from '../local-llm/client.js';
 import type { ModelRouterStatsSnapshot } from '../model-routing/types.js';
-import { prioritizeProviderCandidate } from './router-candidate-planner.js';
+import { hasRefreshableModels, prioritizeProviderCandidate } from './router-candidate-planner.js';
 import {
   createAttemptTelemetryCallbacks,
   createStreamingRecordResult,
@@ -758,10 +758,15 @@ export class Router {
   async getAvailableModels(): Promise<ModelInfo[]> {
     // Parallel availability checks for better performance
     const results = await Promise.all(
-      this._providers.map(async (provider) => ({
-        provider,
-        available: await provider.isAvailable(),
-      })),
+      this._providers.map(async (provider) => {
+        const available = await provider.isAvailable();
+        // Warm the dynamic model cache for available providers that support
+        // it (TTL-gated internally). Never throws — degrades to declared.
+        if (available && hasRefreshableModels(provider)) {
+          await provider.refreshModels().catch(() => {});
+        }
+        return { provider, available };
+      }),
     );
 
     return results

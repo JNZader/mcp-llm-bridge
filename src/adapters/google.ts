@@ -13,7 +13,7 @@ export class GoogleAdapter extends BaseOpenAICompatibleAdapter {
   readonly id = 'google';
   readonly name = 'Google';
   readonly baseURL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-  readonly models = [
+  protected readonly declaredModels = [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google', maxTokens: 8192 },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'google', maxTokens: 8192 },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'google', maxTokens: 8192 },

@@ -10,8 +10,12 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
-import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
+import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { DynamicModelCache } from './model-cache.js';
+
+/** Anthropic's baseline output cap for models discovered via /models. */
+const ANTHROPIC_DISCOVERED_MAX_TOKENS = 8192;
 
 /** Auth mode for the Anthropic client. */
 type AuthMode = { type: 'oauth'; token: string } | { type: 'api-key'; key: string };
@@ -20,12 +24,57 @@ export class AnthropicAdapter implements LLMProvider {
   readonly id = 'anthropic';
   readonly name = 'Anthropic';
   readonly type = 'api' as const;
-  readonly models = [
+  private readonly declaredModels: ModelInfo[] = [
     { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic', maxTokens: 8192 },
     { id: 'claude-haiku-4-20250414', name: 'Claude Haiku 4', provider: 'anthropic', maxTokens: 8192 },
   ];
 
   constructor(private readonly vault: Vault) {}
+
+  // Lazy to stay robust against field-declaration reordering.
+  private _modelCache?: DynamicModelCache;
+  private get modelCache(): DynamicModelCache {
+    if (!this._modelCache) {
+      this._modelCache = new DynamicModelCache(
+        this.declaredModels,
+        () => this.discoverModels(),
+        this.id,
+      );
+    }
+    return this._modelCache;
+  }
+
+  get models(): ModelInfo[] {
+    return this.modelCache.get();
+  }
+
+  /** Refresh the dynamic model cache (TTL-gated, never throws). */
+  async refreshModels(now: number = Date.now()): Promise<void> {
+    return this.modelCache.refresh(now);
+  }
+
+  /**
+   * Discover models from Anthropic's /models endpoint. Returns null when no
+   * credentials are available (keep declared). Idempotent, side-effect-free.
+   */
+  private async discoverModels(): Promise<ModelInfo[] | null> {
+    let auth: AuthMode;
+    try {
+      auth = await this.getAuthMode();
+    } catch {
+      return null;
+    }
+    const discovered: ModelInfo[] = [];
+    for await (const model of await this.getClient(auth).models.list()) {
+      discovered.push({
+        id: model.id,
+        name: model.id,
+        provider: this.id,
+        maxTokens: ANTHROPIC_DISCOVERED_MAX_TOKENS,
+      });
+    }
+    return discovered.length > 0 ? discovered : null;
+  }
 
   // Client cache per auth mode to avoid recreating connections
   private clientCache = new Map<string, Anthropic>();
