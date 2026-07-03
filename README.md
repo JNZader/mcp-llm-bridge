@@ -11,6 +11,8 @@
 
 </div>
 
+Read this in: [English](README.md) · [Español](README.es.md)
+
 ## Demo Links
 
 - Live gateway: [https://gateway.javierzader.com](https://gateway.javierzader.com)
@@ -522,9 +524,20 @@ Health check:
 curl http://localhost:3456/health
 ```
 
+`GET /health` returns the runtime `VERSION` constant (`src/core/constants.ts`) plus uptime, auth mode, and provider counts:
+
 ```json
-{ "status": "ok", "version": "0.3.1" }
+{
+  "status": "ok",
+  "version": "0.3.1",
+  "timestamp": "2025-01-15T10:30:00.000Z",
+  "uptime": 3600,
+  "auth": { "enabled": true, "mode": "bearer" },
+  "providers": { "total": 11, "available": 3 }
+}
 ```
+
+Note: the `VERSION` constant and the `version` field in `package.json` are not kept in lockstep — `/health` reports the former.
 
 ### Provider Groups
 
@@ -612,17 +625,18 @@ The token must be at least 32 characters.
 
 ### Auth Rules
 
-| Path | Auth Required |
+| Path | Bearer Auth Required |
 |------|:-------------:|
 | `GET /health` | No |
-| `OPTIONS *` | No |
+| `OPTIONS *` (CORS preflight) | No |
 | `/auth/github/*` | No |
-| `/v1/admin/auth-config` | No |
+| `/v1/admin/*` (entire admin surface) | No |
 | All other HTTP routes, including dashboard and `/metrics`, when token is set | Yes |
 
-Important behavior that changed from the old README:
+Important behavior:
 
-- The dashboard is protected when bearer auth is enabled.
+- The bearer-auth middleware skips the **entire** `/v1/admin/*` prefix, not just `/v1/admin/auth-config`. Admin routes gate themselves with their own dashboard/GitHub-OAuth JWT checks (`verifyDashboardJwt`) rather than the static bearer token. Keep this in mind when exposing the gateway publicly.
+- The dashboard (non-admin routes) is protected when bearer auth is enabled.
 - MCP stdio does not use HTTP bearer auth because it runs as a local process.
 - Token comparison is constant-time via `timingSafeEqual`.
 
@@ -807,9 +821,11 @@ It combines:
 
 ### Supported Languages
 
-Default chunking support covers:
+`DEFAULT_EXTENSIONS` (indexed by default) covers:
 
 `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, `.go`, `.rs`, `.java`, `.rb`, `.lua`
+
+Dedicated chunk patterns exist for TypeScript/JavaScript, Python, Go, and Rust. Other indexed extensions (`.java`, `.rb`, `.lua`) fall back to the TypeScript/C-family chunk patterns.
 
 ### MCP Search Tools
 
@@ -847,13 +863,13 @@ Returned results include file path, symbol name, kind, content, line numbers, sc
 
 **Keyword mode** is the default and requires no setup. It scores exact name matches highest, then prefix matches, then keyword-in-content, then trigram fuzzy similarity.
 
-**Vector mode** uses a local embedding model (`Xenova/all-MiniLM-L6-v2`, 22MB, 384-dimensional). On first run the model downloads automatically from HuggingFace and caches locally. Vector search finds semantically related code even when keywords don't overlap.
+**Vector mode** uses a local embedding model (`Xenova/all-MiniLM-L6-v2`, a small 384-dimensional model). On first run the model downloads automatically from HuggingFace and caches locally. Vector search finds semantically related code even when keywords don't overlap.
 
 **Hybrid mode** runs all three strategies in parallel and fuses the rankings with Reciprocal Rank Fusion (RRF). Results include `rrfScore` (the fused score) and `methodCount` (how many strategies found the result). Items found by multiple methods rank higher, giving the best overall coverage.
 
 ### Embedding Model
 
-- Model: `Xenova/all-MiniLM-L6-v2` (22MB, 384-dim)
+- Model: `Xenova/all-MiniLM-L6-v2` (small, 384-dim)
 - Backend: `@xenova/transformers` (ONNX runtime, runs locally)
 - First run: model auto-downloads and caches to `~/.cache/huggingface/`
 - Fallback: if the local model fails to load, the embedder can fall back to OpenAI API (`text-embedding-3-small`) when `OPENAI_API_KEY` is set
@@ -1061,6 +1077,24 @@ The project runs as an MCP stdio server by default.
 | `list_groups`, `create_group`, `delete_group` | Provider group management |
 | `usage_summary`, `usage_query` | Cost and usage inspection |
 | `configure_circuit_breaker`, `circuit_breaker_stats` | Provider failure-control tuning |
+| `discover_models` | Trigger HuggingFace-enriched model discovery |
+| `approval_list`, `approval_approve`, `approval_deny` | Approval-flow management (see [Approval Flows](#approval-flows)) |
+
+### PageIndex Conversation Tools
+
+Seven additional static MCP tools (defined in `src/pageindex/tools.ts`) handle long-conversation pagination and reasoning-based navigation over stored conversation history:
+
+| Tool | Description |
+|------|-------------|
+| `conversation_paginate` | Paginate a stored conversation |
+| `conversation_get_page` | Fetch a specific page |
+| `conversation_context` | Retrieve context around a point in the conversation |
+| `conversation_navigate` | Navigate between pages/sections |
+| `conversation_info` | Summary/metadata for a conversation |
+| `conversation_find_relevant` | Find the most relevant pages for a query |
+| `conversation_check_compaction` | Check whether the conversation should be compacted |
+
+These are categorized as `read` tools, so they are available under both `local-dev` and `restricted` security profiles.
 
 ### Claude Code Config
 
@@ -1111,7 +1145,7 @@ The bridge supports loading external `.mcp-server.js` plugin files at runtime. T
 
 ### What It Is
 
-Any `.mcp-server.js` file placed in the plugin directory is loaded at startup and its tools are registered alongside the 27 static tools. Plugins export a `McpServerDefinition` object (or use the builder) with tools, resources, and prompts.
+Any `.mcp-server.js` file placed in the plugin directory is loaded at startup and its tools are registered alongside the static tools (30 at time of writing: 23 core tools plus 7 PageIndex conversation tools). Plugins export a `McpServerDefinition` object (or use the builder) with tools, resources, and prompts.
 
 ### Enable
 
@@ -1334,7 +1368,7 @@ Response:
 
 ## Local LLM Offloading
 
-Offloadable tasks (summarization, formatting, classification) can be routed to local runtimes (Ollama, LM Studio) instead of cloud providers, saving 86–95% of API token cost.
+Offloadable tasks (summarization, formatting, classification) can be routed to local runtimes (Ollama, LM Studio) instead of cloud providers, cutting API token cost on those deterministic tasks. (The `src/local-llm/` module documents an 86–95% design target for token savings on boilerplate tasks; this is a design goal, not a measured benchmark.)
 
 ### Environment Variables
 
@@ -1610,4 +1644,4 @@ pnpm run build
 
 ## License
 
-MIT
+MIT, as declared in `package.json` (`"license": "MIT"`). Note: a standalone `LICENSE` file is not yet committed to the repository.
