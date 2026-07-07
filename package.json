@@ -13,7 +13,7 @@
     "dev": "tsx watch src/index.ts",
     "serve": "tsx src/index.ts serve",
     "test": "node --import tsx --import ./test/setup/inject-require.mjs --test test/*.test.ts test/**/*.test.ts",
-    "build": "tsup src/index.ts --format esm --dts",
+    "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

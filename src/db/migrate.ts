@@ -8,11 +8,32 @@
  */
 
 import Database from 'better-sqlite3';
-import { readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+/**
+ * Resolve the migrations directory across both runtime layouts:
+ * - dev (tsx from source): this module lives in `src/db/`, migrations in `src/migrations/`
+ *   → `../migrations`
+ * - prod (bundled): the emitted chunk lives flat in `dist/`, migrations copied to `dist/migrations/`
+ *   → `./migrations`
+ * The first existing candidate wins; falls back to the dev layout if none exist yet.
+ */
+function resolveDefaultMigrationsDir(): string {
+  const devLayout = join(__dirname, '../migrations');
+  const bundledLayout = join(__dirname, 'migrations');
+
+  for (const candidate of [devLayout, bundledLayout]) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return devLayout;
+}
 
 export interface Migration {
   version: number;
@@ -33,7 +54,7 @@ export class MigrationRunner {
 
   constructor(options: MigrationRunnerOptions = {}) {
     this.db = new Database(options.dbPath ?? ':memory:');
-    this.migrationsDir = options.migrationsDir ?? join(__dirname, '../migrations');
+    this.migrationsDir = options.migrationsDir ?? resolveDefaultMigrationsDir();
     this.ensureMigrationTable();
   }
 
