@@ -266,7 +266,7 @@ describe("createStreamExecutor", () => {
 		router.register({
 			...createProvider("mock", "test-model"),
 			async generate(request) {
-				providerRequests.push(request as Record<string, unknown>);
+				providerRequests.push(request as unknown as Record<string, unknown>);
 				return {
 					text: "fallback-via-internal",
 					provider: "mock",

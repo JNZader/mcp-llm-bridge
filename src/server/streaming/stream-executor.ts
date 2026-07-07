@@ -4,6 +4,7 @@ import type { RouterExecutionContract } from "../../core/router-execution-contra
 import type { ResolvedStreamingProvider, Router } from "../../core/router.js";
 import type { GenerateResponse } from "../../core/types.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
+import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { Vault } from "../../vault/vault.js";
 import {
@@ -311,6 +312,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 							resolvedModel: breakerModel,
 							attemptStartTime,
 							project: scope.project,
+							executionContract,
 							attempts,
 							totalTokens:
 								typeof attemptInputTokens === "number" && typeof attemptOutputTokens === "number"

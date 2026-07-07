@@ -236,12 +236,17 @@ export class ComparisonService {
 			const response = await this.router.generateFromInternal(internalRequest);
 			const latencyMs = Date.now() - startTime;
 
-			// Enrich with cost
-			const costUsd = calculateCost(
-				response.model,
-				response.usage.inputTokens,
-				response.usage.outputTokens,
-			);
+			// Enrich with cost — only when the provider reported an exact token split;
+			// otherwise cost is unknown (null), consistent with truthful usage semantics.
+			const costUsd =
+				typeof response.usage.inputTokens === "number" &&
+				typeof response.usage.outputTokens === "number"
+					? calculateCost(
+							response.model,
+							response.usage.inputTokens,
+							response.usage.outputTokens,
+						)
+					: null;
 
 			// Enrich with stability score
 			const stabilityScore = this.getStabilityScore(model);
@@ -251,8 +256,8 @@ export class ComparisonService {
 				provider: (response.metadata?.["provider"] as string) ?? "unknown",
 				status: "success",
 				response: response.content,
-				tokensIn: response.usage.inputTokens,
-				tokensOut: response.usage.outputTokens,
+				tokensIn: response.usage.inputTokens ?? 0,
+				tokensOut: response.usage.outputTokens ?? 0,
 				costUsd,
 				latencyMs: (response.metadata?.["latencyMs"] as number) ?? latencyMs,
 				finishReason: response.finishReason,
@@ -321,15 +326,18 @@ export class ComparisonService {
 			fastestModel = fastest.model;
 
 			// Find cheapest (lowest cost)
+			// Treat unknown cost (null) as most expensive so a known cost wins "cheapest".
 			const cheapest = successful.reduce((a, b) =>
-				a.costUsd < b.costUsd ? a : b,
+				(a.costUsd ?? Number.POSITIVE_INFINITY) < (b.costUsd ?? Number.POSITIVE_INFINITY)
+					? a
+					: b,
 			);
 			cheapestModel = cheapest.model;
 		}
 
 		// Total cost includes all models (even failed ones, though they're $0)
 		for (const result of results) {
-			totalCost += result.costUsd;
+			totalCost += result.costUsd ?? 0;
 		}
 
 		return {

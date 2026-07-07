@@ -130,7 +130,7 @@ export function recordUsage(
   const hasExactSplit =
     typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number';
   const totalTokens = input.totalTokens ?? (
-    hasExactSplit
+    typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
       ? input.tokensIn + input.tokensOut
       : undefined
   );
@@ -148,8 +148,8 @@ export function recordUsage(
   if (telemetry.analyticsAggregator) {
     try {
       const cost = input.costUsd ?? (
-        hasExactSplit
-          ? calculateCost(input.model, input.tokensIn, input.tokensOut)
+        typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
+          ? calculateCost(input.model, input.tokensIn, input.tokensOut) ?? undefined
           : undefined
       );
 

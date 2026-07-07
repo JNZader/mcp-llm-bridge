@@ -313,6 +313,7 @@ describe("chat-completions-service", () => {
 				outputTokens: undefined,
 			},
 		]);
+		assert.ok("usage" in response);
 		assert.deepEqual(response.usage, {
 			total_tokens: 9,
 		});

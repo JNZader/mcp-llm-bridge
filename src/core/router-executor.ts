@@ -21,6 +21,10 @@ type RecordUsageFn = (
   attempt?: number,
   project?: string,
   errorMessage?: string,
+  identity?: {
+    apiKeyId?: string;
+    userId?: string;
+  },
 ) => void;
 
 type RecordModelFeedbackFn = (
