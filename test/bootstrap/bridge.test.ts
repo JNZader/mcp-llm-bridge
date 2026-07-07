@@ -10,8 +10,12 @@ import { logger } from "../../src/core/logger.js";
 import type { Router } from "../../src/core/router.js";
 
 describe("bootstrapBridge", () => {
+	// bootstrapBridge calls router.setBridgeFallbackOrder(); the stub must expose it.
+	const stubRouter = () =>
+		({ setBridgeFallbackOrder: () => {} }) as unknown as Router;
+
 	it("returns null bridge state when bridge config is absent", () => {
-		const result = bootstrapBridge({} as Router, "/nonexistent/bridge.yaml");
+		const result = bootstrapBridge(stubRouter(), "/nonexistent/bridge.yaml");
 
 		assert.equal(result.bridgeConfig, null);
 		assert.equal(result.bridge, null);
@@ -35,7 +39,7 @@ describe("bootstrapBridge", () => {
 		const infoMock = mock.method(logger, "info", () => logger);
 
 		try {
-			const result = bootstrapBridge({} as Router, configPath);
+			const result = bootstrapBridge(stubRouter(), configPath);
 
 			assert.ok(result.bridgeConfig);
 			assert.ok(result.bridge instanceof BridgeOrchestrator);
