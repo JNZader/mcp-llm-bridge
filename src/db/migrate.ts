@@ -130,7 +130,47 @@ export class MigrationRunner {
   }
 
   /**
-   * Run a specific migration by version
+   * Record a migration in the ledger. INSERT OR IGNORE keeps this idempotent
+   * and non-destructive: if a migration's own SQL already self-registered a
+   * row (migrations 001/002/008-011 do this via `INSERT OR IGNORE`), that
+   * row — and its historical checksum — is preserved; the runner only fills
+   * in migrations whose SQL forgot to self-register (003-007).
+   */
+  private recordMigration(migration: Migration): void {
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO schema_migrations (version, name, checksum) VALUES (?, ?, ?)'
+      )
+      .run(migration.version, migration.name, migration.checksum);
+  }
+
+  /**
+   * Detect SQLite errors that mean the schema change is already present
+   * (e.g. a previously-applied migration whose ledger row was lost). SQLite
+   * has no `ADD COLUMN IF NOT EXISTS`, so a re-run of an additive migration
+   * surfaces as one of these instead of being a no-op.
+   */
+  private isAlreadyAppliedError(err: unknown): boolean {
+    const message = err instanceof Error ? err.message.toLowerCase() : '';
+    return (
+      message.includes('duplicate column name') ||
+      message.includes('already exists')
+    );
+  }
+
+  /**
+   * Run a specific migration by version.
+   *
+   * The DDL and the ledger insert run in the SAME transaction so the invariant
+   * holds: if the schema change is committed, the migration is recorded. This
+   * is the root-cause fix — previously the runner never wrote the ledger and
+   * relied on each migration's SQL to self-register, which 003-007 omit,
+   * causing them to re-run (and crash on `duplicate column`) on every restart.
+   *
+   * Defense in depth: if applying the DDL fails because the objects already
+   * exist (a DB left inconsistent by the old bug — columns present, ledger
+   * row missing), we reconcile the ledger instead of crashing, auto-repairing
+   * the DB.
    */
   async runMigration(version: number): Promise<void> {
     const migrations = this.loadMigrations();
@@ -145,14 +185,27 @@ export class MigrationRunner {
       return;
     }
 
-    // Execute migration in a transaction
+    // Apply DDL and record the ledger row atomically in one transaction.
     const transaction = this.db.transaction(() => {
       this.db.exec(migration.upSql);
+      this.recordMigration(migration);
     });
 
-    transaction();
-    
-    console.error(`Applied migration ${version}: ${migration.name}`);
+    try {
+      transaction();
+      console.error(`Applied migration ${version}: ${migration.name}`);
+    } catch (err) {
+      if (this.isAlreadyAppliedError(err)) {
+        // Schema objects already exist but the ledger lost track of them.
+        // Reconcile the ledger (its own committed statement) and move on.
+        this.recordMigration(migration);
+        console.error(
+          `Migration ${version} objects already exist; reconciled ledger: ${migration.name}`
+        );
+        return;
+      }
+      throw err;
+    }
   }
 
   /**
