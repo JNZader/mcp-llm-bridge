@@ -16,6 +16,7 @@ export function bootstrapBridge(
 	configPath?: string,
 ): BridgeBootstrapResult {
 	const bridgeConfig = loadBridgeConfig(configPath);
+	router.setBridgeFallbackOrder(bridgeConfig?.fallbackOrder ?? []);
 	const bridge = bridgeConfig
 		? new BridgeOrchestrator(router, bridgeConfig)
 		: null;

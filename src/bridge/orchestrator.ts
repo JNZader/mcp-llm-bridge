@@ -47,7 +47,9 @@ export class BridgeOrchestrator {
     );
 
     // Build ordered provider list: preferred first, then fallback_order (deduped)
-    const providerOrder = this.buildProviderOrder(preferredProvider);
+    const providerOrder = request.strict === true
+      ? [preferredProvider]
+      : this.buildProviderOrder(preferredProvider);
 
     const errors: string[] = [];
 

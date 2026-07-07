@@ -219,11 +219,11 @@ describe('Router + ModelRouter integration', () => {
     const router = new Router();
     let selectedRequest: GenerateRequest | undefined;
     const selected = createMockProvider({
-      id: 'anthropic',
-      name: 'Anthropic',
+      id: 'openrouter',
+      name: 'OpenRouter',
       type: 'api',
-      models: [{ id: 'claude-3-7-sonnet-latest', name: 'Claude', provider: 'anthropic', maxTokens: 4096 }],
-      response: { text: 'from-anthropic', provider: 'anthropic', model: 'claude-3-7-sonnet-latest', resolvedProvider: 'anthropic', resolvedModel: 'claude-3-7-sonnet-latest', fallbackUsed: false },
+      models: [{ id: 'openrouter-routed-model', name: 'OpenRouter Routed Model', provider: 'openrouter', maxTokens: 4096 }],
+      response: { text: 'from-openrouter', provider: 'openrouter', model: 'openrouter-routed-model', resolvedProvider: 'openrouter', resolvedModel: 'openrouter-routed-model', fallbackUsed: false },
       onGenerate: (request) => {
         selectedRequest = request;
       },
@@ -241,11 +241,11 @@ describe('Router + ModelRouter integration', () => {
 
     const decision: RoutingDecision = {
       endpoint: createMockEndpoint({
-        id: 'anthropic-claude-3.7-sonnet',
-        provider: 'anthropic',
-        modelId: 'claude-3-7-sonnet-latest',
+        id: 'openrouter-routed-endpoint',
+        provider: 'openrouter',
+        modelId: 'openrouter-routed-model',
       }),
-      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['anthropic-claude-3.7-sonnet'] }),
+      matchedRule: createMockRule({ id: 'rule-1', preferredModels: ['openrouter-routed-endpoint'] }),
       reason: 'Primary model for code',
       isFallback: false,
       costTier: 'standard',
@@ -255,9 +255,9 @@ describe('Router + ModelRouter integration', () => {
 
     const result = await router.generate({ prompt: 'write a function' });
 
-    assert.equal(result.provider, 'anthropic');
-    assert.equal(result.model, 'claude-3-7-sonnet-latest');
-    assert.equal(selectedRequest?.model, 'claude-3-7-sonnet-latest');
+    assert.equal(result.provider, 'openrouter');
+    assert.equal(result.model, 'openrouter-routed-model');
+    assert.equal(selectedRequest?.model, 'openrouter-routed-model');
   });
 
   // ── 2. Router without ModelRouter: backward compatible behavior ──

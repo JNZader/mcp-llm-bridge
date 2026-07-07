@@ -12,7 +12,7 @@ import { unlinkSync, existsSync } from 'node:fs';
 import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import { createAllAdapters } from '../src/adapters/index.js';
-import type { GatewayConfig, GenerateResponse } from '../src/core/types.js';
+import type { GatewayConfig, GenerateRequest, GenerateResponse } from '../src/core/types.js';
 import { handleToolCall, TOOLS } from '../src/server/mcp.js';
 
 const config: GatewayConfig = {
@@ -42,10 +42,14 @@ process.on('exit', () => {
 });
 
 // Create a fast mock router that returns immediately
-function createFastRouter(baseRouter: Router): Router {
+function createFastRouter(
+  baseRouter: Router,
+  onGenerate?: (request: GenerateRequest) => void,
+): Router {
   const fast = new Router();
   // Override generate to return immediately without calling real providers
-  (fast as any).generate = async () => {
+  fast.generate = async (request: GenerateRequest) => {
+    onGenerate?.(request);
     return {
       text: 'Mock response',
       provider: 'mock',
@@ -72,6 +76,8 @@ describe('MCP llm_generate tool schema', () => {
     assert.equal(schema.properties.context.type, 'string');
     assert.ok(schema.properties.instruction, 'instruction field should be in schema');
     assert.equal(schema.properties.instruction.type, 'string');
+    assert.ok(schema.properties.strict, 'strict field should be in schema');
+    assert.equal(schema.properties.strict.type, 'boolean');
 
     // prompt should no longer be strictly required when context/instruction are present
     // The schema is flexible — prompt is optional
@@ -111,6 +117,24 @@ describe('MCP llm_generate with three-part fields', () => {
     const text = result.content[0]!.text;
     const parsed = JSON.parse(text);
     assert.equal(parsed.text, 'Mock response');
+  });
+
+  it('passes strict=true through llm_generate to the router', async () => {
+    const captured: GenerateRequest[] = [];
+    const fastRouter = createFastRouter(router, (request) => {
+      captured.push(request);
+    });
+
+    const result = await handleToolCall(
+      'llm_generate',
+      { prompt: 'Hello', strict: true },
+      fastRouter,
+      vault,
+    );
+
+    assert.ok(result.content);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0]?.strict, true);
   });
 });
 

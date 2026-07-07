@@ -44,6 +44,10 @@ export const TOOLS = [
           type: 'number',
           description: 'Maximum output tokens (default: 4096)',
         },
+        strict: {
+          type: 'boolean',
+          description: 'When true, only try the first resolved provider and disable fallback.',
+        },
         project: {
           type: 'string',
           description: 'Project scope for credential resolution (e.g. "ghagga", "md-evals"). Falls back to global credentials if not found.',

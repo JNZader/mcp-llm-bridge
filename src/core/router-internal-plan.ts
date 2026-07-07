@@ -24,6 +24,7 @@ interface BuildInternalRoutingPlanOptions {
   modelRouter: ModelRouter | null;
   circuitBreaker: CircuitBreakerV2;
   optimizeMessages: boolean;
+  explicitFallbackOrder?: readonly string[];
 }
 
 export interface InternalRoutingPlan {
@@ -75,6 +76,7 @@ export async function buildInternalRoutingPlan(
     modelRouter: options.modelRouter,
     circuitBreaker: options.circuitBreaker,
     fallbackModel: '',
+    explicitFallbackOrder: options.explicitFallbackOrder,
   });
 
   return {

@@ -39,6 +39,7 @@ export async function handleLlmGenerateTool(
     provider: args['provider'] as string | undefined,
     model: args['model'] as string | undefined,
     maxTokens: args['maxTokens'] as number | undefined,
+    strict: args['strict'] === true ? true : undefined,
     project: args['project'] as string | undefined,
   };
 

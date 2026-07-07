@@ -8,6 +8,15 @@ import { createBalancer, memberKey } from './balancer.js';
 import { resolveModel } from './fuzzy.js';
 import { buildLatencyMap, selectProviderWithLatency } from '../latency/selector.js';
 
+const NEVER_AUTO_FALLBACK_PROVIDER = {
+  ANTHROPIC: 'anthropic',
+  CLAUDE_CLI: 'claude-cli',
+} as const;
+
+export const NEVER_AUTO_FALLBACK = new Set<string>(
+  Object.values(NEVER_AUTO_FALLBACK_PROVIDER),
+);
+
 /** Provider that can refresh its dynamic model cache (TTL-gated). */
 export interface RefreshableModelProvider {
   refreshModels(): Promise<void>;
@@ -19,11 +28,51 @@ export function hasRefreshableModels(
   return typeof (provider as { refreshModels?: unknown }).refreshModels === 'function';
 }
 
+export interface ResolveCandidatesOptions {
+  explicitFallbackOrder?: readonly string[];
+}
+
+function filterNeverAutoFallback(
+  candidates: LLMProvider[],
+  requestedProvider: string | undefined,
+  explicitFallbackAllowed: ReadonlySet<string>,
+): LLMProvider[] {
+  return candidates.filter((provider) => {
+    if (!NEVER_AUTO_FALLBACK.has(provider.id)) {
+      return true;
+    }
+
+    if (explicitFallbackAllowed.has(provider.id)) {
+      return true;
+    }
+
+    return requestedProvider !== undefined && provider.id === requestedProvider;
+  });
+}
+
+function buildCandidateList(
+  selectedProvider: LLMProvider,
+  available: LLMProvider[],
+  requestedProvider: string | undefined,
+  explicitFallbackAllowed: ReadonlySet<string>,
+): LLMProvider[] {
+  return filterNeverAutoFallback(
+    [
+      selectedProvider,
+      ...available.filter((provider) => provider !== selectedProvider),
+    ],
+    requestedProvider,
+    explicitFallbackAllowed,
+  );
+}
+
 export async function resolveCandidates(
   providers: LLMProvider[],
   request: GenerateRequest,
   reorderCandidates: (candidates: LLMProvider[]) => LLMProvider[],
+  options: ResolveCandidatesOptions = {},
 ): Promise<LLMProvider[]> {
+  const explicitFallbackAllowed = new Set(options.explicitFallbackOrder ?? []);
   // Model-based candidate matching below reads provider.models synchronously,
   // so a cold cache would hide dynamically-discovered models (3vr B1). But with
   // an explicit request.provider the candidate is picked by id and the model
@@ -46,7 +95,12 @@ export async function resolveCandidates(
   if (request.provider) {
     const preferred = available.find((provider) => provider.id === request.provider);
     if (preferred) {
-      return [preferred, ...available.filter((provider) => provider !== preferred)];
+      return buildCandidateList(
+        preferred,
+        available,
+        request.provider,
+        explicitFallbackAllowed,
+      );
     }
   }
 
@@ -55,7 +109,12 @@ export async function resolveCandidates(
       provider.models.some((model) => model.id === request.model),
     );
     if (modelProvider) {
-      return [modelProvider, ...available.filter((provider) => provider !== modelProvider)];
+      return buildCandidateList(
+        modelProvider,
+        available,
+        request.provider,
+        explicitFallbackAllowed,
+      );
     }
 
     const corpus = available.flatMap((provider) => provider.models.map((model) => model.id));
@@ -65,7 +124,12 @@ export async function resolveCandidates(
         provider.models.some((model) => model.id === fuzzyResult.match),
       );
       if (fuzzyProvider) {
-        return [fuzzyProvider, ...available.filter((provider) => provider !== fuzzyProvider)];
+        return buildCandidateList(
+          fuzzyProvider,
+          available,
+          request.provider,
+          explicitFallbackAllowed,
+        );
       }
     }
   }
@@ -76,7 +140,9 @@ export async function resolveCandidates(
     return 0;
   });
 
-  return reorderCandidates(sorted);
+  return reorderCandidates(
+    filterNeverAutoFallback(sorted, request.provider, explicitFallbackAllowed),
+  );
 }
 
 export function resolveGroupCandidates(

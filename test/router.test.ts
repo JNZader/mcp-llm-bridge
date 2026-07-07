@@ -157,6 +157,38 @@ describe('Router.generate()', () => {
     assert.equal(result.fallbackUsed, false);
   });
 
+  it('normalizes opencode provider alias to opencode-cli', async () => {
+    const router = new Router();
+    let capturedRequest: GenerateRequest | undefined;
+
+    router.register({
+      ...createMockProvider({
+        id: 'opencode-cli',
+        name: 'OpenCode CLI',
+        type: 'cli',
+        models: [{ id: 'opencode-model', name: 'OpenCode Model', provider: 'opencode-cli', maxTokens: 4096 }],
+      }),
+      async generate(request: GenerateRequest): Promise<GenerateResponse> {
+        capturedRequest = request;
+        return {
+          text: 'from-opencode',
+          provider: 'opencode-cli',
+          model: 'opencode-model',
+          resolvedProvider: 'opencode-cli',
+          resolvedModel: 'opencode-model',
+          fallbackUsed: false,
+        };
+      },
+    });
+
+    const result = await router.generate({ prompt: 'test', provider: 'opencode' });
+
+    assert.equal(result.provider, 'opencode-cli');
+    assert.equal(result.requestedProvider, 'opencode-cli');
+    assert.equal(capturedRequest?.provider, 'opencode-cli');
+    assert.deepEqual(result.routing?.attemptedProviders, ['opencode-cli']);
+  });
+
   it('keeps an explicit provider authoritative when the model belongs to another provider', async () => {
     const router = new Router();
     let alphaRequest: GenerateRequest | undefined;
@@ -244,6 +276,102 @@ describe('Router.generate()', () => {
     assert.equal(result.resolvedProvider, 'backup');
     assert.equal(result.resolvedModel, 'backup-model');
     assert.equal(result.fallbackUsed, true);
+  });
+
+  it('does not auto-fallback to Anthropic providers after an explicit provider fails', async () => {
+    const router = new Router();
+    const claudeGenerate = mock.fn(async () => ({
+      text: 'from-claude',
+      provider: 'claude-cli',
+      model: 'claude-model',
+      resolvedProvider: 'claude-cli',
+      resolvedModel: 'claude-model',
+      fallbackUsed: false,
+    }));
+    const anthropicGenerate = mock.fn(async () => ({
+      text: 'from-anthropic',
+      provider: 'anthropic',
+      model: 'claude-api-model',
+      resolvedProvider: 'anthropic',
+      resolvedModel: 'claude-api-model',
+      fallbackUsed: false,
+    }));
+
+    router.register(createMockProvider({
+      id: 'opencode-cli',
+      name: 'OpenCode CLI',
+      type: 'cli',
+      models: [{ id: 'opencode-model', name: 'OpenCode Model', provider: 'opencode-cli', maxTokens: 4096 }],
+      shouldFail: true,
+      failMessage: 'opencode unavailable',
+    }));
+    router.register({
+      ...createMockProvider({
+        id: 'claude-cli',
+        name: 'Claude CLI',
+        type: 'cli',
+        models: [{ id: 'claude-model', name: 'Claude Model', provider: 'claude-cli', maxTokens: 4096 }],
+      }),
+      generate: claudeGenerate,
+    });
+    router.register({
+      ...createMockProvider({
+        id: 'anthropic',
+        name: 'Anthropic',
+        type: 'api',
+        models: [{ id: 'claude-api-model', name: 'Claude API Model', provider: 'anthropic', maxTokens: 4096 }],
+      }),
+      generate: anthropicGenerate,
+    });
+    router.register(createMockProvider({
+      id: 'gemini-cli',
+      name: 'Gemini CLI',
+      type: 'cli',
+      models: [{ id: 'gemini-model', name: 'Gemini Model', provider: 'gemini-cli', maxTokens: 4096 }],
+      response: { text: 'from-gemini', provider: 'gemini-cli', model: 'gemini-model', resolvedProvider: 'gemini-cli', resolvedModel: 'gemini-model', fallbackUsed: false },
+    }));
+
+    const result = await router.generate({ prompt: 'test', provider: 'opencode-cli' });
+
+    assert.equal(result.provider, 'gemini-cli');
+    assert.equal(result.fallbackUsed, true);
+    assert.deepEqual(result.routing?.attemptedProviders, ['opencode-cli', 'gemini-cli']);
+    assert.equal(claudeGenerate.mock.callCount(), 0);
+    assert.equal(anthropicGenerate.mock.callCount(), 0);
+  });
+
+  it('allows Anthropic auto-fallback when it is listed in bridge fallback_order', async () => {
+    const router = new Router();
+
+    router.setBridgeFallbackOrder(['anthropic']);
+    router.register(createMockProvider({
+      id: 'opencode-cli',
+      name: 'OpenCode CLI',
+      type: 'cli',
+      models: [{ id: 'opencode-model', name: 'OpenCode Model', provider: 'opencode-cli', maxTokens: 4096 }],
+      shouldFail: true,
+      failMessage: 'opencode unavailable',
+    }));
+    router.register(createMockProvider({
+      id: 'anthropic',
+      name: 'Anthropic',
+      type: 'api',
+      models: [{ id: 'claude-api-model', name: 'Claude API Model', provider: 'anthropic', maxTokens: 4096 }],
+      response: { text: 'from-anthropic', provider: 'anthropic', model: 'claude-api-model', resolvedProvider: 'anthropic', resolvedModel: 'claude-api-model', fallbackUsed: false },
+    }));
+    router.register(createMockProvider({
+      id: 'gemini-cli',
+      name: 'Gemini CLI',
+      type: 'cli',
+      models: [{ id: 'gemini-model', name: 'Gemini Model', provider: 'gemini-cli', maxTokens: 4096 }],
+      response: { text: 'from-gemini', provider: 'gemini-cli', model: 'gemini-model', resolvedProvider: 'gemini-cli', resolvedModel: 'gemini-model', fallbackUsed: false },
+    }));
+
+    const result = await router.generate({ prompt: 'test', provider: 'opencode-cli' });
+
+    assert.equal(result.provider, 'anthropic');
+    assert.equal(result.fallbackUsed, true);
+    assert.deepEqual(result.routing?.attemptedProviders, ['opencode-cli', 'anthropic']);
   });
 
   it('throws immediately in strict mode when first candidate fails', async () => {

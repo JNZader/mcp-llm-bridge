@@ -70,6 +70,7 @@ import { optimizeMessagesEnabled } from './runtime-flags.js';
 
 import { logger } from './logger.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
+import { normalizeProviderId } from './provider-aliases.js';
 
 export interface ResolvedStreamingProvider {
   provider: LLMProvider;
@@ -115,6 +116,46 @@ export function resetCircuitBreakerV2(): void {
 
 export { optimizeMessagesEnabled, useTransformers } from './runtime-flags.js';
 
+function normalizeGenerateRequestProvider(request: GenerateRequest): GenerateRequest {
+  const provider = normalizeProviderId(request.provider);
+
+  if (provider === request.provider) {
+    return request;
+  }
+
+  return {
+    ...request,
+    provider,
+  };
+}
+
+function normalizeInternalRequestProvider(request: InternalLLMRequest): InternalLLMRequest {
+  const currentProvider =
+    typeof request.metadata?.['provider'] === 'string'
+      ? request.metadata['provider']
+      : undefined;
+  const normalizedProvider = normalizeProviderId(currentProvider);
+
+  if (normalizedProvider === currentProvider) {
+    return request;
+  }
+
+  const metadata: Record<string, unknown> = {
+    ...request.metadata,
+  };
+
+  if (normalizedProvider === undefined) {
+    delete metadata['provider'];
+  } else {
+    metadata['provider'] = normalizedProvider;
+  }
+
+  return {
+    ...request,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
+}
+
 export class Router {
   private _providers: LLMProvider[] = [];
   private _transformerRegistry: TransformerRegistry | null = null;
@@ -126,6 +167,7 @@ export class Router {
   private _modelRouter: ModelRouter | null = null;
   private _analyticsAggregator: AnalyticsAggregator | null = null;
   private _explorationRate: number = 0.1; // 10% epsilon-greedy
+  private _explicitFallbackOrder: readonly string[] = [];
 
   /** Set the analytics aggregator for usage recording. */
   setAnalyticsAggregator(aggregator: AnalyticsAggregator): void {
@@ -155,6 +197,11 @@ export class Router {
   /** Get the exploration rate. */
   get explorationRate(): number {
     return this._explorationRate;
+  }
+
+  /** Set the manually configured bridge fallback order. */
+  setBridgeFallbackOrder(fallbackOrder: readonly string[]): void {
+    this._explicitFallbackOrder = [...fallbackOrder];
   }
 
   /** Set the cost tracker for usage recording. */
@@ -269,10 +316,12 @@ export class Router {
    * Uses circuit breaker to skip providers that are currently failing.
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
+    const normalizedRequest = normalizeGenerateRequestProvider(request);
+
     if (this.canUseInternalGenerateCompatibilityPath()) {
       return buildGenerateResponseFromInternal(
-        request,
-        await this.generateFromInternal(buildInternalRequestFromGenerate(request)),
+        normalizedRequest,
+        await this.generateFromInternal(buildInternalRequestFromGenerate(normalizedRequest)),
       );
     }
 
@@ -282,10 +331,10 @@ export class Router {
     const plan = await buildRoutingPolicyPlan({
       providers: this._providers,
       request: {
-        prompt: request.prompt,
-        model: request.model,
-        provider: request.provider,
-        strict: request.strict === true,
+        prompt: normalizedRequest.prompt,
+        model: normalizedRequest.model,
+        provider: normalizedRequest.provider,
+        strict: normalizedRequest.strict === true,
       },
       groupStore: null,
       sessionManager: null,
@@ -294,27 +343,28 @@ export class Router {
       modelRouter: this._modelRouter,
       circuitBreaker,
       fallbackModel: 'unknown',
+      explicitFallbackOrder: this._explicitFallbackOrder,
     });
     const candidates = plan.orderedCandidates;
     const routingMetadata = {
       strategy: determineRoutingStrategy({
-        requestedProvider: request.provider,
-        requestedModel: request.model,
+        requestedProvider: normalizedRequest.provider,
+        requestedModel: normalizedRequest.model,
         modelRouterDecision: plan.appliedModelRouterDecision,
         offloadClassification: plan.offloadClassification,
       }),
       classification: plan.classification ?? plan.offloadClassification,
       modelRouterDecision: plan.appliedModelRouterDecision,
       decisionReason: determineDecisionReason({
-        requestedProvider: request.provider,
-        requestedModel: request.model,
+        requestedProvider: normalizedRequest.provider,
+        requestedModel: normalizedRequest.model,
         modelRouterDecision: plan.appliedModelRouterDecision,
         offloadClassification: plan.offloadClassification,
       }),
     } satisfies Omit<RoutingMetadataOptions, 'attemptedProviders'>;
     const executionContract = createRouterExecutionContract({
-      requestedProvider: request.provider,
-      requestedModel: request.model,
+      requestedProvider: normalizedRequest.provider,
+      requestedModel: normalizedRequest.model,
       routingMetadata,
     });
 
@@ -351,7 +401,7 @@ export class Router {
       const result = await executeGenerateAttempt({
         provider,
         request: buildGenerateRequest(
-          request,
+          normalizedRequest,
           provider,
           plan.appliedModelRouterDecision?.endpoint,
         ),
@@ -366,7 +416,7 @@ export class Router {
         },
       });
       return buildGenerateExecutionResponse(executionContract, {
-        request,
+        request: normalizedRequest,
         result,
         latencyMs: Date.now() - startTime,
       });
@@ -378,7 +428,7 @@ export class Router {
       return executeGenerateAttempt({
         provider,
         request: buildGenerateRequest(
-          request,
+          normalizedRequest,
           provider,
           plan.appliedModelRouterDecision?.endpoint,
         ),
@@ -402,9 +452,9 @@ export class Router {
             recordLocalFallbackMetric(this.getTelemetryContext(), {
               attemptedModel,
               startTime,
-              project: request.project,
-              apiKeyId: request.apiKeyId,
-              userId: request.userId,
+              project: normalizedRequest.project,
+              apiKeyId: normalizedRequest.apiKeyId,
+              userId: normalizedRequest.userId,
               message,
             });
             return;
@@ -421,7 +471,7 @@ export class Router {
 
     if (attemptedResult) {
       return buildGenerateExecutionResponse(executionContract, {
-        request,
+        request: normalizedRequest,
         result: attemptedResult.result,
         latencyMs: Date.now() - startTime,
       });
@@ -431,11 +481,11 @@ export class Router {
     if (this._freeModelRouter?.isAvailable) {
       try {
         logger.info('All paid providers failed, attempting free model fallback');
-        const freeResult = await this._freeModelRouter.generate(request);
+        const freeResult = await this._freeModelRouter.generate(normalizedRequest);
         executionContract.recordAttempt('free-models');
         const freeModelExecutionContract = createRouterExecutionContract({
-          requestedProvider: request.provider,
-          requestedModel: request.model,
+          requestedProvider: normalizedRequest.provider,
+          requestedModel: normalizedRequest.model,
           routingMetadata: {
             ...routingMetadata,
             decisionReason: 'All paid providers failed; free model fallback succeeded',
@@ -447,7 +497,7 @@ export class Router {
         return buildGenerateExecutionResponse(
           freeModelExecutionContract,
           {
-            request,
+            request: normalizedRequest,
             result: freeResult,
             latencyMs: Date.now() - startTime,
           },
@@ -479,6 +529,8 @@ export class Router {
    * After successful response: pin session if stickiness is enabled.
    */
   async generateFromInternal(request: InternalLLMRequest): Promise<InternalLLMResponse> {
+    const normalizedRequest = normalizeInternalRequestProvider(request);
+
     if (!this._transformerRegistry) {
       throw new Error('Transformer registry not configured. Call setTransformerRegistry() first.');
     }
@@ -489,7 +541,7 @@ export class Router {
 
     const plan = await buildInternalRoutingPlan({
       providers: this._providers,
-      request,
+      request: normalizedRequest,
       groupStore: this._groupStore,
       sessionManager: this._sessionManager,
       latencyMeasurer: this._latencyMeasurer,
@@ -497,25 +549,26 @@ export class Router {
       modelRouter: this._modelRouter,
       circuitBreaker,
       optimizeMessages: optimizeMessagesEnabled(),
+      explicitFallbackOrder: this._explicitFallbackOrder,
     });
     const { optimizedRequest } = plan;
 
     const model = plan.model;
     const routingStrategy = determineRoutingStrategy({
       requestedProvider: plan.requestedProvider,
-      requestedModel: request.model,
+      requestedModel: normalizedRequest.model,
       modelRouterDecision: plan.appliedModelRouterDecision,
       offloadClassification: plan.offloadClassification,
     });
     const decisionReason = determineDecisionReason({
       requestedProvider: plan.requestedProvider,
-      requestedModel: request.model,
+      requestedModel: normalizedRequest.model,
       modelRouterDecision: plan.appliedModelRouterDecision,
       offloadClassification: plan.offloadClassification,
     });
     const executionContract = createRouterExecutionContract({
       requestedProvider: plan.requestedProvider,
-      requestedModel: request.model,
+      requestedModel: normalizedRequest.model,
       routingMetadata: {
         strategy: routingStrategy,
         classification: plan.classification ?? plan.offloadClassification,
@@ -656,6 +709,8 @@ export class Router {
   async resolveStreamingProviders(
     request: InternalLLMRequest,
   ): Promise<ResolvedStreamingProvider[]> {
+    const normalizedRequest = normalizeInternalRequestProvider(request);
+
     if (!this._transformerRegistry) {
       return [];
     }
@@ -663,7 +718,7 @@ export class Router {
     const registry = this._transformerRegistry;
     const plan = await buildInternalRoutingPlan({
       providers: this._providers,
-      request,
+      request: normalizedRequest,
       groupStore: this._groupStore,
       sessionManager: this._sessionManager,
       latencyMeasurer: this._latencyMeasurer,
@@ -671,6 +726,7 @@ export class Router {
       modelRouter: this._modelRouter,
       circuitBreaker: getCircuitBreakerV2(),
       optimizeMessages: optimizeMessagesEnabled(),
+      explicitFallbackOrder: this._explicitFallbackOrder,
     });
 
     if (plan.strict && plan.blockedStrictCandidate) {
@@ -685,7 +741,7 @@ export class Router {
     const routingMetadata = {
       strategy: determineRoutingStrategy({
         requestedProvider: plan.requestedProvider,
-        requestedModel: request.model,
+        requestedModel: normalizedRequest.model,
         modelRouterDecision: plan.appliedModelRouterDecision,
         offloadClassification: plan.offloadClassification,
       }),
@@ -693,14 +749,14 @@ export class Router {
       modelRouterDecision: plan.appliedModelRouterDecision,
       decisionReason: determineDecisionReason({
         requestedProvider: plan.requestedProvider,
-        requestedModel: request.model,
+        requestedModel: normalizedRequest.model,
         modelRouterDecision: plan.appliedModelRouterDecision,
         offloadClassification: plan.offloadClassification,
       }),
     } satisfies Omit<RoutingMetadataOptions, 'attemptedProviders'>;
     const executionContract = createRouterExecutionContract({
       requestedProvider: plan.requestedProvider,
-      requestedModel: request.model,
+      requestedModel: normalizedRequest.model,
       routingMetadata,
     });
     const resolvedProviders: ResolvedStreamingProvider[] = [];
@@ -735,16 +791,16 @@ export class Router {
           recordResult: createStreamingRecordResult({
             telemetry: this.getTelemetryContext(),
             provider,
-            requestModel: request.model,
+            requestModel: normalizedRequest.model,
             routedEndpoint,
             classification: plan.classification,
             apiKeyId:
-              typeof request.metadata?.['apiKeyId'] === 'string'
-                ? request.metadata['apiKeyId']
+              typeof normalizedRequest.metadata?.['apiKeyId'] === 'string'
+                ? normalizedRequest.metadata['apiKeyId']
                 : undefined,
             userId:
-              typeof request.metadata?.['userId'] === 'string'
-                ? request.metadata['userId']
+              typeof normalizedRequest.metadata?.['userId'] === 'string'
+                ? normalizedRequest.metadata['userId']
                 : undefined,
           }),
         });

@@ -221,8 +221,8 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       maxTokens: request.maxTokens,
       provider: provider.id,
       project,
-      apiKeyId,
-      userId,
+      ...(apiKeyId ? { apiKeyId } : {}),
+      ...(userId ? { userId } : {}),
     };
 
     const result = await provider.generate(adapterRequest);

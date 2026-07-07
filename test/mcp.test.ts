@@ -50,6 +50,7 @@ describe('MCP tool schemas', () => {
         provider: { type: 'string', description: 'Preferred provider' },
         model: { type: 'string', description: 'Specific model' },
         maxTokens: { type: 'number', description: 'Max output tokens' },
+        strict: { type: 'boolean', description: 'Disable fallback' },
         project: { type: 'string', description: 'Project scope' },
       },
       required: ['prompt'],

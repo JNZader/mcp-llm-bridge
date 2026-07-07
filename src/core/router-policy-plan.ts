@@ -17,6 +17,7 @@ import {
   resolveGroupCandidates,
 } from './router-candidate-planner.js';
 import { logger } from './logger.js';
+import { normalizeProviderId } from './provider-aliases.js';
 
 export interface RoutingPolicyPlanRequest {
   prompt: string;
@@ -36,6 +37,7 @@ export interface BuildRoutingPolicyPlanOptions {
   modelRouter: ModelRouter | null;
   circuitBreaker: CircuitBreakerV2;
   fallbackModel: string;
+  explicitFallbackOrder?: readonly string[];
 }
 
 export interface StickySessionRoutingIntent {
@@ -64,7 +66,7 @@ export interface RoutingPolicyPlan {
 export async function buildRoutingPolicyPlan(
   options: BuildRoutingPolicyPlanOptions,
 ): Promise<RoutingPolicyPlan> {
-  const requestedProvider = options.request.provider;
+  const requestedProvider = normalizeProviderId(options.request.provider);
   const requestModel = options.request.model;
   const strict = options.request.strict;
   let matchedGroup: ProviderGroup | null = null;
@@ -93,6 +95,7 @@ export async function buildRoutingPolicyPlan(
       },
       (candidates) =>
         reorderByLatency(candidates, options.latencyMeasurer, options.explorationRate),
+      { explicitFallbackOrder: options.explicitFallbackOrder },
     );
   }
 
