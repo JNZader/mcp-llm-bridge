@@ -141,7 +141,7 @@ export class MigrationRunner {
     }
 
     if (this.isMigrationApplied(version)) {
-      console.log(`Migration ${version} already applied, skipping`);
+      console.error(`Migration ${version} already applied, skipping`);
       return;
     }
 
@@ -152,7 +152,7 @@ export class MigrationRunner {
 
     transaction();
     
-    console.log(`Applied migration ${version}: ${migration.name}`);
+    console.error(`Applied migration ${version}: ${migration.name}`);
   }
 
   /**
@@ -186,7 +186,7 @@ export class MigrationRunner {
     }
 
     if (!this.isMigrationApplied(version)) {
-      console.log(`Migration ${version} not applied, skipping rollback`);
+      console.error(`Migration ${version} not applied, skipping rollback`);
       return;
     }
 
@@ -197,7 +197,7 @@ export class MigrationRunner {
 
     transaction();
     
-    console.log(`Rolled back migration ${version}: ${migration.name}`);
+    console.error(`Rolled back migration ${version}: ${migration.name}`);
   }
 
   /**

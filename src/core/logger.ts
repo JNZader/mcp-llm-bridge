@@ -30,6 +30,10 @@ export function createLogger(config: LoggerConfig = {}): pino.Logger {
   const level = config.level ?? envLevel;
   const pretty = config.pretty ?? process.env['NODE_ENV'] !== 'production';
 
+  // All diagnostic logs MUST go to stderr (fd 2), NEVER stdout.
+  // In MCP stdio mode, stdout is reserved exclusively for the JSON-RPC
+  // protocol — any stray byte there corrupts the handshake. In HTTP mode
+  // logs-on-stderr is the canonical, harmless choice. So: stderr always.
   if (pretty) {
     return pino({
       level,
@@ -39,12 +43,13 @@ export function createLogger(config: LoggerConfig = {}): pino.Logger {
           colorize: true,
           translateTime: 'SYS:standard',
           ignore: 'pid,hostname',
+          destination: 2,
         },
       },
     });
   }
 
-  return pino({ level });
+  return pino({ level }, pino.destination(2));
 }
 
 /**
