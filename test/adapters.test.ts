@@ -17,6 +17,12 @@ import {
   GoogleAdapter,
   GroqAdapter,
   OpenRouterAdapter,
+  CerebrasAdapter,
+  ZaiAdapter,
+  NvidiaAdapter,
+  MistralAdapter,
+  SambanovaAdapter,
+  HyperbolicAdapter,
   ClaudeCliAdapter,
   GeminiCliAdapter,
   CodexCliAdapter,
@@ -24,6 +30,81 @@ import {
   CopilotCliAdapter,
   createAllAdapters,
 } from '../src/adapters/index.js';
+import { VALID_PROVIDERS } from '../src/core/constants.js';
+import { normalizeProviderId } from '../src/core/provider-aliases.js';
+
+interface OpenAICompatibleAdapterExpectation {
+  readonly Adapter: new (vault: Vault) => LLMProvider & {
+    readonly baseURL: string;
+    readonly defaultModel: string;
+  };
+  readonly id: string;
+  readonly baseURL: string;
+  readonly defaultModel: string;
+  readonly modelIds: readonly string[];
+  readonly apiKeyEnv: string;
+}
+
+const NEW_OPENAI_COMPATIBLE_ADAPTERS = [
+  {
+    Adapter: CerebrasAdapter,
+    id: 'cerebras',
+    baseURL: 'https://api.cerebras.ai/v1',
+    defaultModel: 'gpt-oss-120b',
+    modelIds: ['gpt-oss-120b', 'llama-3.3-70b', 'zai-glm-4.7'],
+    apiKeyEnv: 'CEREBRAS_API_KEY',
+  },
+  {
+    Adapter: ZaiAdapter,
+    id: 'zai',
+    baseURL: 'https://api.z.ai/api/paas/v4',
+    defaultModel: 'glm-4.6',
+    modelIds: ['glm-4.6', 'glm-4.5-air', 'glm-4.5-flash'],
+    apiKeyEnv: 'ZAI_API_KEY',
+  },
+  {
+    Adapter: NvidiaAdapter,
+    id: 'nvidia',
+    baseURL: 'https://integrate.api.nvidia.com/v1',
+    defaultModel: 'meta/llama-3.3-70b-instruct',
+    modelIds: [
+      'meta/llama-3.3-70b-instruct',
+      'deepseek-ai/deepseek-r1',
+      'qwen/qwen2.5-coder-32b-instruct',
+    ],
+    apiKeyEnv: 'NVIDIA_API_KEY',
+  },
+  {
+    Adapter: MistralAdapter,
+    id: 'mistral',
+    baseURL: 'https://api.mistral.ai/v1',
+    defaultModel: 'mistral-small-latest',
+    modelIds: ['mistral-small-latest', 'codestral-latest', 'open-mistral-nemo'],
+    apiKeyEnv: 'MISTRAL_API_KEY',
+  },
+  {
+    Adapter: SambanovaAdapter,
+    id: 'sambanova',
+    baseURL: 'https://api.sambanova.ai/v1',
+    defaultModel: 'Meta-Llama-3.3-70B-Instruct',
+    modelIds: ['Meta-Llama-3.3-70B-Instruct', 'DeepSeek-R1', 'Qwen3-32B'],
+    apiKeyEnv: 'SAMBANOVA_API_KEY',
+  },
+  {
+    Adapter: HyperbolicAdapter,
+    id: 'hyperbolic',
+    baseURL: 'https://api.hyperbolic.xyz/v1',
+    defaultModel: 'meta-llama/Llama-3.3-70B-Instruct',
+    modelIds: ['meta-llama/Llama-3.3-70B-Instruct', 'deepseek-ai/DeepSeek-R1'],
+    apiKeyEnv: 'HYPERBOLIC_API_KEY',
+  },
+] as const satisfies readonly OpenAICompatibleAdapterExpectation[];
+
+const originalNewProviderEnv = new Map<string, string | undefined>();
+for (const { apiKeyEnv } of NEW_OPENAI_COMPATIBLE_ADAPTERS) {
+  originalNewProviderEnv.set(apiKeyEnv, process.env[apiKeyEnv]);
+  delete process.env[apiKeyEnv];
+}
 
 /** Create a test config with a temp DB. */
 function createTestConfig(): GatewayConfig {
@@ -40,6 +121,13 @@ after(() => {
   for (const suffix of ['', '-wal', '-shm']) {
     const filePath = config.dbPath + suffix;
     if (existsSync(filePath)) unlinkSync(filePath);
+  }
+  for (const [apiKeyEnv, value] of originalNewProviderEnv.entries()) {
+    if (value === undefined) {
+      delete process.env[apiKeyEnv];
+    } else {
+      process.env[apiKeyEnv] = value;
+    }
   }
 });
 
@@ -166,6 +254,33 @@ describe('OpenRouterAdapter', () => {
     assert.equal(available, false, 'Should not be available without stored credentials');
   });
 });
+
+for (const expectation of NEW_OPENAI_COMPATIBLE_ADAPTERS) {
+  describe(`${expectation.id} adapter`, () => {
+    const adapter = new expectation.Adapter(vault);
+
+    it('has required properties', () => {
+      assertProviderInterface(adapter, expectation.id);
+      assert.equal(adapter.type, 'api');
+      assert.equal(adapter.baseURL, expectation.baseURL);
+      assert.equal(adapter.defaultModel, expectation.defaultModel);
+    });
+
+    it('models have required fields and declared model ids', () => {
+      assert.deepEqual(adapter.models.map((model) => model.id), expectation.modelIds);
+      for (const model of adapter.models) {
+        assertModelInfo(model, expectation.id);
+        assert.equal(model.provider, expectation.id);
+      }
+    });
+
+    it('isAvailable returns false when vault and env have no credentials', async () => {
+      delete process.env[expectation.apiKeyEnv];
+      const available = await adapter.isAvailable();
+      assert.equal(available, false, 'Should not be available without stored credentials');
+    });
+  });
+}
 
 describe('ClaudeCliAdapter', () => {
   const adapter = new ClaudeCliAdapter(vault);
@@ -311,15 +426,16 @@ describe('CopilotCliAdapter', () => {
 // ── Factory function ──────────────────────────────────────
 
 describe('createAllAdapters()', () => {
-  it('returns 11 adapters', () => {
+  it('returns 17 adapters', () => {
     const adapters = createAllAdapters(vault);
-    assert.equal(adapters.length, 11, 'Should return exactly 11 adapters');
+    assert.equal(adapters.length, 17, 'Should return exactly 17 adapters');
   });
 
   it('all adapters implement LLMProvider interface', () => {
     const adapters = createAllAdapters(vault);
     const expectedIds = [
       'anthropic', 'openai', 'google', 'groq', 'openrouter',
+      'cerebras', 'zai', 'nvidia', 'mistral', 'sambanova', 'hyperbolic',
       'opencode-cli', 'claude-cli', 'gemini-cli', 'codex-cli', 'qwen-cli', 'copilot-cli',
     ];
 
@@ -338,7 +454,7 @@ describe('createAllAdapters()', () => {
     const apiAdapters = adapters.filter(a => a.type === 'api');
     const cliAdapters = adapters.filter(a => a.type === 'cli');
 
-    assert.equal(apiAdapters.length, 5, 'Should have 5 API adapters');
+    assert.equal(apiAdapters.length, 11, 'Should have 11 API adapters');
     assert.equal(cliAdapters.length, 6, 'Should have 6 CLI adapters');
 
     // Verify API adapters come first in the array
@@ -350,7 +466,38 @@ describe('createAllAdapters()', () => {
   it('API adapters are in expected order', () => {
     const adapters = createAllAdapters(vault);
     const apiIds = adapters.filter(a => a.type === 'api').map(a => a.id);
-    assert.deepEqual(apiIds, ['anthropic', 'openai', 'google', 'groq', 'openrouter']);
+    assert.deepEqual(apiIds, [
+      'anthropic',
+      'openai',
+      'google',
+      'groq',
+      'openrouter',
+      'cerebras',
+      'zai',
+      'nvidia',
+      'mistral',
+      'sambanova',
+      'hyperbolic',
+    ]);
+  });
+
+  it('new OpenAI-compatible adapters appear in the factory catalog', () => {
+    const adapters = createAllAdapters(vault);
+    const adapterIds = adapters.map((adapter) => adapter.id);
+
+    for (const { id } of NEW_OPENAI_COMPATIBLE_ADAPTERS) {
+      assert.ok(adapterIds.includes(id), `Should include adapter with id "${id}"`);
+    }
+  });
+
+  it('new OpenAI-compatible adapter ids are valid credential providers', () => {
+    for (const { id } of NEW_OPENAI_COMPATIBLE_ADAPTERS) {
+      assert.equal(VALID_PROVIDERS.has(id), true, `${id} should be a valid provider`);
+    }
+  });
+
+  it('normalizes glm provider alias to zai', () => {
+    assert.equal(normalizeProviderId('glm'), 'zai');
   });
 });
 

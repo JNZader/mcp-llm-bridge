@@ -1,10 +1,17 @@
 import type { Vault } from "../../vault/vault.js";
+import { resolveProviderApiKey } from "../../core/provider-runtime-config.js";
 
 /** Provider-specific base URLs for OpenAI-compatible streaming. */
 const PROVIDER_STREAM_BASE_URLS: Record<string, string> = {
 	google: "https://generativelanguage.googleapis.com/v1beta/openai/",
 	groq: "https://api.groq.com/openai/v1",
 	openrouter: "https://openrouter.ai/api/v1",
+	cerebras: "https://api.cerebras.ai/v1",
+	zai: "https://api.z.ai/api/paas/v4",
+	nvidia: "https://integrate.api.nvidia.com/v1",
+	mistral: "https://api.mistral.ai/v1",
+	sambanova: "https://api.sambanova.ai/v1",
+	hyperbolic: "https://api.hyperbolic.xyz/v1",
 };
 
 /**
@@ -58,6 +65,7 @@ export function buildProviderStreamCall(
 				// Vault may not have credentials for this provider
 			}
 		}
+		apiKey ||= resolveProviderApiKey(providerId) ?? "";
 
 		const baseURL = PROVIDER_STREAM_BASE_URLS[providerId];
 		const client = new OpenAI({

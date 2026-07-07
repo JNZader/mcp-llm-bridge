@@ -728,6 +728,12 @@ export function dashboardHtml(): string {
               <option value="groq">groq</option>
               <option value="openrouter">openrouter</option>
               <option value="google">google</option>
+              <option value="cerebras">cerebras</option>
+              <option value="zai">zai</option>
+              <option value="nvidia">nvidia</option>
+              <option value="mistral">mistral</option>
+              <option value="sambanova">sambanova</option>
+              <option value="hyperbolic">hyperbolic</option>
               <option value="github-copilot">github-copilot</option>
             </select>
           </div>

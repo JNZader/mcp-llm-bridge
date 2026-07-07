@@ -71,13 +71,19 @@ describe('TransformerRegistry — inbound formats', () => {
 // ── Outbound registration ───────────────────────────────────
 
 describe('TransformerRegistry — outbound providers', () => {
-  it('has all 5 outbound providers registered', () => {
+  it('has all 11 API outbound providers registered', () => {
     const providers = registry.outboundProviders;
     assert.ok(providers.includes('openai'), 'missing openai');
     assert.ok(providers.includes('anthropic'), 'missing anthropic');
     assert.ok(providers.includes('google'), 'missing google');
     assert.ok(providers.includes('groq'), 'missing groq');
     assert.ok(providers.includes('openrouter'), 'missing openrouter');
+    assert.ok(providers.includes('cerebras'), 'missing cerebras');
+    assert.ok(providers.includes('zai'), 'missing zai');
+    assert.ok(providers.includes('nvidia'), 'missing nvidia');
+    assert.ok(providers.includes('mistral'), 'missing mistral');
+    assert.ok(providers.includes('sambanova'), 'missing sambanova');
+    assert.ok(providers.includes('hyperbolic'), 'missing hyperbolic');
   });
 
   it('returns openai outbound transformer for "openai"', () => {
@@ -98,14 +104,36 @@ describe('TransformerRegistry — outbound providers', () => {
     assert.equal(t.name, 'google');
   });
 
-  it('groq and openrouter share the openai outbound transformer', () => {
-    const groq = registry.getOutbound('groq');
-    const openrouter = registry.getOutbound('openrouter');
+  it('OpenAI-compatible API providers share the openai outbound transformer', () => {
     const openai = registry.getOutbound('openai');
 
-    // They should be the exact same object reference
-    assert.equal(groq, openai);
-    assert.equal(openrouter, openai);
+    for (const provider of [
+      'groq',
+      'openrouter',
+      'cerebras',
+      'zai',
+      'nvidia',
+      'mistral',
+      'sambanova',
+      'hyperbolic',
+    ]) {
+      assert.equal(registry.getOutbound(provider), openai);
+    }
+  });
+
+  it('new OpenAI-compatible API providers have streaming transformers', () => {
+    for (const provider of [
+      'cerebras',
+      'zai',
+      'nvidia',
+      'mistral',
+      'sambanova',
+      'hyperbolic',
+    ]) {
+      const transformer = registry.getStreamOutbound(provider);
+      assert.ok(transformer, `missing stream transformer for ${provider}`);
+      assert.equal(transformer.name, provider);
+    }
   });
 
   it('returns null for unknown provider', () => {

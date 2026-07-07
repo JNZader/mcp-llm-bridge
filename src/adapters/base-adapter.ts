@@ -22,6 +22,8 @@ export interface OpenAICompatibleConfig {
   name: string;
   /** OpenAI-compatible base URL */
   baseURL: string;
+  /** Optional environment variable to use when no Vault key exists */
+  apiKeyEnv?: string;
   /** Available models */
   models: ModelInfo[];
   /** Default model ID when none specified */
@@ -38,6 +40,8 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
   abstract readonly id: string;
   abstract readonly name: string;
   abstract readonly baseURL: string;
+  /** Optional environment variable to use when no Vault key exists. */
+  protected readonly apiKeyEnv?: string;
   /** Curated baseline models — discovery via /models adds to these. */
   protected abstract readonly declaredModels: ModelInfo[];
   abstract readonly defaultModel: string;
@@ -87,7 +91,7 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
   protected async discoverModels(): Promise<ModelInfo[] | null> {
     let apiKey: string;
     try {
-      apiKey = this.vault.getDecrypted(this.id, 'default');
+      apiKey = this.getApiKey();
     } catch {
       return null; // no credentials — keep declared baseline
     }
@@ -121,10 +125,39 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
   }
 
   /**
+   * Resolve a provider API key from Vault first, then the configured env var.
+   */
+  private getApiKey(project?: string): string {
+    try {
+      return this.vault.getDecrypted(this.id, 'default', project);
+    } catch {
+      const envApiKey = this.getEnvApiKey();
+      if (envApiKey) {
+        return envApiKey;
+      }
+      throw new Error(
+        `No credential found for provider "${this.id}" in Vault or environment.`,
+      );
+    }
+  }
+
+  /**
+   * Read a non-empty API key from this adapter's environment variable.
+   */
+  private getEnvApiKey(): string | null {
+    if (!this.apiKeyEnv) {
+      return null;
+    }
+
+    const apiKey = process.env[this.apiKeyEnv];
+    return apiKey && apiKey.trim().length > 0 ? apiKey : null;
+  }
+
+  /**
    * Generate text using the OpenAI-compatible API.
    */
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const apiKey = this.vault.getDecrypted(this.id, 'default', request.project);
+    const apiKey = this.getApiKey(request.project);
     const client = this.getClient(apiKey);
 
     const model = request.model ?? this.defaultModel;
@@ -156,6 +189,6 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
    * Check if the provider is available (has credentials in vault).
    */
   async isAvailable(): Promise<boolean> {
-    return this.vault.has(this.id);
+    return this.vault.has(this.id) || this.getEnvApiKey() !== null;
   }
 }

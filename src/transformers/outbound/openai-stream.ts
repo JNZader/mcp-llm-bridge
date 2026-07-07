@@ -1,7 +1,7 @@
 /**
  * Streaming outbound transformer for OpenAI-compatible providers.
  *
- * Handles streaming for: OpenAI, Groq, OpenRouter, Google (OpenAI-compat).
+ * Handles streaming for OpenAI-compatible providers.
  * Parses OpenAI streaming chunk format into InternalLLMChunk.
  */
 
@@ -98,3 +98,21 @@ export const openrouterStreamTransformer = createOpenAIStreamTransformer('openro
 
 /** Google streaming transformer (OpenAI-compatible). */
 export const googleStreamTransformer = createOpenAIStreamTransformer('google');
+
+/** Cerebras streaming transformer (OpenAI-compatible). */
+export const cerebrasStreamTransformer = createOpenAIStreamTransformer('cerebras');
+
+/** Z.AI streaming transformer (OpenAI-compatible). */
+export const zaiStreamTransformer = createOpenAIStreamTransformer('zai');
+
+/** NVIDIA NIM streaming transformer (OpenAI-compatible). */
+export const nvidiaStreamTransformer = createOpenAIStreamTransformer('nvidia');
+
+/** Mistral streaming transformer (OpenAI-compatible). */
+export const mistralStreamTransformer = createOpenAIStreamTransformer('mistral');
+
+/** SambaNova streaming transformer (OpenAI-compatible). */
+export const sambanovaStreamTransformer = createOpenAIStreamTransformer('sambanova');
+
+/** Hyperbolic streaming transformer (OpenAI-compatible). */
+export const hyperbolicStreamTransformer = createOpenAIStreamTransformer('hyperbolic');

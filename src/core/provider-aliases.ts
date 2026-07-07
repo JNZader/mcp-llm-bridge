@@ -4,6 +4,7 @@ export const PROVIDER_ALIASES = {
   gemini: 'gemini-cli',
   qwen: 'qwen-cli',
   copilot: 'copilot-cli',
+  glm: 'zai',
 } as const;
 
 export function normalizeProviderId(provider: string | undefined): string | undefined {

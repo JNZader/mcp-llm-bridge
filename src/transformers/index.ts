@@ -10,11 +10,12 @@
  * - anthropic: Anthropic Messages API format
  *
  * Outbound transformers (provider dispatch):
- * - openai: OpenAI Chat format (also used by Groq, OpenRouter)
+ * - openai: OpenAI Chat format (also used by OpenAI-compatible providers)
  * - anthropic: Anthropic Messages API format
  * - google: Google Gemini (OpenAI-compatible)
  *
- * Note: Groq and OpenRouter use OpenAI-compatible format, so they
+ * Note: Groq, OpenRouter, and the free/cheap API fallback providers use
+ * OpenAI-compatible format, so they
  * share the openai outbound transformer under their own names.
  */
 
@@ -40,6 +41,12 @@ import {
   groqStreamTransformer,
   openrouterStreamTransformer,
   googleStreamTransformer,
+  cerebrasStreamTransformer,
+  zaiStreamTransformer,
+  nvidiaStreamTransformer,
+  mistralStreamTransformer,
+  sambanovaStreamTransformer,
+  hyperbolicStreamTransformer,
 } from './outbound/openai-stream.js';
 import { anthropicStreamTransformer } from './outbound/anthropic-stream.js';
 
@@ -58,9 +65,19 @@ registry.registerOutbound('openai', openaiOutbound);
 registry.registerOutbound('anthropic', anthropicOutbound);
 registry.registerOutbound('google', googleOutbound);
 
-// Groq and OpenRouter use OpenAI-compatible format
-registry.registerOutbound('groq', openaiOutbound);
-registry.registerOutbound('openrouter', openaiOutbound);
+// OpenAI-compatible API providers use OpenAI chat format
+for (const provider of [
+  'groq',
+  'openrouter',
+  'cerebras',
+  'zai',
+  'nvidia',
+  'mistral',
+  'sambanova',
+  'hyperbolic',
+]) {
+  registry.registerOutbound(provider, openaiOutbound);
+}
 
 // CLI adapters use a flattened prompt format
 registry.registerOutbound('cli', cliOutbound);
@@ -76,6 +93,12 @@ registry.registerStreamOutbound('anthropic', anthropicStreamTransformer);
 registry.registerStreamOutbound('google', googleStreamTransformer);
 registry.registerStreamOutbound('groq', groqStreamTransformer);
 registry.registerStreamOutbound('openrouter', openrouterStreamTransformer);
+registry.registerStreamOutbound('cerebras', cerebrasStreamTransformer);
+registry.registerStreamOutbound('zai', zaiStreamTransformer);
+registry.registerStreamOutbound('nvidia', nvidiaStreamTransformer);
+registry.registerStreamOutbound('mistral', mistralStreamTransformer);
+registry.registerStreamOutbound('sambanova', sambanovaStreamTransformer);
+registry.registerStreamOutbound('hyperbolic', hyperbolicStreamTransformer);
 
 // ── Re-exports ──────────────────────────────────────────────
 
@@ -94,6 +117,12 @@ export {
   groqStreamTransformer,
   openrouterStreamTransformer,
   googleStreamTransformer,
+  cerebrasStreamTransformer,
+  zaiStreamTransformer,
+  nvidiaStreamTransformer,
+  mistralStreamTransformer,
+  sambanovaStreamTransformer,
+  hyperbolicStreamTransformer,
 } from './outbound/openai-stream.js';
 export { anthropicStreamTransformer } from './outbound/anthropic-stream.js';
 export {

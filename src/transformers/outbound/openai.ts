@@ -4,7 +4,8 @@
  * Converts InternalLLMRequest → OpenAI-compatible request body,
  * and OpenAI-compatible response → InternalLLMResponse.
  *
- * Also used by Groq and OpenRouter (they speak OpenAI-compatible format).
+ * Also used by OpenAI-compatible providers such as Groq, OpenRouter,
+ * Cerebras, Z.AI, NVIDIA, Mistral, SambaNova, and Hyperbolic.
  */
 
 import type { OutboundTransformer } from '../../core/transformer.js';

@@ -34,7 +34,7 @@ export const TOOLS = [
         },
         provider: {
           type: 'string',
-          description: 'Preferred provider ID (e.g. "anthropic", "openai", "google", "groq", "openrouter", "claude-cli")',
+          description: 'Preferred provider ID (e.g. "anthropic", "openai", "google", "groq", "openrouter", "cerebras", "zai", "nvidia", "mistral", "sambanova", "hyperbolic", "claude-cli")',
         },
         model: {
           type: 'string',
@@ -65,7 +65,7 @@ export const TOOLS = [
       properties: {
         provider: {
           type: 'string',
-          description: 'Provider identifier (e.g. "anthropic", "openai", "google", "groq", "openrouter")',
+          description: 'Provider identifier (e.g. "anthropic", "openai", "google", "groq", "openrouter", "cerebras", "zai", "nvidia", "mistral", "sambanova", "hyperbolic")',
         },
         keyName: {
           type: 'string',
