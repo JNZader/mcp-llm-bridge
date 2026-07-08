@@ -117,15 +117,16 @@ export const cliOutbound: OutboundTransformer = {
       ? providerResponse['model']
       : 'cli-unknown';
 
+    // CLI tools don't report token counts. Rather than fabricate a 0/0/0
+    // split (which billing/telemetry would read as a truthful "zero tokens
+    // consumed"), emit unknown usage. UsageSchema's both-or-neither refine
+    // permits an empty usage object, and recordUsage() skips the cost ledger
+    // when the split is unknown instead of persisting fabricated zeros.
     return {
       content,
       model,
       finishReason: 'stop',
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-      },
+      usage: {},
     };
   },
 };

@@ -483,9 +483,13 @@ describe('Transformer Pipeline Integration', () => {
       assert.ok(typeof response.model === 'string');
       assert.ok(typeof response.finishReason === 'string');
       assert.ok(response.usage);
-      assert.ok(typeof response.usage.inputTokens === 'number');
-      assert.ok(typeof response.usage.outputTokens === 'number');
-      assert.ok(typeof response.usage.totalTokens === 'number');
+      // The legacy generate() bridge only reports a combined tokensUsed
+      // total (mock returns 42), with no input/output split. Truthful-usage
+      // design (UsageSchema both-or-neither refine): totalTokens is known,
+      // the split is left unknown rather than fabricated to 0/0.
+      assert.equal(response.usage.totalTokens, 42);
+      assert.equal(response.usage.inputTokens, undefined);
+      assert.equal(response.usage.outputTokens, undefined);
     });
   });
 });

@@ -158,9 +158,11 @@ describe('cliOutbound.transformResponse()', () => {
     assert.equal(result.content, 'Hello from CLI');
     assert.equal(result.model, 'cli-unknown');
     assert.equal(result.finishReason, 'stop');
-    assert.equal(result.usage.inputTokens, 0);
-    assert.equal(result.usage.outputTokens, 0);
-    assert.equal(result.usage.totalTokens, 0);
+    // CLI tools report no token counts, so the split is unknown (not a
+    // fabricated 0/0/0). UsageSchema permits an empty usage object.
+    assert.equal(result.usage.inputTokens, undefined);
+    assert.equal(result.usage.outputTokens, undefined);
+    assert.equal(result.usage.totalTokens, undefined);
   });
 
   it('transforms an object response with text field', () => {
@@ -210,13 +212,11 @@ describe('cliOutbound.transformResponse()', () => {
     );
   });
 
-  it('always returns zero usage for CLI responses', () => {
+  it('returns unknown usage for CLI responses (no fabricated split)', () => {
     const result = cliOutbound.transformResponse('any text');
 
-    assert.deepEqual(result.usage, {
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-    });
+    // CLI tools don't report tokens; usage is left unknown rather than
+    // fabricating a 0/0/0 split that billing would read as truthful zero.
+    assert.deepEqual(result.usage, {});
   });
 });

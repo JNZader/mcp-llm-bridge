@@ -90,13 +90,19 @@ describe('Cost tracking integration', () => {
     assert.equal(records.length, 1);
     assert.equal(records[0]!.provider, 'openai');
     assert.equal(records[0]!.model, 'gpt-4o');
-    assert.equal(records[0]!.tokensIn, 0);
-    assert.equal(records[0]!.tokensOut, 150);
+    // Truthful-usage design (see src/core/router-telemetry.ts recordUsage()):
+    // the legacy generate() bridge only reports a combined tokensUsed total,
+    // with no real input/output split. Rather than fabricating a 0/total
+    // split, the split is persisted as unknown (null) and only totalTokens
+    // is recorded.
+    assert.equal(records[0]!.tokensIn, null);
+    assert.equal(records[0]!.tokensOut, null);
+    assert.equal(records[0]!.totalTokens, 150);
     assert.equal(records[0]!.success, true);
     assert.ok(records[0]!.latencyMs >= 0);
   });
 
-  it('records usage after failed generate()', async () => {
+  it('does not persist a cost-tracker row for a failed generate() with no known usage', async () => {
     dbPath = tempDbPath();
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
 
@@ -113,12 +119,15 @@ describe('Cost tracking integration', () => {
 
     tracker.flush();
 
+    // Truthful-usage design: recordUsage() only writes a cost-tracker row
+    // when usage is actually known (exact split, or a total), or when the
+    // caller explicitly opts in via persistUnknownUsage (used by streaming
+    // finalization). A failed legacy generate() attempt that never produced
+    // any token count has no billing-relevant data, so no row is written —
+    // failure/reliability tracking for this case lives in the analytics
+    // aggregator, not the cost ledger.
     const records = tracker.query();
-    assert.equal(records.length, 1);
-    assert.equal(records[0]!.tokensIn, 0);
-    assert.equal(records[0]!.tokensOut, 0);
-    assert.equal(records[0]!.success, false);
-    assert.ok(records[0]!.errorMessage);
+    assert.equal(records.length, 0);
   });
 
   it('records correct model from response (not request)', async () => {

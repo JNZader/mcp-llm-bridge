@@ -3,15 +3,12 @@ import assert from 'node:assert/strict';
 
 import type { GenerateRequest as GenerateRequestBody } from '../src/core/schemas.js';
 import { prepareGenerateRequest } from '../src/server/http-helpers/generate-request.js';
+import type { RequestScope } from '../src/server/http-helpers/request-scope.js';
 
-function createContext(headerProject?: string) {
+function createContext(headerProject?: string): RequestScope {
 	return {
-		req: {
-			header(name: string) {
-				return name === 'X-Project' ? headerProject : undefined;
-			},
-		},
-	} as Parameters<typeof prepareGenerateRequest>[1];
+		project: headerProject,
+	};
 }
 
 describe('prepareGenerateRequest', () => {
@@ -33,6 +30,8 @@ describe('prepareGenerateRequest', () => {
 			maxTokens: 123,
 			strict: true,
 			project: 'body-project',
+			apiKeyId: undefined,
+			userId: undefined,
 		});
 	});
 
@@ -52,6 +51,8 @@ describe('prepareGenerateRequest', () => {
 			maxTokens: undefined,
 			strict: undefined,
 			project: 'header-project',
+			apiKeyId: undefined,
+			userId: undefined,
 		});
 	});
 
