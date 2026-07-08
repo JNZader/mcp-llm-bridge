@@ -10,16 +10,27 @@
  * - `setup-claude-code`:    Register this bridge as an MCP server in Claude
  *                           Code. Runs BEFORE the runtime is created — does
  *                           NOT create vault.db, master.key, or ~/.llm-gateway.
+ * - `setup-gateway`:        Configure Claude Code CLI to route its Anthropic
+ *                           calls through this bridge's HTTP gateway
+ *                           (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN).
+ *                           Also runs BEFORE the runtime is created — same
+ *                           no-side-effects guarantee as setup-claude-code.
  */
 
-// Parse mode from argv. Handled first, and `setup-claude-code` is special:
-// it must run and exit BEFORE any runtime/config side effects below (no
-// vault.db, no master.key, no ~/.llm-gateway directory creation).
-const mode = process.argv[2]; // "serve" | "--http" | "setup-claude-code" | undefined
+// Parse mode from argv. Handled first, and `setup-claude-code` / `setup-gateway`
+// are special: they must run and exit BEFORE any runtime/config side effects
+// below (no vault.db, no master.key, no ~/.llm-gateway directory creation).
+const mode = process.argv[2]; // "serve" | "--http" | "setup-claude-code" | "setup-gateway" | undefined
 
 if (mode === "setup-claude-code") {
 	const { runSetupClaudeCode } = await import("./setup/claude-code-setup.js");
 	const exitCode = await runSetupClaudeCode(process.argv.slice(3), import.meta.url);
+	process.exit(exitCode);
+}
+
+if (mode === "setup-gateway") {
+	const { runSetupGateway } = await import("./setup/gateway-setup.js");
+	const exitCode = await runSetupGateway(process.argv.slice(3));
 	process.exit(exitCode);
 }
 
