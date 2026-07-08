@@ -5,7 +5,7 @@
  * Parses OpenAI streaming chunk format into InternalLLMChunk.
  */
 
-import type { InternalLLMRequest } from '../../core/internal-model.js';
+import type { InternalLLMRequest, ToolCall } from '../../core/internal-model.js';
 import type { InternalLLMChunk, StreamingOutboundTransformer } from '../streaming.js';
 import { openaiOutbound } from './openai.js';
 
@@ -79,8 +79,56 @@ function createOpenAIStreamTransformer(providerName: string): StreamingOutboundT
 
       const stream = providerCall(requestBody);
 
+      // Accumulate incremental `delta.tool_calls` fragments across chunks, keyed by
+      // the OpenAI-assigned `index`. Same documented limitation as
+      // outbound/anthropic-stream.ts: this bridge surfaces ONE complete ToolCall per
+      // index, attached to the terminal chunk — not incremental argument fragments.
+      const toolCallAccumulators = new Map<
+        number,
+        { id: string; name: string; argsFragments: string[] }
+      >();
+
       for await (const rawChunk of stream) {
+        const raw = rawChunk as Record<string, unknown>;
+        const choices = raw['choices'] as Array<Record<string, unknown>> | undefined;
+        const delta = choices?.[0]?.['delta'] as Record<string, unknown> | undefined;
+        const toolCallDeltas = delta?.['tool_calls'] as Array<Record<string, unknown>> | undefined;
+
+        if (Array.isArray(toolCallDeltas)) {
+          for (const tcDelta of toolCallDeltas) {
+            const index = typeof tcDelta['index'] === 'number' ? tcDelta['index'] : 0;
+            const existing = toolCallAccumulators.get(index) ?? {
+              id: '',
+              name: '',
+              argsFragments: [],
+            };
+            if (typeof tcDelta['id'] === 'string' && tcDelta['id']) {
+              existing.id = tcDelta['id'];
+            }
+            const fn = tcDelta['function'] as Record<string, unknown> | undefined;
+            if (typeof fn?.['name'] === 'string' && fn['name']) {
+              existing.name = fn['name'];
+            }
+            if (typeof fn?.['arguments'] === 'string') {
+              existing.argsFragments.push(fn['arguments']);
+            }
+            toolCallAccumulators.set(index, existing);
+          }
+        }
+
         const chunk = parseOpenAIChunk(rawChunk);
+
+        if (chunk.done && toolCallAccumulators.size > 0) {
+          const toolCalls: ToolCall[] = [...toolCallAccumulators.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([, acc]) => ({
+              id: acc.id,
+              type: 'function' as const,
+              function: { name: acc.name, arguments: acc.argsFragments.join('') || '{}' },
+            }));
+          chunk.toolCalls = toolCalls;
+        }
+
         yield chunk;
       }
     },

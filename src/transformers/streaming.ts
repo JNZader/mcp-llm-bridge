@@ -6,7 +6,7 @@
  * Server-Sent Events format.
  */
 
-import type { InternalLLMRequest, Usage } from '../core/internal-model.js';
+import type { InternalLLMRequest, ToolCall, Usage } from '../core/internal-model.js';
 
 // ── Streaming Chunk ─────────────────────────────────────────
 
@@ -26,6 +26,16 @@ export interface InternalLLMChunk {
   tokensIn?: number;
   tokensOut?: number;
   finishReason?: 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error';
+  /**
+   * Completed tool calls, populated ONLY on the terminal chunk (`done: true`).
+   *
+   * NOTE: upstream providers (Anthropic, OpenAI) stream tool call arguments
+   * incrementally as JSON fragments, but this bridge's chunk abstraction
+   * buffers those fragments inside the provider-specific streaming transformer
+   * and only surfaces one complete `ToolCall` per tool here. There is no
+   * incremental (partial-argument) tool call streaming through this type.
+   */
+  toolCalls?: ToolCall[];
 }
 
 export interface SSEChunkChoice {
