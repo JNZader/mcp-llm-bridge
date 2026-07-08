@@ -14,10 +14,22 @@ import Database from 'better-sqlite3';
 
 import { Vault } from '../src/vault/vault.js';
 import { getCircuitBreakerV2, resetCircuitBreakerV2, Router } from '../src/core/router.js';
+import { createRouterExecutionContract } from '../src/core/router-execution-contract.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { RequestLogger } from '../src/logging/request-logger.js';
+
+// Streaming mocks below stub `router.resolveStreamingProviders` and must satisfy the
+// `ResolvedStreamingProvider` contract, which requires an `executionContract` (added
+// alongside per-attempt circuit-breaker + fallback metadata tracking). This helper builds
+// a minimal, real contract so mocked candidates behave like production-resolved ones.
+function mockExecutionContract(requestedModel?: string) {
+  return createRouterExecutionContract({
+    requestedModel,
+    routingMetadata: { strategy: 'direct' },
+  });
+}
 
 // Create test components
 const config: GatewayConfig & { authToken: string } = {
@@ -614,6 +626,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'mock-stream-provider' },
           request: { model: resolvedModel, messages: [] },
+          executionContract: mockExecutionContract(resolvedModel),
           streamTransformer: {
             name: 'mock-stream-provider',
             async *transformStream() {
@@ -654,6 +667,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'mock-stream-provider' },
           request: { model: streamModel, messages: [] },
+          executionContract: mockExecutionContract(streamModel),
           streamTransformer: {
             name: 'mock-stream-provider',
             async *transformStream() {
@@ -720,6 +734,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'mock-stream-provider' },
           request: { model: requestedModel, messages: [] },
+          executionContract: mockExecutionContract(requestedModel),
           streamTransformer: {
             name: 'mock-stream-provider',
             async *transformStream() {
@@ -818,6 +833,8 @@ describe('GET /v1/logs', () => {
 				model: requestedModel,
 				maxTokens: undefined,
 				project: undefined,
+				apiKeyId: undefined,
+				userId: undefined,
 			});
 
 			const logsRes = await request('GET', `/v1/logs?model=${resolvedModel}`);
@@ -856,6 +873,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'failing-stream-provider' },
           request: { model: streamModel, messages: [] },
+          executionContract: mockExecutionContract(streamModel),
           streamTransformer: {
             name: 'failing-stream-provider',
             async *transformStream() {
@@ -867,6 +885,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'recovery-stream-provider' },
           request: { model: streamModel, messages: [] },
+          executionContract: mockExecutionContract(streamModel),
           streamTransformer: {
             name: 'recovery-stream-provider',
             async *transformStream() {
@@ -923,6 +942,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'first-failing-provider' },
           request: { model: streamModel, messages: [] },
+          executionContract: mockExecutionContract(streamModel),
           streamTransformer: {
             name: 'first-failing-provider',
             async *transformStream() {
@@ -933,6 +953,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'last-failing-provider' },
           request: { model: streamModel, messages: [] },
+          executionContract: mockExecutionContract(streamModel),
           streamTransformer: {
             name: 'last-failing-provider',
             async *transformStream() {
@@ -983,6 +1004,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'primary-stream-provider' },
           request: { model: streamModel, messages: [] },
+          executionContract: mockExecutionContract(streamModel),
           streamTransformer: {
             name: 'primary-stream-provider',
             async *transformStream() {
@@ -994,6 +1016,7 @@ describe('GET /v1/logs', () => {
         {
           provider: { id: 'recovery-stream-provider' },
           request: { model: streamModel, messages: [] },
+          executionContract: mockExecutionContract(streamModel),
           streamTransformer: {
             name: 'recovery-stream-provider',
             async *transformStream() {
