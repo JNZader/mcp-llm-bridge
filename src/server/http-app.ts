@@ -27,13 +27,14 @@ import { securityProfileMiddleware } from "../security/enforcer.js";
 import type { SessionManager } from "../session/index.js";
 import type { Vault } from "../vault/vault.js";
 import { registerAdminRoutes } from "./admin.js";
-import { hasStaticBearerToken, parseBearerToken } from "./auth-helpers/bearer.js";
+import { hasStaticBearerToken, parseBearerToken, tokenEquals } from "./auth-helpers/bearer.js";
 import { RateLimiter } from "./rate-limit.js";
 import { registerApprovalRoutes } from "./routes/approvals.js";
 import { registerCircuitBreakerRoutes } from "./routes/circuit-breaker.js";
 import { registerComparisonRoutes } from "./routes/comparison.js";
 import { registerExecutionRoutes } from "./routes/execution.js";
 import { registerGroupRoutes } from "./routes/groups.js";
+import { registerMessagesRoutes } from "./routes/messages.js";
 import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerObservabilityRoutes } from "./routes/observability.js";
 import { registerPublicRoutes } from "./routes/public.js";
@@ -71,9 +72,12 @@ export interface CreateHttpAppDeps {
  *
  * - If `config.authToken` is not set -> all requests pass (auth disabled).
  * - Skips `GET /health` (Coolify health checks) and `OPTIONS *` (CORS preflight).
- * - All other routes including the dashboard require `Authorization: Bearer <token>`.
+ * - All other routes including the dashboard require `Authorization: Bearer <token>`,
+ *   OR the `x-api-key: <token>` header (Claude Code CLI's default auth header for
+ *   Anthropic-shaped clients hitting `/v1/messages`). Both carry the same bridge
+ *   token — `x-api-key` is just an alternate header name, not a separate credential.
  */
-function bearerAuth(config: GatewayConfig) {
+export function bearerAuth(config: GatewayConfig) {
 	return async (c: Context, next: Next) => {
 		if (!config.authToken) {
 			return next();
@@ -99,19 +103,28 @@ function bearerAuth(config: GatewayConfig) {
 		}
 
 		const authHeader = c.req.header("Authorization");
-		if (!authHeader) {
-			return c.json({ error: "Unauthorized" }, 401);
+		if (authHeader) {
+			if (!parseBearerToken(authHeader)) {
+				return c.json({ error: "Unauthorized" }, 401);
+			}
+
+			if (!hasStaticBearerToken(authHeader, config.authToken)) {
+				return c.json({ error: "Unauthorized" }, 401);
+			}
+
+			return next();
 		}
 
-		if (!parseBearerToken(authHeader)) {
-			return c.json({ error: "Unauthorized" }, 401);
+		const apiKeyHeader = c.req.header("x-api-key");
+		if (apiKeyHeader) {
+			if (!tokenEquals(apiKeyHeader, config.authToken)) {
+				return c.json({ error: "Unauthorized" }, 401);
+			}
+
+			return next();
 		}
 
-		if (!hasStaticBearerToken(authHeader, config.authToken)) {
-			return c.json({ error: "Unauthorized" }, 401);
-		}
-
-		return next();
+		return c.json({ error: "Unauthorized" }, 401);
 	};
 }
 
@@ -263,6 +276,12 @@ function registerHttpRoutes(app: Hono, deps: CreateHttpAppDeps): void {
 		costTracker,
 		requestLogger,
 	});
+	registerMessagesRoutes(app, {
+		router,
+		vault,
+		costTracker,
+		requestLogger,
+	});
 	registerMetadataRoutes(app, {
 		router,
 		latencyMeasurer,
@@ -309,7 +328,7 @@ export function createHttpApp(deps: CreateHttpAppDeps): Hono {
 		cors({
 			origin: corsOrigins === "*" ? "*" : corsOrigins,
 			allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-			allowHeaders: ["Content-Type", "Authorization", "X-Project"],
+			allowHeaders: ["Content-Type", "Authorization", "X-Project", "x-api-key"],
 			exposeHeaders: ["Content-Length"],
 			maxAge: 86400,
 		}),

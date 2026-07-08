@@ -32,13 +32,22 @@ import { checkRateLimit, checkBudget } from './quotas.js';
 export function apiKeyAuth(db: Database.Database, costTracker?: CostTracker) {
   return async (c: Context, next: Next) => {
     const authHeader = c.req.header('Authorization');
-    if (!authHeader) {
-      return c.json({ error: 'Unauthorized', code: 'MISSING_AUTH' }, 401);
-    }
+    const apiKeyHeader = c.req.header('x-api-key');
 
-    const token = parseBearerToken(authHeader);
-    if (!token) {
-      return c.json({ error: 'Unauthorized', code: 'INVALID_AUTH_FORMAT' }, 401);
+    let token: string | null;
+    if (authHeader) {
+      token = parseBearerToken(authHeader);
+      if (!token) {
+        return c.json({ error: 'Unauthorized', code: 'INVALID_AUTH_FORMAT' }, 401);
+      }
+    } else if (apiKeyHeader) {
+      // Claude Code CLI (and other Anthropic-shaped clients) send the bridge
+      // token via `x-api-key` instead of `Authorization: Bearer`. Same token,
+      // alternate header — accepted here so /v1/messages works under
+      // multi-tenant auth too.
+      token = apiKeyHeader;
+    } else {
+      return c.json({ error: 'Unauthorized', code: 'MISSING_AUTH' }, 401);
     }
 
     // Hash the token and look up in db (timing-safe comparison inside lookupByHash)

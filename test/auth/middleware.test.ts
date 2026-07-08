@@ -149,6 +149,48 @@ describe('apiKeyAuth middleware', () => {
     assert.equal(body.code, 'INVALID_KEY');
   });
 
+  it('accepts a valid key via x-api-key header (Claude Code CLI default)', async () => {
+    const app = buildApp(db);
+    const { plaintextKey } = createApiKey(db, { userId: 'user-1', trustLevel: 'open' });
+
+    const res = await app.request('/api/test', {
+      headers: { 'x-api-key': plaintextKey },
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json() as { userId: string; trustLevel: string };
+    assert.equal(body.userId, 'user-1');
+    assert.equal(body.trustLevel, 'open');
+  });
+
+  it('rejects an invalid key sent via x-api-key with INVALID_KEY code', async () => {
+    const app = buildApp(db);
+
+    const res = await app.request('/api/test', {
+      headers: { 'x-api-key': 'mlb_sk_0000000000000000000000000000dead' },
+    });
+
+    assert.equal(res.status, 401);
+    const body = await res.json() as { code: string };
+    assert.equal(body.code, 'INVALID_KEY');
+  });
+
+  it('prefers Authorization over x-api-key when both are present, and rejects a malformed Authorization even if x-api-key is valid', async () => {
+    const app = buildApp(db);
+    const { plaintextKey } = createApiKey(db, { userId: 'user-1' });
+
+    const res = await app.request('/api/test', {
+      headers: {
+        Authorization: 'Token not-bearer-format',
+        'x-api-key': plaintextKey,
+      },
+    });
+
+    assert.equal(res.status, 401);
+    const body = await res.json() as { code: string };
+    assert.equal(body.code, 'INVALID_AUTH_FORMAT');
+  });
+
   it('rate-limited key returns 429 with Retry-After header', async () => {
     const app = buildApp(db);
     // Key with max 1 request per 60s window
