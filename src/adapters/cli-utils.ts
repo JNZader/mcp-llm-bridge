@@ -144,8 +144,13 @@ export async function execCliAsync(
       child.stderr.on('data', (data: Buffer) => stderrParts.push(data.toString()));
     }
 
-    if (input && child.stdin) {
-      child.stdin.write(input);
+    // Always close the child's stdin. Some CLIs (notably `codex exec`) block
+    // reading "additional input from stdin" until they see EOF; when there is no
+    // `input` to write, we must still end() the stream so the child gets an
+    // immediate EOF instead of hanging until the timeout (which yielded empty
+    // output for the codex-cli provider).
+    if (child.stdin) {
+      if (input) child.stdin.write(input);
       child.stdin.end();
     }
 
