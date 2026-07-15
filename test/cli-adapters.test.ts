@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync } from '../src/adapters/cli-utils.js';
+import { extractOpenCodeError, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
 import type { GatewayConfig } from '../src/core/types.js';
 
 const config: GatewayConfig = {
@@ -223,5 +224,42 @@ describe('Vault file operations', () => {
     assert.equal(files.length, 1);
     assert.equal(files[0]!.content, '{"project": true}');
     assert.equal(files[0]!.project, 'my-project');
+  });
+});
+
+describe('extractOpenCodeError', () => {
+  const errLine = JSON.stringify({
+    type: 'error',
+    error: { name: 'UnknownError', data: { message: 'Unexpected server error. Check server logs for details.', ref: 'err_7d90269a' } },
+  });
+
+  it('surfaces the backend error name, message and ref from an error event', () => {
+    const out = extractOpenCodeError(errLine);
+    assert.ok(out, 'expected a diagnostic string');
+    assert.match(out!, /UnknownError/);
+    assert.match(out!, /Unexpected server error/);
+    assert.match(out!, /err_7d90269a/);
+  });
+
+  it('returns undefined for a normal text stream (no error event)', () => {
+    const stream = [
+      JSON.stringify({ type: 'text', part: { text: 'OK' } }),
+      JSON.stringify({ type: 'step_finish', part: { tokens: { input: 3, output: 1 } } }),
+    ].join('\n');
+    assert.equal(extractOpenCodeError(stream), undefined);
+    // and the text parser still works on the same stream
+    assert.equal(parseOpenCodeOutput(stream).text, 'OK');
+  });
+
+  it('the text parser returns empty text on an error-only stream (the gap this guard covers)', () => {
+    // Before the fix, this empty text + zero exit made the adapter return the
+    // raw error JSON as "text"; now the adapter throws extractOpenCodeError instead.
+    assert.equal(parseOpenCodeOutput(errLine).text, '');
+    assert.ok(extractOpenCodeError(errLine));
+  });
+
+  it('tolerates malformed lines mixed with a real error event', () => {
+    const mixed = ['not json {{{', errLine, ''].join('\n');
+    assert.match(extractOpenCodeError(mixed)!, /err_7d90269a/);
   });
 });

@@ -44,6 +44,33 @@ export function parseOpenCodeOutput(raw: string): { text: string; tokens?: { inp
   return { text: textParts.join(''), tokens };
 }
 
+/**
+ * Detect an OpenCode backend error event in the `--format json` stream.
+ * OpenCode emits `{"type":"error","error":{"name":...,"data":{"message":...,"ref":...}}}`
+ * on a backend/auth/service failure (often with a zero exit code), which the
+ * text parser silently skips. Returns a concise diagnostic string, or undefined
+ * when no error event is present. Exported so the gateway surfaces a clear
+ * cause instead of an opaque "Process exited with code 1".
+ */
+export function extractOpenCodeError(raw: string): string | undefined {
+  const lines = raw.split('\n').filter((line) => line.trim().length > 0);
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (event['type'] !== 'error') continue;
+      const err = event['error'] as Record<string, unknown> | undefined;
+      const name = (err?.['name'] as string | undefined) ?? 'UnknownError';
+      const data = err?.['data'] as Record<string, unknown> | undefined;
+      const message = (data?.['message'] as string | undefined) ?? 'no message';
+      const ref = data?.['ref'] as string | undefined;
+      return `OpenCode backend error: ${name} — ${message}${ref ? ` (ref: ${ref})` : ''}`;
+    } catch {
+      /* skip malformed lines */
+    }
+  }
+  return undefined;
+}
+
 export class CliOpenCodeAdapter implements LLMProvider {
   readonly id = 'opencode-cli';
   readonly name = 'OpenCode CLI';
@@ -162,6 +189,12 @@ export class CliOpenCodeAdapter implements LLMProvider {
       });
 
       const parsed = parseOpenCodeOutput(output);
+      // OpenCode can emit a backend error event with a ZERO exit code — without
+      // this guard we'd return the raw error JSON as "text". Surface it instead.
+      if (!parsed.text) {
+        const backendError = extractOpenCodeError(output);
+        if (backendError) throw new Error(backendError);
+      }
       const totalTokens = parsed.tokens
         ? (parsed.tokens.input ?? 0) + (parsed.tokens.output ?? 0)
         : 0;
@@ -191,6 +224,9 @@ export class CliOpenCodeAdapter implements LLMProvider {
             fallbackUsed: false,
           };
         }
+        // No usable text but a backend error event present → clear diagnostic.
+        const backendError = extractOpenCodeError(execError.stdout);
+        if (backendError) throw new Error(backendError);
       }
       throw new Error(
         `OpenCode CLI failed: ${execError.message ?? String(error)}`,
