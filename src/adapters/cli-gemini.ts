@@ -7,7 +7,30 @@
  */
 
 import { BaseCliAdapter, type CliAdapterConfig } from './base-cli-adapter.js';
+import { sanitizeErrorMessage } from '../security/sanitize.js';
 import type { Vault } from '../vault/vault.js';
+
+/**
+ * Parse `gemini --output-format json` output into the response text.
+ *
+ * On failure the Gemini CLI emits `{"error":{"type":...,"message":...,"code":...}}`
+ * (possibly with exit code 0). Without this guard the raw error JSON would be
+ * returned as if it were the model's answer. Exported for testing.
+ */
+export function parseGeminiCliResponse(output: string): string {
+  const parsed: Record<string, unknown> = JSON.parse(output);
+  const response = parsed['response'] as string | undefined;
+  if (response !== undefined) return response;
+
+  const error = parsed['error'] as Record<string, unknown> | undefined;
+  if (error && typeof error === 'object') {
+    const type = typeof error['type'] === 'string' ? error['type'] : 'UnknownError';
+    const message = typeof error['message'] === 'string' ? error['message'] : 'no message';
+    throw new Error(sanitizeErrorMessage(`Gemini CLI returned an error envelope (${type}): ${message}`));
+  }
+
+  return output;
+}
 
 const GEMINI_CONFIG: CliAdapterConfig = {
   id: 'gemini-cli',
@@ -41,8 +64,7 @@ export class GeminiCliAdapter extends BaseCliAdapter {
   }
 
   protected parseResponse(output: string): string {
-    const parsed: Record<string, unknown> = JSON.parse(output);
-    return (parsed['response'] as string | undefined) ?? output;
+    return parseGeminiCliResponse(output);
   }
 
   protected validateProviderFiles(files: Array<{ fileName: string }>): void {
