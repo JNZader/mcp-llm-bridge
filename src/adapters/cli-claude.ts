@@ -7,6 +7,7 @@
  */
 
 import { BaseCliAdapter, type CliAdapterConfig } from './base-cli-adapter.js';
+import { sanitizeErrorMessage } from '../security/sanitize.js';
 import type { Vault } from '../vault/vault.js';
 
 const CLAUDE_CONFIG: CliAdapterConfig = {
@@ -23,6 +24,37 @@ const CLAUDE_CONFIG: CliAdapterConfig = {
   ],
 };
 
+/**
+ * Parse `claude -p --output-format json` output into the result text.
+ *
+ * The Claude CLI can EXIT 0 while emitting an ERROR envelope, e.g.
+ * `{"type":"result","subtype":"error_max_turns","is_error":true,
+ *   "stop_reason":"tool_use","errors":["Reached maximum number of turns (1)"]}`
+ * — with no `result` and no `content` field. Without this guard the raw
+ * error JSON would be returned as if it were the model's answer (and the
+ * gateway would serve it with HTTP 200). Exported for testing.
+ */
+export function parseClaudeCliResponse(output: string): string {
+  const parsed: Record<string, unknown> = JSON.parse(output);
+
+  const subtype = parsed['subtype'];
+  if (parsed['is_error'] === true || (typeof subtype === 'string' && subtype.startsWith('error'))) {
+    const errors = Array.isArray(parsed['errors'])
+      ? (parsed['errors'] as unknown[]).map(String).join('; ')
+      : undefined;
+    const label = typeof subtype === 'string' ? subtype : 'unknown';
+    throw new Error(sanitizeErrorMessage(
+      `Claude CLI returned an error envelope (subtype: ${label})${errors ? `: ${errors}` : ''}`,
+    ));
+  }
+
+  const content = parsed['content'];
+  const firstContent = Array.isArray(content) ? (content[0] as Record<string, unknown> | undefined) : undefined;
+  return (parsed['result'] as string | undefined)
+    ?? (firstContent?.['text'] as string | undefined)
+    ?? output;
+}
+
 export class ClaudeCliAdapter extends BaseCliAdapter {
   readonly config = CLAUDE_CONFIG;
 
@@ -31,19 +63,27 @@ export class ClaudeCliAdapter extends BaseCliAdapter {
   }
 
   protected buildArgs(model: string, prompt: string, system?: string): string[] {
-    const args = ['-p', JSON.stringify(prompt), '--output-format', 'json', '--max-turns', '1', '--model', model];
+    // Args go through execFileSync (no shell), so the prompt must be passed
+    // RAW: JSON.stringify would send literal quotes + escaped newlines to the
+    // model as part of the prompt text.
+    //
+    // `--tools ''` disables all built-in tools ("Use \"\" to disable all
+    // tools" per `claude --help`), so a single-turn print call can never stop
+    // on `tool_use` — which is what produced exit-0 `error_max_turns`
+    // envelopes under `--max-turns 1`. parseClaudeCliResponse remains the
+    // safety net for any other error envelope.
+    //
+    // `--` terminates option parsing so prompts starting with `-` stay
+    // positional.
+    const args = ['-p', '--output-format', 'json', '--max-turns', '1', '--tools', '', '--model', model];
     if (system) {
-      args.push('--system-prompt', JSON.stringify(system));
+      args.push('--system-prompt', system);
     }
+    args.push('--', prompt);
     return args;
   }
 
   protected parseResponse(output: string): string {
-    const parsed: Record<string, unknown> = JSON.parse(output);
-    const content = parsed['content'];
-    const firstContent = Array.isArray(content) ? (content[0] as Record<string, unknown> | undefined) : undefined;
-    return (parsed['result'] as string | undefined)
-      ?? (firstContent?.['text'] as string | undefined)
-      ?? output;
+    return parseClaudeCliResponse(output);
   }
 }

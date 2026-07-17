@@ -12,6 +12,9 @@ import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync } from '../src/adapters/cli-utils.js';
 import { extractOpenCodeError, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
+import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
+import { parseGeminiCliResponse } from '../src/adapters/cli-gemini.js';
+import { parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
 import type { GatewayConfig } from '../src/core/types.js';
 
 const config: GatewayConfig = {
@@ -261,5 +264,106 @@ describe('extractOpenCodeError', () => {
   it('tolerates malformed lines mixed with a real error event', () => {
     const mixed = ['not json {{{', errLine, ''].join('\n');
     assert.match(extractOpenCodeError(mixed)!, /err_7d90269a/);
+  });
+});
+
+// ── Claude CLI response parsing (error envelope guard) ─────────
+
+describe('parseClaudeCliResponse', () => {
+  it('returns the result field on a success envelope', () => {
+    const envelope = JSON.stringify({
+      type: 'result', subtype: 'success', is_error: false, num_turns: 1,
+      result: 'the answer', stop_reason: 'end_turn',
+    });
+    assert.equal(parseClaudeCliResponse(envelope), 'the answer');
+  });
+
+  it('falls back to content[0].text when result is absent', () => {
+    const envelope = JSON.stringify({ content: [{ type: 'text', text: 'from content' }] });
+    assert.equal(parseClaudeCliResponse(envelope), 'from content');
+  });
+
+  it('throws on a real error_max_turns envelope (exit 0, no result field)', () => {
+    // Captured live 2026-07-17: claude -p --max-turns 1 exits 0 but emits this
+    // when the model attempts tool use on turn 1. Before the fix this raw JSON
+    // was returned as the model's "answer".
+    const envelope = JSON.stringify({
+      type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 2,
+      stop_reason: 'tool_use', errors: ['Reached maximum number of turns (1)'],
+    });
+    assert.throws(
+      () => parseClaudeCliResponse(envelope),
+      /error_max_turns.*Reached maximum number of turns \(1\)/,
+    );
+  });
+
+  it('throws on is_error true even without an error subtype', () => {
+    const envelope = JSON.stringify({ type: 'result', is_error: true });
+    assert.throws(() => parseClaudeCliResponse(envelope), /subtype: unknown/);
+  });
+
+  it('throws on an error subtype even when is_error is missing', () => {
+    const envelope = JSON.stringify({ type: 'result', subtype: 'error_during_execution' });
+    assert.throws(() => parseClaudeCliResponse(envelope), /error_during_execution/);
+  });
+});
+
+describe('ClaudeCliAdapter buildArgs', () => {
+  class TestableClaudeAdapter extends ClaudeCliAdapter {
+    args(model: string, prompt: string, system?: string): string[] {
+      return this.buildArgs(model, prompt, system);
+    }
+  }
+  const adapter = new TestableClaudeAdapter(vault);
+
+  it('passes the RAW prompt as positional after -- (no JSON.stringify)', () => {
+    const prompt = 'line one\nline two "quoted"';
+    const args = adapter.args('claude-sonnet-4-6', prompt);
+    assert.equal(args[args.length - 1], prompt);
+    assert.equal(args[args.length - 2], '--');
+    assert.ok(!args.includes(JSON.stringify(prompt)));
+  });
+
+  it('disables all built-in tools so --max-turns 1 cannot stop on tool_use', () => {
+    const args = adapter.args('claude-sonnet-4-6', 'hi');
+    const toolsIdx = args.indexOf('--tools');
+    assert.ok(toolsIdx >= 0);
+    assert.equal(args[toolsIdx + 1], '');
+  });
+
+  it('passes the RAW system prompt', () => {
+    const system = 'be terse\nand honest';
+    const args = adapter.args('claude-sonnet-4-6', 'hi', system);
+    const idx = args.indexOf('--system-prompt');
+    assert.ok(idx >= 0);
+    assert.equal(args[idx + 1], system);
+  });
+});
+
+// ── Gemini / Qwen CLI error envelope guards ────────────────────
+
+describe('parseGeminiCliResponse', () => {
+  it('returns the response field on success', () => {
+    assert.equal(parseGeminiCliResponse(JSON.stringify({ response: 'ok', stats: {} })), 'ok');
+  });
+
+  it('throws on an error envelope with no response', () => {
+    const envelope = JSON.stringify({ error: { type: 'AuthError', message: 'credentials expired', code: 401 } });
+    assert.throws(() => parseGeminiCliResponse(envelope), /AuthError.*credentials expired/);
+  });
+});
+
+describe('parseQwenCliResponse', () => {
+  it('returns the response field on success', () => {
+    assert.equal(parseQwenCliResponse(JSON.stringify({ response: 'ok' })), 'ok');
+  });
+
+  it('returns non-JSON output trimmed as-is', () => {
+    assert.equal(parseQwenCliResponse('  plain text  \n'), 'plain text');
+  });
+
+  it('throws on an error envelope with no response', () => {
+    const envelope = JSON.stringify({ error: { type: 'QuotaError', message: 'quota exceeded' } });
+    assert.throws(() => parseQwenCliResponse(envelope), /QuotaError.*quota exceeded/);
   });
 });

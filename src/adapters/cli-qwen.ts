@@ -7,7 +7,38 @@
  */
 
 import { BaseCliAdapter, type CliAdapterConfig } from './base-cli-adapter.js';
+import { sanitizeErrorMessage } from '../security/sanitize.js';
 import type { Vault } from '../vault/vault.js';
+
+/**
+ * Parse Qwen CLI output into the response text.
+ *
+ * Qwen CLI is a Gemini CLI fork: on failure it can emit
+ * `{"error":{"type":...,"message":...}}` (possibly with exit code 0). Without
+ * this guard the raw error JSON would be returned as if it were the model's
+ * answer. Non-JSON output is returned trimmed as-is. Exported for testing.
+ */
+export function parseQwenCliResponse(output: string): string {
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return output.trim();
+  }
+
+  const text = (parsed['response'] as string | undefined)
+    ?? (parsed['result'] as string | undefined);
+  if (text !== undefined) return text;
+
+  const error = parsed['error'] as Record<string, unknown> | undefined;
+  if (error && typeof error === 'object') {
+    const type = typeof error['type'] === 'string' ? error['type'] : 'UnknownError';
+    const message = typeof error['message'] === 'string' ? error['message'] : 'no message';
+    throw new Error(sanitizeErrorMessage(`Qwen CLI returned an error envelope (${type}): ${message}`));
+  }
+
+  return output;
+}
 
 const QWEN_CONFIG: CliAdapterConfig = {
   id: 'qwen-cli',
@@ -35,15 +66,7 @@ export class QwenCliAdapter extends BaseCliAdapter {
   }
 
   protected parseResponse(output: string): string {
-    // Try to parse JSON output if available
-    try {
-      const parsed: Record<string, unknown> = JSON.parse(output);
-      return (parsed['response'] as string | undefined)
-        ?? (parsed['result'] as string | undefined)
-        ?? output;
-    } catch {
-      return output.trim();
-    }
+    return parseQwenCliResponse(output);
   }
 
   protected validateProviderFiles(files: Array<{ fileName: string }>): void {

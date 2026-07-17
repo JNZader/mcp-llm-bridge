@@ -160,7 +160,17 @@ export abstract class BaseCliAdapter implements LLMProvider {
           if (text) {
             return { text, provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
           }
-        } catch { /* ignore parse errors */ }
+        } catch (parseError) {
+          // A structured error envelope detected in stdout (e.g. Claude's
+          // `error_max_turns`) is a better diagnostic than the opaque exit
+          // code — surface it. Malformed-JSON SyntaxErrors stay ignored and
+          // fall through to the generic exec error below.
+          if (parseError instanceof Error && !(parseError instanceof SyntaxError)) {
+            throw new Error(
+              sanitizeErrorMessage(`${this.config.name} CLI failed: ${parseError.message}`),
+            );
+          }
+        }
       }
       throw new Error(
         sanitizeErrorMessage(`${this.config.name} CLI failed: ${execError.message ?? String(error)}`),
