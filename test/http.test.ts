@@ -5,7 +5,7 @@
 import { describe, it, after, afterEach, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { unlinkSync, existsSync } from 'node:fs';
+import { unlinkSync, existsSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 
 import { Vault } from '../src/vault/vault.js';
@@ -15,6 +15,13 @@ import { startHttpServer } from '../src/server/http.js';
 import { TOOLS } from '../src/server/mcp.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { getCircuitBreakerV2, resetCircuitBreakerV2 } from '../src/core/router.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
+
+// Read the expected version from package.json so /health assertions never go
+// stale on a version bump (they hardcoded 0.3.1 while the endpoint served 0.6.0).
+const pkgVersion = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+).version as string;
 
 // Create test components once
 const config: GatewayConfig = {
@@ -29,6 +36,11 @@ const router = new Router();
 for (const adapter of createAllAdapters(vault)) {
   router.register(adapter);
 }
+
+// Register an always-available stub so the models list is deterministically
+// non-empty even in a credential-less CI (real adapters report unavailable
+// without live provider creds). Tests then verify endpoint shape and wiring.
+router.register(new StubAdapter());
 
 let server: http.Server;
 let port = 0;
@@ -165,7 +177,7 @@ describe('GET /health', () => {
     assert.equal(res.status, 200);
     const data = res.data as { status: string; version: string };
     assert.equal(data.status, 'ok');
-    assert.equal(data.version, '0.3.1');
+    assert.equal(data.version, pkgVersion);
   });
 
   it('returns enhanced health info with required fields', async () => {
@@ -184,7 +196,7 @@ describe('GET /health', () => {
     
     // Verify all required fields are present
     assert.equal(data.status, 'ok');
-    assert.equal(data.version, '0.3.1');
+    assert.equal(data.version, pkgVersion);
     assert.ok(typeof data.timestamp === 'string');
     assert.ok(data.timestamp.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/));
     assert.ok(typeof data.uptime === 'number');
