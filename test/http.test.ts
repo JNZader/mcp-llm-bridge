@@ -15,6 +15,7 @@ import { startHttpServer } from '../src/server/http.js';
 import { TOOLS } from '../src/server/mcp.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { getCircuitBreakerV2, resetCircuitBreakerV2 } from '../src/core/router.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
 
 // Read the expected version from package.json so /health assertions never go
 // stale on a version bump (they hardcoded 0.3.1 while the endpoint served 0.6.0).
@@ -35,6 +36,11 @@ const router = new Router();
 for (const adapter of createAllAdapters(vault)) {
   router.register(adapter);
 }
+
+// Register an always-available stub so the models list is deterministically
+// non-empty even in a credential-less CI (real adapters report unavailable
+// without live provider creds). Tests then verify endpoint shape and wiring.
+router.register(new StubAdapter());
 
 let server: http.Server;
 let port = 0;

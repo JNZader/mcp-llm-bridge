@@ -10,6 +10,7 @@ import { unlinkSync, existsSync } from 'node:fs';
 import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import { createAllAdapters } from '../src/adapters/index.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { VERSION } from '../src/core/constants.js';
 
@@ -25,6 +26,11 @@ const router = new Router();
 for (const adapter of createAllAdapters(vault)) {
   router.register(adapter);
 }
+
+// Register an always-available stub so getAvailableModels() is deterministically
+// non-empty even in a credential-less CI (real adapters report unavailable
+// without live provider creds).
+router.register(new StubAdapter());
 
 // Cleanup
 process.on('exit', () => {
