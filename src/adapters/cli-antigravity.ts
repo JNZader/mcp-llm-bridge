@@ -36,19 +36,28 @@ const ANTIGRAVITY_CONFIG: CliAdapterConfig = {
   id: 'antigravity-cli',
   name: 'Antigravity CLI',
   cliCommand: 'agy',
-  defaultModel: 'gemini-2.5-flash',
+  defaultModel: 'gemini-3.7-flash-medium',
   supportsSystemPrompt: false,
   models: [
-    // Gemini 3 series
-    { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro', provider: 'antigravity-cli', maxTokens: 1024000 },
-    { id: 'gemini-3.1-flash', name: 'Gemini 3.1 Flash', provider: 'antigravity-cli', maxTokens: 1024000 },
-    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', provider: 'antigravity-cli', maxTokens: 1024000 },
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', provider: 'antigravity-cli', maxTokens: 1024000 },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', provider: 'antigravity-cli', maxTokens: 1024000 },
-    // Gemini 2.5 series
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'antigravity-cli', maxTokens: 1024000 },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'antigravity-cli', maxTokens: 1024000 },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'antigravity-cli', maxTokens: 1024000 },
+    // Gemini 3.7 series
+    { id: 'gemini-3.7-flash-high', name: 'Gemini 3.7 Flash (High)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    { id: 'gemini-3.7-flash-medium', name: 'Gemini 3.7 Flash (Medium)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    { id: 'gemini-3.7-flash-low', name: 'Gemini 3.7 Flash (Low)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    // Gemini 3.6 series
+    { id: 'gemini-3.6-flash-high', name: 'Gemini 3.6 Flash (High)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    { id: 'gemini-3.6-flash-medium', name: 'Gemini 3.6 Flash (Medium)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    { id: 'gemini-3.6-flash-low', name: 'Gemini 3.6 Flash (Low)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    // Gemini 3.5 series
+    { id: 'gemini-3.5-flash-high', name: 'Gemini 3.5 Flash (High)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    { id: 'gemini-3.5-flash-medium', name: 'Gemini 3.5 Flash (Medium)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    { id: 'gemini-3.5-flash-low', name: 'Gemini 3.5 Flash (Low)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    // Gemini 3.1 series
+    { id: 'gemini-3.1-pro-high', name: 'Gemini 3.1 Pro (High)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    { id: 'gemini-3.1-pro-low', name: 'Gemini 3.1 Pro (Low)', provider: 'antigravity-cli', maxTokens: 2000000 },
+    // Other models
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Thinking)', provider: 'antigravity-cli', maxTokens: 200000 },
+    { id: 'claude-opus-4-6-thinking', name: 'Claude Opus 4.6 (Thinking)', provider: 'antigravity-cli', maxTokens: 200000 },
+    { id: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)', provider: 'antigravity-cli', maxTokens: 128000 },
   ],
 };
 
