@@ -13,7 +13,7 @@ import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapter
 import { isCliAvailableAsync } from '../src/adapters/cli-utils.js';
 import { extractOpenCodeError, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
 import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
-import { parseGeminiCliResponse } from '../src/adapters/cli-gemini.js';
+import { parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
 import { parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
 import type { GatewayConfig } from '../src/core/types.js';
 
@@ -340,16 +340,16 @@ describe('ClaudeCliAdapter buildArgs', () => {
   });
 });
 
-// ── Gemini / Qwen CLI error envelope guards ────────────────────
+// ── Antigravity / Qwen CLI error envelope guards ────────────────────
 
-describe('parseGeminiCliResponse', () => {
+describe('parseAntigravityCliResponse', () => {
   it('returns the response field on success', () => {
-    assert.equal(parseGeminiCliResponse(JSON.stringify({ response: 'ok', stats: {} })), 'ok');
+    assert.equal(parseAntigravityCliResponse(JSON.stringify({ response: 'ok', stats: {} })), 'ok');
   });
 
   it('throws on an error envelope with no response', () => {
     const envelope = JSON.stringify({ error: { type: 'AuthError', message: 'credentials expired', code: 401 } });
-    assert.throws(() => parseGeminiCliResponse(envelope), /AuthError.*credentials expired/);
+    assert.throws(() => parseAntigravityCliResponse(envelope), /AuthError.*credentials expired/);
   });
 });
 

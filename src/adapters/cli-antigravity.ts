@@ -1,5 +1,5 @@
 /**
- * Gemini CLI adapter — wraps `gemini -p` command.
+ * Antigravity CLI adapter — wraps `agy -p` command.
  *
  * Uses Google account credentials stored in the Vault.
  * Reads oauth_creds.json from the Vault, writing it to a temp
@@ -11,13 +11,13 @@ import { sanitizeErrorMessage } from '../security/sanitize.js';
 import type { Vault } from '../vault/vault.js';
 
 /**
- * Parse `gemini --output-format json` output into the response text.
+ * Parse `agy --output-format json` output into the response text.
  *
- * On failure the Gemini CLI emits `{"error":{"type":...,"message":...,"code":...}}`
+ * On failure the Antigravity CLI emits `{"error":{"type":...,"message":...,"code":...}}`
  * (possibly with exit code 0). Without this guard the raw error JSON would be
  * returned as if it were the model's answer. Exported for testing.
  */
-export function parseGeminiCliResponse(output: string): string {
+export function parseAntigravityCliResponse(output: string): string {
   const parsed: Record<string, unknown> = JSON.parse(output);
   const response = parsed['response'] as string | undefined;
   if (response !== undefined) return response;
@@ -26,34 +26,34 @@ export function parseGeminiCliResponse(output: string): string {
   if (error && typeof error === 'object') {
     const type = typeof error['type'] === 'string' ? error['type'] : 'UnknownError';
     const message = typeof error['message'] === 'string' ? error['message'] : 'no message';
-    throw new Error(sanitizeErrorMessage(`Gemini CLI returned an error envelope (${type}): ${message}`));
+    throw new Error(sanitizeErrorMessage(`Antigravity CLI returned an error envelope (${type}): ${message}`));
   }
 
   return output;
 }
 
-const GEMINI_CONFIG: CliAdapterConfig = {
-  id: 'gemini-cli',
-  name: 'Gemini CLI',
-  cliCommand: 'gemini',
+const ANTIGRAVITY_CONFIG: CliAdapterConfig = {
+  id: 'antigravity-cli',
+  name: 'Antigravity CLI',
+  cliCommand: 'agy',
   defaultModel: 'gemini-2.5-flash',
   supportsSystemPrompt: false,
   models: [
     // Gemini 3 series
-    { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro', provider: 'gemini-cli', maxTokens: 1024000 },
-    { id: 'gemini-3.1-flash', name: 'Gemini 3.1 Flash', provider: 'gemini-cli', maxTokens: 1024000 },
-    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', provider: 'gemini-cli', maxTokens: 1024000 },
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', provider: 'gemini-cli', maxTokens: 1024000 },
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro', provider: 'antigravity-cli', maxTokens: 1024000 },
+    { id: 'gemini-3.1-flash', name: 'Gemini 3.1 Flash', provider: 'antigravity-cli', maxTokens: 1024000 },
+    { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', provider: 'antigravity-cli', maxTokens: 1024000 },
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro (Preview)', provider: 'antigravity-cli', maxTokens: 1024000 },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash (Preview)', provider: 'antigravity-cli', maxTokens: 1024000 },
     // Gemini 2.5 series
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini-cli', maxTokens: 1024000 },
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini-cli', maxTokens: 1024000 },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'gemini-cli', maxTokens: 1024000 },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'antigravity-cli', maxTokens: 1024000 },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'antigravity-cli', maxTokens: 1024000 },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: 'antigravity-cli', maxTokens: 1024000 },
   ],
 };
 
-export class GeminiCliAdapter extends BaseCliAdapter {
-  readonly config = GEMINI_CONFIG;
+export class AntigravityCliAdapter extends BaseCliAdapter {
+  readonly config = ANTIGRAVITY_CONFIG;
 
   constructor(vault: Vault) {
     super(vault);
@@ -64,7 +64,7 @@ export class GeminiCliAdapter extends BaseCliAdapter {
   }
 
   protected parseResponse(output: string): string {
-    return parseGeminiCliResponse(output);
+    return parseAntigravityCliResponse(output);
   }
 
   protected validateProviderFiles(files: Array<{ fileName: string }>): void {
@@ -72,7 +72,7 @@ export class GeminiCliAdapter extends BaseCliAdapter {
     const hasOauthCreds = files.some((file) => file.fileName === 'oauth_creds.json');
     
     if (!hasSettings || !hasOauthCreds) {
-      throw new Error('Gemini CLI auth incomplete: upload settings.json and oauth_creds.json');
+      throw new Error('Antigravity CLI auth incomplete: upload settings.json and oauth_creds.json');
     }
   }
 }

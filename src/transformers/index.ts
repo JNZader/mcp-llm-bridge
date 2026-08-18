@@ -83,7 +83,7 @@ for (const provider of [
 registry.registerOutbound('cli', cliOutbound);
 registry.registerOutbound('claude-cli', cliOutbound);
 registry.registerOutbound('codex-cli', cliOutbound);
-registry.registerOutbound('gemini-cli', cliOutbound);
+registry.registerOutbound('antigravity-cli', cliOutbound);
 registry.registerOutbound('copilot-cli', cliOutbound);
 
 // ── Register streaming outbound transformers ────────────────

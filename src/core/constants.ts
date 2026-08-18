@@ -47,7 +47,7 @@ export const VALID_PROVIDERS = new Set([
   'hyperbolic',
   'opencode-cli',
   'claude-cli',
-  'gemini-cli',
+  'antigravity-cli',
   'codex-cli',
   'qwen-cli',
   'copilot-cli',

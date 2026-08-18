@@ -18,7 +18,7 @@ import { SambanovaAdapter } from './sambanova.js';
 import { HyperbolicAdapter } from './hyperbolic.js';
 import { CliOpenCodeAdapter } from './cli-opencode.js';
 import { ClaudeCliAdapter } from './cli-claude.js';
-import { GeminiCliAdapter } from './cli-gemini.js';
+import { AntigravityCliAdapter } from './cli-antigravity.js';
 import { CodexCliAdapter } from './cli-codex.js';
 import { QwenCliAdapter } from './cli-qwen.js';
 import { CopilotCliAdapter } from './cli-copilot.js';
@@ -37,7 +37,7 @@ export {
   HyperbolicAdapter,
   CliOpenCodeAdapter,
   ClaudeCliAdapter,
-  GeminiCliAdapter,
+  AntigravityCliAdapter,
   CodexCliAdapter,
   QwenCliAdapter,
   CopilotCliAdapter,
@@ -72,7 +72,7 @@ export function createAllAdapters(vault: Vault): LLMProvider[] {
     new HyperbolicAdapter(vault),
     new CliOpenCodeAdapter(vault),
     new ClaudeCliAdapter(vault),
-    new GeminiCliAdapter(vault),
+    new AntigravityCliAdapter(vault),
     new CodexCliAdapter(vault),
     new QwenCliAdapter(vault),
     new CopilotCliAdapter(vault),

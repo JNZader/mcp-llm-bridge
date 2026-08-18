@@ -1,7 +1,8 @@
 export const PROVIDER_ALIASES = {
   opencode: 'opencode-cli',
   codex: 'codex-cli',
-  gemini: 'gemini-cli',
+  gemini: 'antigravity-cli',
+  'gemini-cli': 'antigravity-cli',
   qwen: 'qwen-cli',
   copilot: 'copilot-cli',
   glm: 'zai',

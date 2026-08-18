@@ -24,7 +24,7 @@ import {
   SambanovaAdapter,
   HyperbolicAdapter,
   ClaudeCliAdapter,
-  GeminiCliAdapter,
+  AntigravityCliAdapter,
   CodexCliAdapter,
   QwenCliAdapter,
   CopilotCliAdapter,
@@ -297,17 +297,17 @@ describe('ClaudeCliAdapter', () => {
   });
 });
 
-describe('GeminiCliAdapter', () => {
-  const adapter = new GeminiCliAdapter(vault);
+describe('AntigravityCliAdapter', () => {
+  const adapter = new AntigravityCliAdapter(vault);
 
   it('has required properties', () => {
-    assertProviderInterface(adapter, 'gemini-cli');
+    assertProviderInterface(adapter, 'antigravity-cli');
     assert.equal(adapter.type, 'cli');
   });
 
   it('models have required fields', () => {
     for (const model of adapter.models) {
-      assertModelInfo(model, 'gemini-cli');
+      assertModelInfo(model, 'antigravity-cli');
     }
   });
 
