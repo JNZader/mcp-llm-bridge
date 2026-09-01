@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync, MAX_COPILOT_ARGV_PROMPT_CHARS } from '../src/adapters/cli-utils.js';
-import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, parseOpenCodeModelsList, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
+import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
 import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
 import { AntigravityCliAdapter, parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
 import { QwenCliAdapter, parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
@@ -274,6 +274,13 @@ describe('OpenCode generate timeout', () => {
     assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, 170_000);
     assert.ok(OPENCODE_GENERATE_TIMEOUT_MS > 120_000);
     assert.ok(OPENCODE_GENERATE_TIMEOUT_MS < 180_000);
+  });
+
+  it('marks timed-out partial stdout as length, not a complete stop', () => {
+    assert.equal(openCodeStopReason({ code: 'ETIMEDOUT', killed: true }, true), 'length');
+    assert.equal(openCodeStopReason({ signal: 'SIGTERM', killed: true }, true), 'length');
+    assert.equal(openCodeStopReason({ code: 1 }, true), 'stop');
+    assert.equal(openCodeStopReason({ code: 'ETIMEDOUT' }, false), 'stop');
   });
 });
 

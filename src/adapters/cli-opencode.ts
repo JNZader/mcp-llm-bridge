@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import { assertPromptNotOnArgv, execCliAsync, execCliSync, isCliAvailableAsync } from './cli-utils.js';
-import { GENERATE_COMPLETE_STOP } from '../core/types.js';
+import { GENERATE_COMPLETE_STOP, GENERATE_LENGTH_STOP } from '../core/types.js';
 import { DynamicModelCache } from './model-cache.js';
 
 /**
@@ -83,6 +83,22 @@ const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
  * timeout that Consorcio retries (double-billed).
  */
 export const OPENCODE_GENERATE_TIMEOUT_MS = 170_000;
+
+export function isCliTimeoutError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const execError = error as { code?: unknown; killed?: unknown; signal?: unknown };
+  return execError.code === 'ETIMEDOUT' || execError.killed === true || execError.signal === 'SIGTERM';
+}
+
+/** Map a CLI exec outcome onto Consorcio's complete vs truncated stop set. */
+export function openCodeStopReason(error: unknown, hasText: boolean): string {
+  if (hasText && isCliTimeoutError(error)) {
+    return GENERATE_LENGTH_STOP.LENGTH;
+  }
+  return GENERATE_COMPLETE_STOP.STOP;
+}
 
 /** Fallback if `opencode models` is down. Live `opencode models --refresh` 2026-08-31. */
 const OPENCODE_DECLARED_MODEL_IDS = [
@@ -234,6 +250,7 @@ export class CliOpenCodeAdapter implements LLMProvider {
       if (execError.stdout) {
         const parsed = parseOpenCodeOutput(execError.stdout);
         if (parsed.text) {
+          const stopReason = openCodeStopReason(error, true);
           return {
             text: parsed.text,
             provider: this.id,
@@ -242,8 +259,8 @@ export class CliOpenCodeAdapter implements LLMProvider {
             resolvedProvider: this.id,
             resolvedModel: model,
             fallbackUsed: false,
-            stop_reason: GENERATE_COMPLETE_STOP.STOP,
-            finish_reason: GENERATE_COMPLETE_STOP.STOP,
+            stop_reason: stopReason,
+            finish_reason: stopReason,
           };
         }
         const backendError = extractOpenCodeError(execError.stdout);

@@ -47,6 +47,13 @@ export const GENERATE_COMPLETE_STOP = {
 export type GenerateCompleteStop =
   (typeof GENERATE_COMPLETE_STOP)[keyof typeof GENERATE_COMPLETE_STOP];
 
+/** Consorcio treats these as truncated (allowed, regeneration path, not transport retry). */
+export const GENERATE_LENGTH_STOP = {
+  LENGTH: 'length',
+  MAX_TOKENS: 'max_tokens',
+  MAX_OUTPUT_TOKENS: 'max_output_tokens',
+} as const;
+
 export interface GenerateResponse {
   text: string;
   provider: string;
