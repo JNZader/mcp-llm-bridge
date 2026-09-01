@@ -347,6 +347,7 @@ describe('CodexCliAdapter', () => {
 
   it('uses the curated Codex model list', () => {
     assert.deepEqual(adapter.models.map((model) => model.id), [
+      'gpt-5.6-sol',
       'gpt-5.4',
       'gpt-5.2-codex',
       'gpt-5.1-codex',
@@ -442,7 +443,7 @@ describe('createAllAdapters()', () => {
     const expectedIds = [
       'anthropic', 'openai', 'google', 'groq', 'openrouter',
       'cerebras', 'zai', 'nvidia', 'mistral', 'sambanova', 'hyperbolic',
-      'opencode-cli', 'claude-cli', 'gemini-cli', 'codex-cli', 'qwen-cli', 'copilot-cli',
+      'opencode-cli', 'claude-cli', 'antigravity-cli', 'codex-cli', 'qwen-cli', 'copilot-cli',
     ];
 
     for (const adapter of adapters) {
