@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync } from '../src/adapters/cli-utils.js';
-import { extractOpenCodeError, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
+import { extractOpenCodeError, parseOpenCodeModelsList, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
 import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
 import { parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
 import { parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
@@ -264,6 +264,26 @@ describe('extractOpenCodeError', () => {
   it('tolerates malformed lines mixed with a real error event', () => {
     const mixed = ['not json {{{', errLine, ''].join('\n');
     assert.match(extractOpenCodeError(mixed)!, /err_7d90269a/);
+  });
+});
+
+describe('parseOpenCodeModelsList', () => {
+  it('parses provider/model ids and skips noise', () => {
+    const raw = [
+      '[skill-registry] skipping refresh: not a project root: /',
+      'opencode-go/deepseek-v4-flash',
+      'opencode/big-pickle',
+      '',
+      'not a model',
+      'opencode-go/deepseek-v4-flash',
+    ].join('\n');
+    const models = parseOpenCodeModelsList(raw);
+    assert.deepEqual(models.map((m) => m.id), [
+      'opencode-go/deepseek-v4-flash',
+      'opencode/big-pickle',
+    ]);
+    assert.equal(models[0]!.provider, 'opencode-cli');
+    assert.equal(models[0]!.name, 'Deepseek V4 Flash');
   });
 });
 

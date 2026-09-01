@@ -9,9 +9,10 @@
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
+import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
-import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import { execCliAsync, execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import { DynamicModelCache } from './model-cache.js';
 
 /**
  * Parse OpenCode's newline-delimited JSON output into text + token usage.
@@ -71,94 +72,104 @@ export function extractOpenCodeError(raw: string): string | undefined {
   return undefined;
 }
 
+const OPENCODE_MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/i;
+const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
+
+/** Fallback if `opencode models` is down. Live `opencode models --refresh` 2026-08-31. */
+const OPENCODE_DECLARED_MODEL_IDS = [
+  'opencode/big-pickle',
+  'opencode/ling-3.0-flash-fin-free',
+  'opencode/mimo-v2.5-free',
+  'opencode/muse-spark-1.2-contributor-free',
+  'opencode/nemotron-3-ultra-free',
+  'opencode/nemotron-3.5-lightning-free',
+  'opencode-go/deepseek-v4-flash',
+  'opencode-go/deepseek-v4-flash-vision-exp',
+  'opencode-go/deepseek-v4-pro',
+  'opencode-go/glm-5.1',
+  'opencode-go/glm-5.2',
+  'opencode-go/glm-5.3',
+  'opencode-go/glm-5.3-flash',
+  'opencode-go/gpt-5.6-luna',
+  'opencode-go/grok-4.6',
+  'opencode-go/hy3',
+  'opencode-go/hy4-preview',
+  'opencode-go/kimi-k2.6',
+  'opencode-go/kimi-k2.7-code',
+  'opencode-go/kimi-k3',
+  'opencode-go/longcat-2.0',
+  'opencode-go/mimo-v2.5',
+  'opencode-go/mimo-v2.5-pro',
+  'opencode-go/minimax-m2.7',
+  'opencode-go/minimax-m3',
+  'opencode-go/muse-spark-1.2-contributor',
+  'opencode-go/qwen3.6-plus',
+  'opencode-go/qwen3.7-max',
+  'opencode-go/qwen3.7-plus',
+  'opencode-go/qwen3.8-flash',
+  'opencode-go/qwen3.8-max',
+] as const;
+
+function openCodeModelInfo(id: string): ModelInfo {
+  const leaf = id.split('/').pop() ?? id;
+  const name = leaf
+    .split('-')
+    .filter((part) => part.length > 0)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ');
+  return { id, name, provider: 'opencode-cli', maxTokens: 8192 };
+}
+
+/** Parse `opencode models` stdout (one `provider/model` id per line). */
+export function parseOpenCodeModelsList(raw: string): ModelInfo[] {
+  const models: ModelInfo[] = [];
+  const seen = new Set<string>();
+  for (const line of raw.split('\n')) {
+    const id = line.trim();
+    if (!OPENCODE_MODEL_ID.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    models.push(openCodeModelInfo(id));
+  }
+  return models;
+}
+
+const OPENCODE_DECLARED_MODELS: ModelInfo[] = OPENCODE_DECLARED_MODEL_IDS.map(openCodeModelInfo);
+
 export class CliOpenCodeAdapter implements LLMProvider {
   readonly id = 'opencode-cli';
   readonly name = 'OpenCode CLI';
   readonly type = 'cli' as const;
-  readonly models = [
-    // Free tier (opencode/*)
-    { id: 'opencode/big-pickle', name: 'Big Pickle', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode/gpt-5-nano', name: 'GPT-5 Nano', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode/mimo-v2-omni-free', name: 'MIMO v2 Omni Free', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode/mimo-v2-pro-free', name: 'MIMO v2 Pro Free', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode/minimax-m2.5-free', name: 'MiniMax M2.5 Free', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode/nemotron-3-super-free', name: 'Nemotron 3 Super Free', provider: 'opencode-cli', maxTokens: 8192 },
-    // OpenCode Go (subscription)
-    { id: 'opencode-go/glm-5', name: 'GLM-5', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode-go/kimi-k2.5', name: 'Kimi K2.5', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode-go/minimax-m2.5', name: 'MiniMax M2.5', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'opencode-go/minimax-m2.7', name: 'MiniMax M2.7', provider: 'opencode-cli', maxTokens: 8192 },
-    // Anthropic via OpenCode
-    { id: 'anthropic/claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku Latest', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-5-sonnet-20240620', name: 'Claude 3.5 Sonnet (Jun)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Oct)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-7-sonnet-latest', name: 'Claude 3.7 Sonnet Latest', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-haiku-20240307', name: 'Claude 3 Haiku', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-opus-20240229', name: 'Claude 3 Opus', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-haiku-4-5', name: 'Claude Haiku 4.5', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5 (Oct)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-opus-4-0', name: 'Claude Opus 4.0', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-opus-4-1', name: 'Claude Opus 4.1', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-opus-4-1-20250805', name: 'Claude Opus 4.1 (Aug)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-opus-4-20250514', name: 'Claude Opus 4 (May)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-opus-4-5', name: 'Claude Opus 4.5', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-opus-4-5-20251101', name: 'Claude Opus 4.5 (Nov)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-opus-4-6', name: 'Claude Opus 4.6', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-sonnet-4-0', name: 'Claude Sonnet 4.0', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-sonnet-4-20250514', name: 'Claude Sonnet 4 (May)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5 (Sep)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'anthropic/claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'opencode-cli', maxTokens: 8192 },
-    // GitHub Copilot via OpenCode
-    { id: 'github-copilot/claude-haiku-4.5', name: 'Claude Haiku 4.5 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/claude-opus-4.5', name: 'Claude Opus 4.5 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/claude-opus-4.6', name: 'Claude Opus 4.6 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/claude-opus-41', name: 'Claude Opus 4.1 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/claude-sonnet-4', name: 'Claude Sonnet 4 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/claude-sonnet-4.5', name: 'Claude Sonnet 4.5 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/claude-sonnet-4.6', name: 'Claude Sonnet 4.6 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gemini-2.5-pro', name: 'Gemini 2.5 Pro (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gemini-3-flash-preview', name: 'Gemini 3 Flash (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gemini-3-pro-preview', name: 'Gemini 3 Pro (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-4.1', name: 'GPT-4.1 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-4o', name: 'GPT-4o (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5', name: 'GPT-5 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5-mini', name: 'GPT-5 Mini (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.1', name: 'GPT-5.1 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.1-codex', name: 'GPT-5.1 Codex (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.2', name: 'GPT-5.2 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.2-codex', name: 'GPT-5.2 Codex (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.3-codex', name: 'GPT-5.3 Codex (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.4', name: 'GPT-5.4 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/gpt-5.4-mini', name: 'GPT-5.4 Mini (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'github-copilot/grok-code-fast-1', name: 'Grok Code Fast 1 (Copilot)', provider: 'opencode-cli', maxTokens: 8192 },
-    // OpenAI via OpenCode
-    { id: 'openai/codex-mini-latest', name: 'Codex Mini Latest', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5-codex', name: 'GPT-5 Codex', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.1-codex', name: 'GPT-5.1 Codex', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.2', name: 'GPT-5.2', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.2-codex', name: 'GPT-5.2 Codex', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.3-codex', name: 'GPT-5.3 Codex', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark', provider: 'opencode-cli', maxTokens: 8192 },
-    { id: 'openai/gpt-5.4', name: 'GPT-5.4', provider: 'opencode-cli', maxTokens: 8192 },
-  ];
 
   private readonly vault: Vault;
+  private readonly modelCache: DynamicModelCache;
 
   constructor(vault: Vault) {
     this.vault = vault;
+    this.modelCache = new DynamicModelCache(
+      OPENCODE_DECLARED_MODELS,
+      () => this.discoverModels(),
+      this.id,
+    );
+  }
+
+  get models(): ModelInfo[] {
+    return this.modelCache.get();
+  }
+
+  async refreshModels(now: number = Date.now()): Promise<void> {
+    return this.modelCache.refresh(now);
+  }
+
+  private async discoverModels(): Promise<ModelInfo[] | null> {
+    const { stdout } = await execCliAsync('opencode', ['models'], {
+      timeout: OPENCODE_MODELS_TIMEOUT_MS,
+    });
+    const discovered = parseOpenCodeModelsList(stdout);
+    return discovered.length > 0 ? discovered : null;
   }
 
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
-    const model = request.model ?? 'opencode/gpt-5-nano';
+    const model = request.model ?? 'opencode/big-pickle';
     const authContent = this.vault.getFile('opencode', 'auth.json', request.project);
 
     // Build temp dir for auth.json if available
@@ -182,15 +193,12 @@ export class CliOpenCodeAdapter implements LLMProvider {
         ? `${request.system}\n\n---\n\n${request.prompt}`
         : request.prompt;
 
-      // Use execFileSync instead of execSync with string interpolation
       const output = execCliSync('opencode', args, {
         input: fullPrompt,
         env,
       });
 
       const parsed = parseOpenCodeOutput(output);
-      // OpenCode can emit a backend error event with a ZERO exit code — without
-      // this guard we'd return the raw error JSON as "text". Surface it instead.
       if (!parsed.text) {
         const backendError = extractOpenCodeError(output);
         if (backendError) throw new Error(backendError);
@@ -209,7 +217,6 @@ export class CliOpenCodeAdapter implements LLMProvider {
         fallbackUsed: false,
       };
     } catch (error) {
-      // If it's an exec error with stdout, try to parse partial output
       const execError = error as { stdout?: string; message?: string };
       if (execError.stdout) {
         const parsed = parseOpenCodeOutput(execError.stdout);
@@ -224,7 +231,6 @@ export class CliOpenCodeAdapter implements LLMProvider {
             fallbackUsed: false,
           };
         }
-        // No usable text but a backend error event present → clear diagnostic.
         const backendError = extractOpenCodeError(execError.stdout);
         if (backendError) throw new Error(backendError);
       }
@@ -232,7 +238,6 @@ export class CliOpenCodeAdapter implements LLMProvider {
         `OpenCode CLI failed: ${execError.message ?? String(error)}`,
       );
     } finally {
-      // Clean up temp files
       if (existsSync(tempBase)) {
         rmSync(tempBase, { recursive: true, force: true });
       }

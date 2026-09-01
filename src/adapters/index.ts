@@ -45,7 +45,7 @@ export {
 
 export { LocalLLMProvider } from '../local-llm/provider.js';
 
-export { parseOpenCodeOutput } from './cli-opencode.js';
+export { parseOpenCodeModelsList, parseOpenCodeOutput } from './cli-opencode.js';
 
 /**
  * Create all available provider adapters.

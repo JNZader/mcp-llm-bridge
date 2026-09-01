@@ -586,17 +586,17 @@ curl -X POST http://localhost:3456/v1/groups \
 
 OpenCode is the biggest catalog here and is one reason this bridge is useful.
 
-- Free tier models under `opencode/*`
-- OpenCode Go subscription models under `opencode-go/*`
-- Anthropic models under `anthropic/*`
-- GitHub Copilot-routed models under `github-copilot/*`
-- OpenAI-routed models under `openai/*`
+`GET /v1/models` refreshes from `opencode models` (TTL 5 min). The adapter
+fallback is the `opencode/*` free tier plus `opencode-go/*` subscription
+ids; discovery adds whatever else the CLI lists (`google/*`, `antigravity/*`,
+`openai/*`, `kimi-for-coding/*`). Anthropic and GitHub Copilot ids are **not**
+advertised unless the CLI lists them.
 
-Representative examples from the current adapter list:
+Representative examples:
 
-- `opencode/gpt-5-nano`
-- `anthropic/claude-sonnet-4.5`
-- `github-copilot/gpt-5.4`
+- `opencode-go/deepseek-v4-flash`
+- `opencode/big-pickle`
+- `opencode-go/kimi-k2.7-code`
 - `openai/gpt-5.4`
 
 ### Provider Priority and Fallback
