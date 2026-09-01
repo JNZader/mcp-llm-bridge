@@ -37,7 +37,6 @@ const ANTIGRAVITY_CONFIG: CliAdapterConfig = {
   name: 'Antigravity CLI',
   cliCommand: 'agy',
   defaultModel: 'gemini-3.7-flash-medium',
-  supportsSystemPrompt: false,
   argvPromptFlag: '-p',
   models: [
     // Gemini 3.7 series

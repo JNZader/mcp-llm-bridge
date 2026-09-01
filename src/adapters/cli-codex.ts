@@ -28,7 +28,6 @@ const CODEX_CONFIG: CliAdapterConfig = {
   name: 'Codex CLI',
   cliCommand: 'codex',
   defaultModel: 'gpt-5.6-sol',
-  supportsSystemPrompt: false,
   models: [
     { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', provider: 'codex-cli', maxTokens: 8192 },
     { id: 'gpt-5.4', name: 'GPT-5.4', provider: 'codex-cli', maxTokens: 8192 },

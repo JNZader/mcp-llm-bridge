@@ -1,19 +1,28 @@
 /**
  * Copilot CLI adapter — wraps `copilot -p` command.
  *
- * Migrated from the original generate.ts CLI adapter.
- * Note: Copilot doesn't support system prompt, JSON output, or stdin prompts.
- * Prompts larger than MAX_COPILOT_ARGV_PROMPT_CHARS are refused so a legal
- * RAG payload is never interpolated onto argv.
+ * Copilot has no stdin prompt path (`-p -` is a literal prompt; probed).
+ * The prompt body is written to a 0600 temp file and passed as `-p @path`
+ * so a 37k RAG payload never appears on argv. Prompts larger than
+ * MAX_COPILOT_ARGV_PROMPT_CHARS are still refused.
  */
+
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import {
+  assertPromptNotOnArgv,
   execCliSync,
   isCliAvailableAsync,
   MAX_COPILOT_ARGV_PROMPT_CHARS,
 } from './cli-utils.js';
+
+export function buildCopilotGenerateArgs(model: string, promptFilePath: string): string[] {
+  return ['-p', `@${promptFilePath}`, '--model', model, '--allow-all-tools'];
+}
 
 export class CopilotCliAdapter implements LLMProvider {
   readonly id = 'copilot-cli';
@@ -65,16 +74,17 @@ export class CopilotCliAdapter implements LLMProvider {
       // Fall back to any local environment auth already present.
     }
 
-    // Copilot has no stdin prompt path (`-p/--prompt <text>` is required for
-    // non-interactive mode). Small prompts stay on `-p`; large ones are refused
-    // above so a 37k legal RAG payload never lands in argv / process lists.
-    const output = execCliSync(
-      'copilot',
-      ['-p', fullPrompt, '--model', model, '--allow-all-tools'],
-      { env },
-    );
-
-    return { text: output.trim(), provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
+    const promptDir = mkdtempSync(join(tmpdir(), 'mcp-copilot-prompt-'));
+    const promptPath = join(promptDir, 'prompt.txt');
+    try {
+      writeFileSync(promptPath, fullPrompt, { mode: 0o600 });
+      const args = buildCopilotGenerateArgs(model, promptPath);
+      assertPromptNotOnArgv('copilot', args, [fullPrompt, request.system, request.prompt]);
+      const output = execCliSync('copilot', args, { env });
+      return { text: output.trim(), provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
+    } finally {
+      rmSync(promptDir, { recursive: true, force: true });
+    }
   }
 
   async isAvailable(): Promise<boolean> {

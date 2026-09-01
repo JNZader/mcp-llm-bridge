@@ -17,7 +17,7 @@ import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-cl
 import { AntigravityCliAdapter, parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
 import { QwenCliAdapter, parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
 import { CodexCliAdapter } from '../src/adapters/cli-codex.js';
-import { CopilotCliAdapter } from '../src/adapters/cli-copilot.js';
+import { CopilotCliAdapter, buildCopilotGenerateArgs } from '../src/adapters/cli-copilot.js';
 import type { GatewayConfig } from '../src/core/types.js';
 
 const config: GatewayConfig = {
@@ -435,6 +435,14 @@ describe('CLI adapters keep the prompt off argv', () => {
       () => adapter.generate({ prompt: ragPrompt, model: 'gpt-4.1' }),
       new RegExp(`refuses prompts over ${MAX_COPILOT_ARGV_PROMPT_CHARS}`),
     );
+  });
+
+  it('copilot argv carries @prompt-file, not the prompt body', () => {
+    const path = '/tmp/mcp-copilot-prompt-test/prompt.txt';
+    const args = buildCopilotGenerateArgs('gpt-4.1', path);
+    assert.deepEqual(args, ['-p', `@${path}`, '--model', 'gpt-4.1', '--allow-all-tools']);
+    assert.ok(!args.includes(ragPrompt));
+    assert.ok(args.every((arg) => arg.length < 200));
   });
 });
 
