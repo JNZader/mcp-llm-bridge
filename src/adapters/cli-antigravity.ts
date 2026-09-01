@@ -38,6 +38,7 @@ const ANTIGRAVITY_CONFIG: CliAdapterConfig = {
   cliCommand: 'agy',
   defaultModel: 'gemini-3.7-flash-medium',
   supportsSystemPrompt: false,
+  argvPromptFlag: '-p',
   models: [
     // Gemini 3.7 series
     { id: 'gemini-3.7-flash-high', name: 'Gemini 3.7 Flash (High)', provider: 'antigravity-cli', maxTokens: 2000000 },
@@ -69,8 +70,9 @@ export class AntigravityCliAdapter extends BaseCliAdapter {
   }
 
   protected buildArgs(model: string): string[] {
-    // `-p` is print/non-interactive mode, not the prompt. Prompt goes on stdin.
-    return ['-p', '--output-format', 'json', '--model', model];
+    // Live `agy -p` consumes the next argv as the prompt (not a boolean print
+    // flag). Flags first; `-p` + prompt are appended by BaseCliAdapter.
+    return ['--output-format', 'json', '--model', model];
   }
 
   protected parseResponse(output: string): string {

@@ -12,6 +12,7 @@ import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync, MAX_COPILOT_ARGV_PROMPT_CHARS } from '../src/adapters/cli-utils.js';
 import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
+import { GENERATE_HTTP_TIMEOUT_MS } from '../src/core/constants.js';
 import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
 import { AntigravityCliAdapter, parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
 import { QwenCliAdapter, parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
@@ -274,6 +275,8 @@ describe('OpenCode generate timeout', () => {
     assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, 170_000);
     assert.ok(OPENCODE_GENERATE_TIMEOUT_MS > 120_000);
     assert.ok(OPENCODE_GENERATE_TIMEOUT_MS < 180_000);
+    assert.ok(GENERATE_HTTP_TIMEOUT_MS > OPENCODE_GENERATE_TIMEOUT_MS);
+    assert.ok(GENERATE_HTTP_TIMEOUT_MS < 180_000);
   });
 
   it('marks timed-out partial stdout as length, not a complete stop', () => {
@@ -407,16 +410,23 @@ describe('CLI adapters keep the prompt off argv', () => {
     assert.deepEqual(args, ['--model', 'qwen3-coder-plus']);
   });
 
-  it('agy -p is print mode, not the prompt value', () => {
+  it('agy puts flags before -p so -p does not swallow --output-format', () => {
     class Testable extends AntigravityCliAdapter {
       args(model: string): string[] {
         return this.buildArgs(model);
       }
     }
     const args = new Testable(vault).args('gemini-3.7-flash-medium');
-    assert.ok(!args.includes(JSON.stringify(ragPrompt)));
-    assert.ok(!args.includes(ragPrompt));
-    assert.equal(args[0], '-p');
+    assert.deepEqual(args, ['--output-format', 'json', '--model', 'gemini-3.7-flash-medium']);
+    assert.ok(!args.includes('-p'));
+  });
+
+  it('agy refuses a 37k prompt instead of putting it on -p', async () => {
+    const adapter = new AntigravityCliAdapter(vault);
+    await assert.rejects(
+      () => adapter.generate({ prompt: ragPrompt, model: 'gemini-3.7-flash-medium' }),
+      /refuses prompts over/,
+    );
   });
 
   it('copilot refuses a 37k prompt instead of spawning -p with it', async () => {
