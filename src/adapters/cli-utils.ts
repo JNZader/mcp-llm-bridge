@@ -20,7 +20,8 @@ export const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
  * refused instead of interpolated onto argv. 37k legal RAG payloads must
  * never take this path — pin `opencode-cli` (stdin) instead.
  */
-export const MAX_COPILOT_ARGV_PROMPT_CHARS = 4_096;
+export const MAX_ARGV_PROMPT_CHARS = 4_096;
+export const MAX_COPILOT_ARGV_PROMPT_CHARS = MAX_ARGV_PROMPT_CHARS;
 
 /** Ignore tiny tokens (`json`, model ids) when guarding argv against prompt leaks. */
 const ARGV_PROMPT_LEAK_MIN_CHARS = 64;

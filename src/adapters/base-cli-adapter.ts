@@ -16,7 +16,12 @@
 import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
-import { assertPromptNotOnArgv, execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import {
+  assertPromptNotOnArgv,
+  execCliSync,
+  isCliAvailableAsync,
+  MAX_ARGV_PROMPT_CHARS,
+} from './cli-utils.js';
 import { sanitizeErrorMessage } from '../security/sanitize.js';
 import { DynamicModelCache } from './model-cache.js';
 
@@ -30,6 +35,8 @@ export interface CliAdapterConfig {
   readonly defaultModel: string;
   readonly models: ModelInfo[];
   readonly supportsSystemPrompt?: boolean;
+  /** If set, the prompt is passed as this flag's value (agy `-p` requires an argument). */
+  readonly argvPromptFlag?: string;
 }
 
 /**
@@ -143,7 +150,19 @@ export abstract class BaseCliAdapter implements LLMProvider {
 
       const args = this.buildArgs(model, request.system);
       assertPromptNotOnArgv(this.config.cliCommand, args, [prompt, request.system, request.prompt]);
-      const output = execCliSync(this.config.cliCommand, args, { env, input: prompt });
+      const promptFlag = this.config.argvPromptFlag;
+      let output: string;
+      if (promptFlag) {
+        if (prompt.length > MAX_ARGV_PROMPT_CHARS) {
+          throw new Error(
+            `${this.config.name} CLI refuses prompts over ${MAX_ARGV_PROMPT_CHARS} characters on argv; use a stdin-capable provider such as opencode-cli`,
+          );
+        }
+        args.push(promptFlag, prompt);
+        output = execCliSync(this.config.cliCommand, args, { env });
+      } else {
+        output = execCliSync(this.config.cliCommand, args, { env, input: prompt });
+      }
 
       const text = this.parseResponse(output);
       return {

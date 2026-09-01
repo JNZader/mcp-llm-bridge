@@ -42,9 +42,7 @@ import { registerStorageRoutes } from "./routes/storage.js";
 import { registerToolingRoutes } from "./routes/tooling.js";
 import { registerUsageRoutes } from "./routes/usage.js";
 import { normalizeMetricsPath } from "./http-helpers/metrics-path.js";
-
-/** Request timeout in milliseconds (2 minutes). */
-const REQUEST_TIMEOUT_MS = 120_000;
+import { GENERATE_HTTP_TIMEOUT_MS } from "../core/constants.js";
 
 /** Header name for request correlation ID. */
 export const CORRELATION_ID_HEADER = "X-Correlation-ID";
@@ -167,7 +165,7 @@ async function requestTimeout(
 
 	const timeoutId = setTimeout(() => {
 		timedOut = true;
-	}, REQUEST_TIMEOUT_MS);
+	}, GENERATE_HTTP_TIMEOUT_MS);
 
 	try {
 		await next();

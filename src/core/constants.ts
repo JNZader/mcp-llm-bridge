@@ -29,6 +29,13 @@ export const MASK_SUFFIX = '...***';
 /** Maximum request body size (1MB). */
 export const MAX_BODY_SIZE = 1_000_000;
 
+/**
+ * HTTP generate timeout. OpenCode CLI generate is 170s; this must stay above
+ * that so `requestTimeout` does not replace a completed 200 with 408.
+ * Consorcio's worker attempt is 180s.
+ */
+export const GENERATE_HTTP_TIMEOUT_MS = 175_000;
+
 /** Maximum prompt length (100KB) to prevent resource exhaustion. */
 export const MAX_PROMPT_LENGTH = 102_400;
 
