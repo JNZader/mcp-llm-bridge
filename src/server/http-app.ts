@@ -158,7 +158,7 @@ function getClientIp(c: Context): string {
 }
 
 async function requestTimeout(
-	c: Context,
+	_c: Context,
 	next: Next,
 ): Promise<Response | void> {
 	let timedOut = false;
