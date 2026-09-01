@@ -238,7 +238,12 @@ describe('CodexCliAdapter discovery source (vault vs real home)', () => {
     v.storeFile('codex', 'auth.json', '{"token":"x"}');
     const adapter = new CodexCliAdapter(v);
     await adapter.refreshModels(0);
-    assert.deepEqual(adapter.models.map((x) => x.id), ['gpt-5.4', 'gpt-5.2-codex', 'gpt-5.1-codex']);
+    assert.deepEqual(adapter.models.map((x) => x.id), [
+      'gpt-5.6-sol',
+      'gpt-5.4',
+      'gpt-5.2-codex',
+      'gpt-5.1-codex',
+    ]);
     v.close();
   });
 });

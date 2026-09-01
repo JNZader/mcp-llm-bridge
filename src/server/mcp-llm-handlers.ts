@@ -87,25 +87,9 @@ export async function handleLocalLlmGenerateTool(
     });
   }
 
-  const result = await router.generate({
-    prompt,
-    system,
-    maxTokens,
-    provider: 'local-llm',
-    model: localModel.id,
-  });
-
-  if (result.resolvedProvider === 'local-llm') {
-    return jsonResult({
-      ...result,
-      backend: 'local',
-      localBackend: localModel.backend,
-      localModelId: localModel.id,
-    });
-  }
-
   const classification = classifyForOffload(prompt);
   if (!classification.shouldOffload) {
+    const result = await router.generate({ prompt, system, maxTokens });
     return jsonResult({
       ...result,
       backend: 'cloud',
@@ -114,9 +98,33 @@ export async function handleLocalLlmGenerateTool(
     });
   }
 
+  // Pin local-llm (explicit provider is fail-closed). Cloud fallback is this
+  // handler's job, not the router's — a Consorcio-style pin must not fan out.
+  try {
+    const result = await router.generate({
+      prompt,
+      system,
+      maxTokens,
+      provider: 'local-llm',
+      model: localModel.id,
+    });
+    if (result.resolvedProvider === 'local-llm') {
+      return jsonResult({
+        ...result,
+        backend: 'local',
+        localBackend: localModel.backend,
+        localModelId: localModel.id,
+      });
+    }
+  } catch {
+    // Local pin failed; fall through to unpinned cloud generate.
+  }
+
+  const result = await router.generate({ prompt, system, maxTokens });
   return jsonResult({
     ...result,
     backend: 'cloud',
+    fallbackUsed: true,
     fallbackReason: 'Local LLM provider failed and router fell back to a cloud provider',
     attemptedLocalBackend: localModel.backend,
     attemptedLocalModelId: localModel.id,
