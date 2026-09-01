@@ -18,6 +18,7 @@ export const generateRequestSchema = z.object({
   provider: z.string().optional(),
   system: z.string().optional(),
   maxTokens: z.number().int().positive().optional(),
+  max_tokens: z.number().int().positive().optional(),
   strict: z.boolean().optional(),
   project: z.string().optional(),
 }).refine(

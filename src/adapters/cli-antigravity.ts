@@ -68,8 +68,9 @@ export class AntigravityCliAdapter extends BaseCliAdapter {
     super(vault);
   }
 
-  protected buildArgs(model: string, prompt: string): string[] {
-    return ['-p', JSON.stringify(prompt), '--output-format', 'json', '--model', model];
+  protected buildArgs(model: string): string[] {
+    // `-p` is print/non-interactive mode, not the prompt. Prompt goes on stdin.
+    return ['-p', '--output-format', 'json', '--model', model];
   }
 
   protected parseResponse(output: string): string {

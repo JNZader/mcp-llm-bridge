@@ -11,7 +11,8 @@ import { join } from 'node:path';
 
 import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
-import { execCliAsync, execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import { assertPromptNotOnArgv, execCliAsync, execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import { GENERATE_COMPLETE_STOP } from '../core/types.js';
 import { DynamicModelCache } from './model-cache.js';
 
 /**
@@ -74,6 +75,14 @@ export function extractOpenCodeError(raw: string): string | undefined {
 
 const OPENCODE_MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/i;
 const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
+
+/**
+ * Generate timeout for `opencode run`. Default CLI timeout is 120s; Consorcio's
+ * worker attempt is 180s. Stay under the HTTP client so a slow 20k–80k legal
+ * prompt fails as a 500 from this adapter instead of a client-side transport
+ * timeout that Consorcio retries (double-billed).
+ */
+export const OPENCODE_GENERATE_TIMEOUT_MS = 170_000;
 
 /** Fallback if `opencode models` is down. Live `opencode models --refresh` 2026-08-31. */
 const OPENCODE_DECLARED_MODEL_IDS = [
@@ -193,9 +202,11 @@ export class CliOpenCodeAdapter implements LLMProvider {
         ? `${request.system}\n\n---\n\n${request.prompt}`
         : request.prompt;
 
+      assertPromptNotOnArgv('opencode', args, [fullPrompt, request.system, request.prompt]);
       const output = execCliSync('opencode', args, {
         input: fullPrompt,
         env,
+        timeout: OPENCODE_GENERATE_TIMEOUT_MS,
       });
 
       const parsed = parseOpenCodeOutput(output);
@@ -215,6 +226,8 @@ export class CliOpenCodeAdapter implements LLMProvider {
         resolvedProvider: this.id,
         resolvedModel: model,
         fallbackUsed: false,
+        stop_reason: GENERATE_COMPLETE_STOP.STOP,
+        finish_reason: GENERATE_COMPLETE_STOP.STOP,
       };
     } catch (error) {
       const execError = error as { stdout?: string; message?: string };
@@ -229,6 +242,8 @@ export class CliOpenCodeAdapter implements LLMProvider {
             resolvedProvider: this.id,
             resolvedModel: model,
             fallbackUsed: false,
+            stop_reason: GENERATE_COMPLETE_STOP.STOP,
+            finish_reason: GENERATE_COMPLETE_STOP.STOP,
           };
         }
         const backendError = extractOpenCodeError(execError.stdout);

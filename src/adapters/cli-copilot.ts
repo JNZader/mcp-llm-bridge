@@ -2,12 +2,18 @@
  * Copilot CLI adapter — wraps `copilot -p` command.
  *
  * Migrated from the original generate.ts CLI adapter.
- * Note: Copilot doesn't support system prompt or JSON output.
+ * Note: Copilot doesn't support system prompt, JSON output, or stdin prompts.
+ * Prompts larger than MAX_COPILOT_ARGV_PROMPT_CHARS are refused so a legal
+ * RAG payload is never interpolated onto argv.
  */
 
 import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
-import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import {
+  execCliSync,
+  isCliAvailableAsync,
+  MAX_COPILOT_ARGV_PROMPT_CHARS,
+} from './cli-utils.js';
 
 export class CopilotCliAdapter implements LLMProvider {
   readonly id = 'copilot-cli';
@@ -43,6 +49,11 @@ export class CopilotCliAdapter implements LLMProvider {
   async generate(request: GenerateRequest): Promise<GenerateResponse> {
     const model = request.model ?? 'gpt-4.1';
     const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
+    if (fullPrompt.length > MAX_COPILOT_ARGV_PROMPT_CHARS) {
+      throw new Error(
+        `Copilot CLI refuses prompts over ${MAX_COPILOT_ARGV_PROMPT_CHARS} characters on argv; use a stdin-capable provider such as opencode-cli`,
+      );
+    }
     const env: Record<string, string> = { ...process.env as Record<string, string> };
 
     try {
@@ -54,8 +65,14 @@ export class CopilotCliAdapter implements LLMProvider {
       // Fall back to any local environment auth already present.
     }
 
-    // Use execFileSync instead of execSync with string interpolation
-    const output = execCliSync('copilot', ['-p', JSON.stringify(fullPrompt), '--model', model, '--allow-all-tools'], { env });
+    // Copilot has no stdin prompt path (`-p/--prompt <text>` is required for
+    // non-interactive mode). Small prompts stay on `-p`; large ones are refused
+    // above so a 37k legal RAG payload never lands in argv / process lists.
+    const output = execCliSync(
+      'copilot',
+      ['-p', fullPrompt, '--model', model, '--allow-all-tools'],
+      { env },
+    );
 
     return { text: output.trim(), provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
   }

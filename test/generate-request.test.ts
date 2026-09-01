@@ -35,6 +35,20 @@ describe('prepareGenerateRequest', () => {
 		});
 	});
 
+	it('accepts Consorcio max_tokens as maxTokens', () => {
+		const validated: GenerateRequestBody = {
+			prompt: 'hello',
+			provider: 'opencode-cli',
+			model: 'opencode-go/glm-5.3-flash',
+			max_tokens: 1200,
+		};
+
+		assert.equal(
+			prepareGenerateRequest(validated, createContext()).maxTokens,
+			1200,
+		);
+	});
+
 	it('composes context and instruction while preserving explicit system', () => {
 		const validated: GenerateRequestBody = {
 			prompt: 'ignored',

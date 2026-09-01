@@ -1,8 +1,23 @@
 import type { GenerateRequest as ValidatedGenerateRequest } from "../../core/schemas.js";
+import type { GenerateResponse } from "../../core/types.js";
+import { GENERATE_COMPLETE_STOP } from "../../core/types.js";
 import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
+
+function withConsumerStopReason(result: GenerateResponse): GenerateResponse {
+	const stopReason =
+		result.stop_reason ??
+		result.finish_reason ??
+		result.stop ??
+		GENERATE_COMPLETE_STOP.STOP;
+	return {
+		...result,
+		stop_reason: stopReason,
+		finish_reason: result.finish_reason ?? stopReason,
+	};
+}
 
 function resolveAttemptsFromRouting(result: {
 	routing?: { attemptedProviders?: string[] };
@@ -36,8 +51,8 @@ export async function executeGenerateRequest(
 	});
 
 	try {
-		const result = await router.generate(
-			prepareGenerateRequest(validated, scope),
+		const result = withConsumerStopReason(
+			await router.generate(prepareGenerateRequest(validated, scope)),
 		);
 
 		if (logCtx && requestLogger) {

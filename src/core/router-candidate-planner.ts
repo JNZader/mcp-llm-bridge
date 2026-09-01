@@ -73,12 +73,20 @@ export async function resolveCandidates(
   options: ResolveCandidatesOptions = {},
 ): Promise<LLMProvider[]> {
   const explicitFallbackAllowed = new Set(options.explicitFallbackOrder ?? []);
+  // Explicit provider is a pin, not a preference. Probe only that adapter:
+  // do not `copilot --version` / `qwen --version` the rest of the fleet, and
+  // never append them as fallbacks for a 20k–80k legal RAG prompt.
+  if (request.provider) {
+    const named = providers.find((provider) => provider.id === request.provider);
+    if (!named) {
+      return [];
+    }
+    return (await named.isAvailable()) ? [named] : [];
+  }
+
   // Model-based candidate matching below reads provider.models synchronously,
-  // so a cold cache would hide dynamically-discovered models (3vr B1). But with
-  // an explicit request.provider the candidate is picked by id and the model
-  // list is never consulted — so we skip discovery (now potentially a network
-  // call, 3vr B2) on that path to keep the explicit-provider route fast.
-  const needsModelDiscovery = request.model != null && request.provider == null;
+  // so a cold cache would hide dynamically-discovered models (3vr B1).
+  const needsModelDiscovery = request.model != null;
   const availabilityResults = await Promise.all(
     providers.map(async (provider) => {
       const available = await provider.isAvailable();
@@ -91,18 +99,6 @@ export async function resolveCandidates(
   const available = availabilityResults
     .filter((result) => result.available)
     .map((result) => result.provider);
-
-  if (request.provider) {
-    const preferred = available.find((provider) => provider.id === request.provider);
-    if (preferred) {
-      return buildCandidateList(
-        preferred,
-        available,
-        request.provider,
-        explicitFallbackAllowed,
-      );
-    }
-  }
 
   if (request.model) {
     const modelProvider = available.find((provider) =>

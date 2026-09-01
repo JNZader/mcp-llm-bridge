@@ -62,25 +62,16 @@ export class ClaudeCliAdapter extends BaseCliAdapter {
     super(vault);
   }
 
-  protected buildArgs(model: string, prompt: string, system?: string): string[] {
-    // Args go through execFileSync (no shell), so the prompt must be passed
-    // RAW: JSON.stringify would send literal quotes + escaped newlines to the
-    // model as part of the prompt text.
+  protected buildArgs(model: string): string[] {
+    // `-p` is print/non-interactive mode. Prompt and system travel on stdin
+    // (merged by BaseCliAdapter) so a 20k–80k payload never lands on argv.
     //
     // `--tools ''` disables all built-in tools ("Use \"\" to disable all
     // tools" per `claude --help`), so a single-turn print call can never stop
     // on `tool_use` — which is what produced exit-0 `error_max_turns`
     // envelopes under `--max-turns 1`. parseClaudeCliResponse remains the
     // safety net for any other error envelope.
-    //
-    // `--` terminates option parsing so prompts starting with `-` stay
-    // positional.
-    const args = ['-p', '--output-format', 'json', '--max-turns', '1', '--tools', '', '--model', model];
-    if (system) {
-      args.push('--system-prompt', system);
-    }
-    args.push('--', prompt);
-    return args;
+    return ['-p', '--output-format', 'json', '--max-turns', '1', '--tools', '', '--model', model];
   }
 
   protected parseResponse(output: string): string {

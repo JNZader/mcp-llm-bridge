@@ -63,8 +63,8 @@ export class CodexCliAdapter extends BaseCliAdapter {
     super(vault);
   }
 
-  protected buildArgs(model: string, prompt: string): string[] {
-    return ['exec', '--model', model, JSON.stringify(prompt)];
+  protected buildArgs(model: string): string[] {
+    return ['exec', '--model', model];
   }
 
   protected parseResponse(output: string): string {
