@@ -45,7 +45,6 @@ const QWEN_CONFIG: CliAdapterConfig = {
   name: 'Qwen CLI',
   cliCommand: 'qwen',
   defaultModel: 'qwen3-coder-plus',
-  supportsSystemPrompt: false,
   models: [
     { id: 'qwen3-coder-plus', name: 'Qwen3 Coder Plus', provider: 'qwen-cli', maxTokens: 8192 },
     { id: 'qwen-plus', name: 'Qwen Plus', provider: 'qwen-cli', maxTokens: 8192 },

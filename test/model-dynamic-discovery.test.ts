@@ -94,7 +94,6 @@ class CountingAdapter extends BaseCliAdapter {
     name: 'Counting',
     cliCommand: 'noop',
     defaultModel: 'decl',
-    supportsSystemPrompt: false,
     models: [{ id: 'decl', name: 'decl', provider: 'count-cli', maxTokens: 1 }],
   };
   public discoverCalls = 0;

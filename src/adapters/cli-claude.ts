@@ -15,7 +15,6 @@ const CLAUDE_CONFIG: CliAdapterConfig = {
   name: 'Claude CLI',
   cliCommand: 'claude',
   defaultModel: 'claude-sonnet-4-5',
-  supportsSystemPrompt: true,
   models: [
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5 (Max)', provider: 'claude-cli', maxTokens: 8192 },
     { id: 'claude-opus-4-6', name: 'Claude Opus 4.6 (Max)', provider: 'claude-cli', maxTokens: 8192 },

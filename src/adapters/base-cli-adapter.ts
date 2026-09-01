@@ -34,7 +34,6 @@ export interface CliAdapterConfig {
   readonly cliCommand: string;
   readonly defaultModel: string;
   readonly models: ModelInfo[];
-  readonly supportsSystemPrompt?: boolean;
   /** If set, the prompt is passed as this flag's value (agy `-p` requires an argument). */
   readonly argvPromptFlag?: string;
 }
@@ -106,10 +105,10 @@ export abstract class BaseCliAdapter implements LLMProvider {
    * Build CLI arguments for the generate request.
    *
    * The prompt (and system text) MUST NOT appear here. They are delivered
-   * on stdin by `generate()`. `-p` is allowed only as a print/non-interactive
-   * flag, never as a prompt value.
+   * on stdin by `generate()`, or appended via `argvPromptFlag` after a size
+   * check. `-p` as a boolean print flag is allowed; `-p <prompt>` is not.
    */
-  protected abstract buildArgs(model: string, system?: string): string[];
+  protected abstract buildArgs(model: string): string[];
 
   /**
    * Parse CLI response into GenerateResponse.
@@ -148,7 +147,7 @@ export abstract class BaseCliAdapter implements LLMProvider {
         ? `${request.system}\n\n${request.prompt}`
         : request.prompt;
 
-      const args = this.buildArgs(model, request.system);
+      const args = this.buildArgs(model);
       assertPromptNotOnArgv(this.config.cliCommand, args, [prompt, request.system, request.prompt]);
       const promptFlag = this.config.argvPromptFlag;
       let output: string;
