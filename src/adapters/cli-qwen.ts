@@ -1,5 +1,5 @@
 /**
- * Qwen CLI adapter — wraps `qwen -p` command.
+ * Qwen CLI adapter — wraps `qwen --model` with the prompt on stdin.
  *
  * Uses Alibaba Cloud credentials stored in the Vault.
  * Reads oauth_creds.json from the Vault, writing it to a temp
@@ -61,8 +61,8 @@ export class QwenCliAdapter extends BaseCliAdapter {
     super(vault);
   }
 
-  protected buildArgs(model: string, prompt: string): string[] {
-    return ['-p', JSON.stringify(prompt), '--model', model];
+  protected buildArgs(model: string): string[] {
+    return ['--model', model];
   }
 
   protected parseResponse(output: string): string {

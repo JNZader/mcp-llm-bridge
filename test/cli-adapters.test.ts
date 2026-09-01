@@ -10,11 +10,13 @@ import { join } from 'node:path';
 
 import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
-import { isCliAvailableAsync } from '../src/adapters/cli-utils.js';
-import { extractOpenCodeError, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
+import { isCliAvailableAsync, MAX_COPILOT_ARGV_PROMPT_CHARS } from '../src/adapters/cli-utils.js';
+import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
 import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
-import { parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
-import { parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
+import { AntigravityCliAdapter, parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
+import { QwenCliAdapter, parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
+import { CodexCliAdapter } from '../src/adapters/cli-codex.js';
+import { CopilotCliAdapter } from '../src/adapters/cli-copilot.js';
 import type { GatewayConfig } from '../src/core/types.js';
 
 const config: GatewayConfig = {
@@ -267,6 +269,41 @@ describe('extractOpenCodeError', () => {
   });
 });
 
+describe('OpenCode generate timeout', () => {
+  it('is under Consorcio\'s 180s attempt budget and above the 120s CLI default', () => {
+    assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, 170_000);
+    assert.ok(OPENCODE_GENERATE_TIMEOUT_MS > 120_000);
+    assert.ok(OPENCODE_GENERATE_TIMEOUT_MS < 180_000);
+  });
+
+  it('marks timed-out partial stdout as length, not a complete stop', () => {
+    assert.equal(openCodeStopReason({ code: 'ETIMEDOUT', killed: true }, true), 'length');
+    assert.equal(openCodeStopReason({ signal: 'SIGTERM', killed: true }, true), 'length');
+    assert.equal(openCodeStopReason({ code: 1 }, true), 'stop');
+    assert.equal(openCodeStopReason({ code: 'ETIMEDOUT' }, false), 'stop');
+  });
+});
+
+describe('parseOpenCodeModelsList', () => {
+  it('parses provider/model ids and skips noise', () => {
+    const raw = [
+      '[skill-registry] skipping refresh: not a project root: /',
+      'opencode-go/deepseek-v4-flash',
+      'opencode/big-pickle',
+      '',
+      'not a model',
+      'opencode-go/deepseek-v4-flash',
+    ].join('\n');
+    const models = parseOpenCodeModelsList(raw);
+    assert.deepEqual(models.map((m) => m.id), [
+      'opencode-go/deepseek-v4-flash',
+      'opencode/big-pickle',
+    ]);
+    assert.equal(models[0]!.provider, 'opencode-cli');
+    assert.equal(models[0]!.name, 'Deepseek V4 Flash');
+  });
+});
+
 // ── Claude CLI response parsing (error envelope guard) ─────────
 
 describe('parseClaudeCliResponse', () => {
@@ -310,33 +347,26 @@ describe('parseClaudeCliResponse', () => {
 
 describe('ClaudeCliAdapter buildArgs', () => {
   class TestableClaudeAdapter extends ClaudeCliAdapter {
-    args(model: string, prompt: string, system?: string): string[] {
-      return this.buildArgs(model, prompt, system);
+    args(model: string): string[] {
+      return this.buildArgs(model);
     }
   }
   const adapter = new TestableClaudeAdapter(vault);
 
-  it('passes the RAW prompt as positional after -- (no JSON.stringify)', () => {
+  it('does not put prompt or system on argv', () => {
     const prompt = 'line one\nline two "quoted"';
-    const args = adapter.args('claude-sonnet-4-6', prompt);
-    assert.equal(args[args.length - 1], prompt);
-    assert.equal(args[args.length - 2], '--');
+    const args = adapter.args('claude-sonnet-4-6');
+    assert.ok(!args.includes(prompt));
     assert.ok(!args.includes(JSON.stringify(prompt)));
+    assert.ok(!args.includes('--system-prompt'));
+    assert.equal(args.includes('-p'), true);
   });
 
   it('disables all built-in tools so --max-turns 1 cannot stop on tool_use', () => {
-    const args = adapter.args('claude-sonnet-4-6', 'hi');
+    const args = adapter.args('claude-sonnet-4-6');
     const toolsIdx = args.indexOf('--tools');
     assert.ok(toolsIdx >= 0);
     assert.equal(args[toolsIdx + 1], '');
-  });
-
-  it('passes the RAW system prompt', () => {
-    const system = 'be terse\nand honest';
-    const args = adapter.args('claude-sonnet-4-6', 'hi', system);
-    const idx = args.indexOf('--system-prompt');
-    assert.ok(idx >= 0);
-    assert.equal(args[idx + 1], system);
   });
 });
 
@@ -350,6 +380,51 @@ describe('parseAntigravityCliResponse', () => {
   it('throws on an error envelope with no response', () => {
     const envelope = JSON.stringify({ error: { type: 'AuthError', message: 'credentials expired', code: 401 } });
     assert.throws(() => parseAntigravityCliResponse(envelope), /AuthError.*credentials expired/);
+  });
+});
+
+describe('CLI adapters keep the prompt off argv', () => {
+  const ragPrompt = 'L'.repeat(37_505);
+
+  it('codex exec args are model-only (prompt is stdin)', () => {
+    class Testable extends CodexCliAdapter {
+      args(model: string): string[] {
+        return this.buildArgs(model);
+      }
+    }
+    const args = new Testable(vault).args('gpt-5.6-sol');
+    assert.deepEqual(args, ['exec', '--model', 'gpt-5.6-sol']);
+    assert.ok(!args.some((arg) => arg.includes(ragPrompt)));
+  });
+
+  it('qwen args are model-only (prompt is stdin)', () => {
+    class Testable extends QwenCliAdapter {
+      args(model: string): string[] {
+        return this.buildArgs(model);
+      }
+    }
+    const args = new Testable(vault).args('qwen3-coder-plus');
+    assert.deepEqual(args, ['--model', 'qwen3-coder-plus']);
+  });
+
+  it('agy -p is print mode, not the prompt value', () => {
+    class Testable extends AntigravityCliAdapter {
+      args(model: string): string[] {
+        return this.buildArgs(model);
+      }
+    }
+    const args = new Testable(vault).args('gemini-3.7-flash-medium');
+    assert.ok(!args.includes(JSON.stringify(ragPrompt)));
+    assert.ok(!args.includes(ragPrompt));
+    assert.equal(args[0], '-p');
+  });
+
+  it('copilot refuses a 37k prompt instead of spawning -p with it', async () => {
+    const adapter = new CopilotCliAdapter(vault);
+    await assert.rejects(
+      () => adapter.generate({ prompt: ragPrompt, model: 'gpt-4.1' }),
+      new RegExp(`refuses prompts over ${MAX_COPILOT_ARGV_PROMPT_CHARS}`),
+    );
   });
 });
 

@@ -37,6 +37,23 @@ export interface GenerateRequest {
   userId?: string;
 }
 
+export const GENERATE_COMPLETE_STOP = {
+  STOP: 'stop',
+  END_TURN: 'end_turn',
+  STOP_SEQUENCE: 'stop_sequence',
+  EOS: 'eos',
+} as const;
+
+export type GenerateCompleteStop =
+  (typeof GENERATE_COMPLETE_STOP)[keyof typeof GENERATE_COMPLETE_STOP];
+
+/** Consorcio treats these as truncated (allowed, regeneration path, not transport retry). */
+export const GENERATE_LENGTH_STOP = {
+  LENGTH: 'length',
+  MAX_TOKENS: 'max_tokens',
+  MAX_OUTPUT_TOKENS: 'max_output_tokens',
+} as const;
+
 export interface GenerateResponse {
   text: string;
   provider: string;
@@ -50,6 +67,10 @@ export interface GenerateResponse {
   latencyMs?: number;
   sessionId?: string;
   routing?: RoutingMetadata;
+  /** Consumer stop reason. Consorcio reads stop_reason | finish_reason | stop. */
+  stop_reason?: string;
+  finish_reason?: string;
+  stop?: string;
 }
 
 export interface RoutingMetadata {

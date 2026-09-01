@@ -16,7 +16,7 @@
 import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
 import { materializeProviderHome } from './cli-home.js';
-import { execCliSync, isCliAvailableAsync } from './cli-utils.js';
+import { assertPromptNotOnArgv, execCliSync, isCliAvailableAsync } from './cli-utils.js';
 import { sanitizeErrorMessage } from '../security/sanitize.js';
 import { DynamicModelCache } from './model-cache.js';
 
@@ -97,8 +97,12 @@ export abstract class BaseCliAdapter implements LLMProvider {
 
   /**
    * Build CLI arguments for the generate request.
+   *
+   * The prompt (and system text) MUST NOT appear here. They are delivered
+   * on stdin by `generate()`. `-p` is allowed only as a print/non-interactive
+   * flag, never as a prompt value.
    */
-  protected abstract buildArgs(model: string, prompt: string, system?: string): string[];
+  protected abstract buildArgs(model: string, system?: string): string[];
 
   /**
    * Parse CLI response into GenerateResponse.
@@ -133,14 +137,13 @@ export abstract class BaseCliAdapter implements LLMProvider {
         env['HOME'] = mount.homeDir;
       }
 
-      const prompt = request.system && this.config.supportsSystemPrompt
-        ? request.prompt
-        : request.system
-          ? `${request.system}\n\n${request.prompt}`
-          : request.prompt;
+      const prompt = request.system
+        ? `${request.system}\n\n${request.prompt}`
+        : request.prompt;
 
-      const args = this.buildArgs(model, prompt, request.system);
-      const output = execCliSync(this.config.cliCommand, args, { env });
+      const args = this.buildArgs(model, request.system);
+      assertPromptNotOnArgv(this.config.cliCommand, args, [prompt, request.system, request.prompt]);
+      const output = execCliSync(this.config.cliCommand, args, { env, input: prompt });
 
       const text = this.parseResponse(output);
       return {

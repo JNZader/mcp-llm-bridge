@@ -45,7 +45,7 @@ export function prepareGenerateRequest(
 		system,
 		model: validated.model,
 		provider: validated.provider,
-		maxTokens: validated.maxTokens,
+		maxTokens: validated.maxTokens ?? validated.max_tokens,
 		strict: validated.strict,
 		project,
 		apiKeyId: scope.apiKeyId,

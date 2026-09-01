@@ -16,6 +16,40 @@ export const DEFAULT_CLI_TIMEOUT = 120_000;
 export const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024;
 
 /**
+ * Copilot CLI requires `-p <text>` (no stdin). Prompts larger than this are
+ * refused instead of interpolated onto argv. 37k legal RAG payloads must
+ * never take this path — pin `opencode-cli` (stdin) instead.
+ */
+export const MAX_COPILOT_ARGV_PROMPT_CHARS = 4_096;
+
+/** Ignore tiny tokens (`json`, model ids) when guarding argv against prompt leaks. */
+const ARGV_PROMPT_LEAK_MIN_CHARS = 64;
+
+/**
+ * Refuse to spawn a CLI whose argv already contains the prompt or system
+ * text. Large legal RAG payloads must travel on stdin or a file, never `-p`.
+ */
+export function assertPromptNotOnArgv(
+  command: string,
+  args: readonly string[],
+  bodies: readonly (string | undefined)[],
+): void {
+  for (const body of bodies) {
+    if (!body || body.length < ARGV_PROMPT_LEAK_MIN_CHARS) {
+      continue;
+    }
+    const needle = body.slice(0, ARGV_PROMPT_LEAK_MIN_CHARS);
+    for (const arg of args) {
+      if (arg === body || arg.includes(needle)) {
+        throw new Error(
+          `${command} refused to put prompt/system on argv (${body.length} chars). Use stdin or a file.`,
+        );
+      }
+    }
+  }
+}
+
+/**
  * Check if a CLI command is available using execFileSync (sync version).
  *
  * @param command - The CLI binary name (e.g., 'opencode', 'claude')

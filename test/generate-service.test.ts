@@ -110,6 +110,8 @@ describe("generate-service", () => {
 						strategy: "mock",
 						attemptedProviders: ["first-provider", "mock-provider"],
 					},
+					stop_reason: "stop",
+					finish_reason: "stop",
 				}),
 			},
 		]);
@@ -126,6 +128,8 @@ describe("generate-service", () => {
 				strategy: "mock",
 				attemptedProviders: ["first-provider", "mock-provider"],
 			},
+			stop_reason: "stop",
+			finish_reason: "stop",
 		});
 	});
 
