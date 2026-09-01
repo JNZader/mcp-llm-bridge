@@ -271,12 +271,10 @@ describe('extractOpenCodeError', () => {
 });
 
 describe('OpenCode generate timeout', () => {
-  it('is under Consorcio\'s 180s attempt budget and above the 120s CLI default', () => {
-    assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, 170_000);
+  it('gives GLM-class RAG prompts 600s under the HTTP budget', () => {
+    assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, 600_000);
     assert.ok(OPENCODE_GENERATE_TIMEOUT_MS > 120_000);
-    assert.ok(OPENCODE_GENERATE_TIMEOUT_MS < 180_000);
     assert.ok(GENERATE_HTTP_TIMEOUT_MS > OPENCODE_GENERATE_TIMEOUT_MS);
-    assert.ok(GENERATE_HTTP_TIMEOUT_MS < 180_000);
   });
 
   it('marks timed-out partial stdout as length, not a complete stop', () => {

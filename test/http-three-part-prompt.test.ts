@@ -11,6 +11,7 @@ import http from 'node:http';
 
 import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
+import { MAX_PROMPT_LENGTH } from '../src/core/constants.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
@@ -144,7 +145,7 @@ describe('POST /v1/generate with three-part fields', () => {
   });
 
   it('rejects prompt exceeding MAX_PROMPT_LENGTH after optimization', async () => {
-    const hugePrompt = 'a'.repeat(110_000);
+    const hugePrompt = 'a'.repeat(MAX_PROMPT_LENGTH + 1);
     const res = await request('POST', '/v1/generate', {
       prompt: hugePrompt,
     });
