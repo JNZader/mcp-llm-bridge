@@ -85,6 +85,21 @@ const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
  */
 export const OPENCODE_GENERATE_TIMEOUT_MS = 600_000;
 
+/** Exec budget. Default is `OPENCODE_GENERATE_TIMEOUT_MS`; CI short-circuits via env. */
+export function resolveOpenCodeGenerateTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env['OPENCODE_GENERATE_TIMEOUT_MS'];
+  if (raw == null || raw === '') {
+    return OPENCODE_GENERATE_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return OPENCODE_GENERATE_TIMEOUT_MS;
+  }
+  return parsed;
+}
+
 export function isCliTimeoutError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) {
     return false;
@@ -223,7 +238,7 @@ export class CliOpenCodeAdapter implements LLMProvider {
       const output = execCliSync('opencode', args, {
         input: fullPrompt,
         env,
-        timeout: OPENCODE_GENERATE_TIMEOUT_MS,
+        timeout: resolveOpenCodeGenerateTimeoutMs(env),
       });
 
       const parsed = parseOpenCodeOutput(output);

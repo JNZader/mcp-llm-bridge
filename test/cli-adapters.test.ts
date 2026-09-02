@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync, MAX_COPILOT_ARGV_PROMPT_CHARS } from '../src/adapters/cli-utils.js';
-import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput } from '../src/adapters/cli-opencode.js';
+import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput, resolveOpenCodeGenerateTimeoutMs } from '../src/adapters/cli-opencode.js';
 import { GENERATE_HTTP_TIMEOUT_MS } from '../src/core/constants.js';
 import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
 import { AntigravityCliAdapter, parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
@@ -275,6 +275,18 @@ describe('OpenCode generate timeout', () => {
     assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, 600_000);
     assert.ok(OPENCODE_GENERATE_TIMEOUT_MS > 120_000);
     assert.ok(GENERATE_HTTP_TIMEOUT_MS > OPENCODE_GENERATE_TIMEOUT_MS);
+  });
+
+  it('lets CI shorten the exec budget without changing the serving default', () => {
+    assert.equal(resolveOpenCodeGenerateTimeoutMs({}), OPENCODE_GENERATE_TIMEOUT_MS);
+    assert.equal(
+      resolveOpenCodeGenerateTimeoutMs({ OPENCODE_GENERATE_TIMEOUT_MS: '15000' }),
+      15_000,
+    );
+    assert.equal(
+      resolveOpenCodeGenerateTimeoutMs({ OPENCODE_GENERATE_TIMEOUT_MS: 'nope' }),
+      OPENCODE_GENERATE_TIMEOUT_MS,
+    );
   });
 
   it('marks timed-out partial stdout as length, not a complete stop', () => {
