@@ -10,6 +10,7 @@ import http from 'node:http';
 
 import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
+import { MAX_PROMPT_LENGTH } from '../src/core/constants.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { TOOLS } from '../src/server/mcp.js';
@@ -439,7 +440,7 @@ describe('POST /v1/generate', () => {
   });
 
   it('rejects prompt exceeding max length', async () => {
-    const longPrompt = 'x'.repeat(200_000);
+    const longPrompt = 'x'.repeat(MAX_PROMPT_LENGTH + 1);
     const res = await request('POST', '/v1/generate', { prompt: longPrompt });
     assert.equal(res.status, 400);
   });
