@@ -17,8 +17,8 @@ import { Vault } from '../../src/vault/vault.js';
 import { Router } from '../../src/core/router.js';
 import type { GatewayConfig, GenerateResponse } from '../../src/core/types.js';
 import { startHttpServer } from '../../src/server/http.js';
-import { createAllAdapters } from '../../src/adapters/index.js';
 import { ApprovalStore } from '../../src/approval/index.js';
+import { StubAdapter } from '../helpers/stub-adapter.js';
 import { handleToolCall } from '../../src/server/mcp.js';
 
 // ── Test infrastructure ──────────────────────────────────
@@ -36,10 +36,7 @@ const config: GatewayConfig = {
 
 const vault = new Vault(config);
 const router = new Router();
-
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
+router.register(new StubAdapter());
 
 const approvalStore = new ApprovalStore();
 

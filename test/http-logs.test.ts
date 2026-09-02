@@ -19,6 +19,7 @@ import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { RequestLogger } from '../src/logging/request-logger.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
 
 // Streaming mocks below stub `router.resolveStreamingProviders` and must satisfy the
 // `ResolvedStreamingProvider` contract, which requires an `executionContract` (added
@@ -48,6 +49,7 @@ const router = new Router();
 for (const adapter of createAllAdapters(vault)) {
   router.register(adapter);
 }
+router.register(new StubAdapter());
 
 let server: http.Server;
 let port = 0;
