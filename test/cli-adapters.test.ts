@@ -12,7 +12,12 @@ import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync, MAX_COPILOT_ARGV_PROMPT_CHARS } from '../src/adapters/cli-utils.js';
 import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput, resolveOpenCodeGenerateTimeoutMs } from '../src/adapters/cli-opencode.js';
-import { GENERATE_HTTP_TIMEOUT_MS } from '../src/core/constants.js';
+import {
+  DEFAULT_CLI_GENERATE_TIMEOUT_MS,
+  GENERATE_HTTP_HEADROOM_MS,
+  GENERATE_HTTP_TIMEOUT_MS,
+  resolveCliGenerateTimeoutMs,
+} from '../src/core/constants.js';
 import { ClaudeCliAdapter, parseClaudeCliResponse } from '../src/adapters/cli-claude.js';
 import { AntigravityCliAdapter, parseAntigravityCliResponse } from '../src/adapters/cli-antigravity.js';
 import { QwenCliAdapter, parseQwenCliResponse } from '../src/adapters/cli-qwen.js';
@@ -271,9 +276,11 @@ describe('extractOpenCodeError', () => {
 });
 
 describe('OpenCode generate timeout', () => {
-  it('gives GLM-class RAG prompts 600s under the HTTP budget', () => {
-    assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, 600_000);
+  it('gives frontier RAG prompts 30 min under the HTTP budget', () => {
+    assert.equal(OPENCODE_GENERATE_TIMEOUT_MS, DEFAULT_CLI_GENERATE_TIMEOUT_MS);
+    assert.equal(DEFAULT_CLI_GENERATE_TIMEOUT_MS, 1_800_000);
     assert.ok(OPENCODE_GENERATE_TIMEOUT_MS > 120_000);
+    assert.equal(GENERATE_HTTP_TIMEOUT_MS, OPENCODE_GENERATE_TIMEOUT_MS + GENERATE_HTTP_HEADROOM_MS);
     assert.ok(GENERATE_HTTP_TIMEOUT_MS > OPENCODE_GENERATE_TIMEOUT_MS);
   });
 
@@ -287,6 +294,12 @@ describe('OpenCode generate timeout', () => {
       resolveOpenCodeGenerateTimeoutMs({ OPENCODE_GENERATE_TIMEOUT_MS: 'nope' }),
       OPENCODE_GENERATE_TIMEOUT_MS,
     );
+    assert.equal(
+      resolveOpenCodeGenerateTimeoutMs({ CLI_GENERATE_TIMEOUT_MS: '15000' }),
+      15_000,
+    );
+    assert.equal(resolveCliGenerateTimeoutMs({}), DEFAULT_CLI_GENERATE_TIMEOUT_MS);
+    assert.equal(resolveCliGenerateTimeoutMs({ CLI_GENERATE_TIMEOUT_MS: '15000' }), 15_000);
   });
 
   it('marks timed-out partial stdout as length, not a complete stop', () => {

@@ -16,6 +16,8 @@ const CLAUDE_CONFIG: CliAdapterConfig = {
   cliCommand: 'claude',
   defaultModel: 'claude-sonnet-4-5',
   models: [
+    { id: 'claude-fable-5-1', name: 'Claude Fable 5.1 (Max)', provider: 'claude-cli', maxTokens: 128000 },
+    { id: 'claude-fable-5', name: 'Claude Fable 5 (Max)', provider: 'claude-cli', maxTokens: 128000 },
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5 (Max)', provider: 'claude-cli', maxTokens: 8192 },
     { id: 'claude-opus-4-6', name: 'Claude Opus 4.6 (Max)', provider: 'claude-cli', maxTokens: 8192 },
     { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Max)', provider: 'claude-cli', maxTokens: 8192 },

@@ -295,6 +295,15 @@ describe('ClaudeCliAdapter', () => {
       assertModelInfo(model, 'claude-cli');
     }
   });
+
+  it('advertises Fable 5.1 as a live Claude CLI route', () => {
+    const ids = adapter.models.map((model) => model.id);
+    assert.ok(ids.includes('claude-fable-5-1'));
+    assert.ok(ids.includes('claude-fable-5'));
+    const fable = adapter.models.find((model) => model.id === 'claude-fable-5-1');
+    assert.equal(fable?.maxTokens, 128000);
+    assert.equal(fable?.provider, 'claude-cli');
+  });
 });
 
 describe('AntigravityCliAdapter', () => {
