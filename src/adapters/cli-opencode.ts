@@ -13,6 +13,11 @@ import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '
 import type { Vault } from '../vault/vault.js';
 import { assertPromptNotOnArgv, execCliAsync, execCliSync, isCliAvailableAsync } from './cli-utils.js';
 import { GENERATE_COMPLETE_STOP, GENERATE_LENGTH_STOP } from '../core/types.js';
+import {
+  DEFAULT_CLI_GENERATE_TIMEOUT_MS,
+  resolveCliGenerateTimeoutMs,
+  resolvePositiveIntEnv,
+} from '../core/constants.js';
 import { DynamicModelCache } from './model-cache.js';
 
 /**
@@ -79,25 +84,22 @@ const OPENCODE_MODELS_TIMEOUT_MS = 15_000;
 /**
  * Generate timeout for `opencode run`. Default CLI timeout is 120s. GLM-5.3-Flash
  * on a 20k–80k legal RAG prompt can sit past 170s with empty stdout, which used
- * to surface as spawnSync ETIMEDOUT → HTTP 500. 600s is the serving budget;
- * stay under GENERATE_HTTP_TIMEOUT_MS so a slow prompt fails here instead of
- * as a client-side transport timeout that Consorcio retries (double-billed).
+ * to surface as spawnSync ETIMEDOUT → HTTP 500. 600s still lost Consorcio items;
+ * 30 min is the serving budget, shared with other stdin CLIs. Stay under
+ * GENERATE_HTTP_TIMEOUT_MS so a slow prompt fails here instead of as a
+ * client-side transport timeout that Consorcio retries (double-billed).
  */
-export const OPENCODE_GENERATE_TIMEOUT_MS = 600_000;
+export const OPENCODE_GENERATE_TIMEOUT_MS = DEFAULT_CLI_GENERATE_TIMEOUT_MS;
 
 /** Exec budget. Default is `OPENCODE_GENERATE_TIMEOUT_MS`; CI short-circuits via env. */
 export function resolveOpenCodeGenerateTimeoutMs(
   env: Record<string, string | undefined> = process.env,
 ): number {
-  const raw = env['OPENCODE_GENERATE_TIMEOUT_MS'];
-  if (raw == null || raw === '') {
-    return OPENCODE_GENERATE_TIMEOUT_MS;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    return OPENCODE_GENERATE_TIMEOUT_MS;
-  }
-  return parsed;
+  return resolvePositiveIntEnv(
+    env,
+    'OPENCODE_GENERATE_TIMEOUT_MS',
+    resolveCliGenerateTimeoutMs(env),
+  );
 }
 
 export function isCliTimeoutError(error: unknown): boolean {

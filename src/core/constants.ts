@@ -30,11 +30,47 @@ export const MASK_SUFFIX = '...***';
 export const MAX_BODY_SIZE = 1_000_000;
 
 /**
- * HTTP generate timeout. OpenCode CLI generate is 600s; this must stay above
- * that so `requestTimeout` does not treat a still-running generate as over
- * budget.
+ * Serving generate budget for stdin CLIs (`claude -p`, `codex exec`,
+ * `opencode run`). 600s still killed Consorcio RAG items whose GLM call sat
+ * through the full wall; Fable 5.1 thinking is always on and slower. 30 min
+ * is the serving default. CI short-circuits via `CLI_GENERATE_TIMEOUT_MS` /
+ * `OPENCODE_GENERATE_TIMEOUT_MS` so a hung CLI cannot eat the 20m job.
  */
-export const GENERATE_HTTP_TIMEOUT_MS = 620_000;
+export const DEFAULT_CLI_GENERATE_TIMEOUT_MS = 1_800_000;
+
+/** Headroom so HTTP `requestTimeout` stays above the CLI spawn budget. */
+export const GENERATE_HTTP_HEADROOM_MS = 20_000;
+
+/**
+ * HTTP generate timeout. Must stay above the CLI spawn budget so
+ * `requestTimeout` does not treat a still-running generate as over budget.
+ */
+export const GENERATE_HTTP_TIMEOUT_MS =
+  DEFAULT_CLI_GENERATE_TIMEOUT_MS + GENERATE_HTTP_HEADROOM_MS;
+
+/** Parse a positive integer env override; invalid/absent → `fallback`. */
+export function resolvePositiveIntEnv(
+  env: Record<string, string | undefined>,
+  key: string,
+  fallback: number,
+): number {
+  const raw = env[key];
+  if (raw == null || raw === '') {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
+}
+
+/** Exec budget for stdin CLI adapters. CI sets `CLI_GENERATE_TIMEOUT_MS`. */
+export function resolveCliGenerateTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  return resolvePositiveIntEnv(env, 'CLI_GENERATE_TIMEOUT_MS', DEFAULT_CLI_GENERATE_TIMEOUT_MS);
+}
 
 /**
  * Maximum prompt length. 100KB rejected Consorcio RAG serving: K=10 of the

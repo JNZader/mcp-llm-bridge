@@ -24,6 +24,7 @@ import {
 } from './cli-utils.js';
 import { sanitizeErrorMessage } from '../security/sanitize.js';
 import { DynamicModelCache } from './model-cache.js';
+import { resolveCliGenerateTimeoutMs } from '../core/constants.js';
 
 /**
  * Interface for CLI adapter configuration.
@@ -158,9 +159,16 @@ export abstract class BaseCliAdapter implements LLMProvider {
           );
         }
         args.push(promptFlag, prompt);
-        output = execCliSync(this.config.cliCommand, args, { env });
+        output = execCliSync(this.config.cliCommand, args, {
+          env,
+          timeout: resolveCliGenerateTimeoutMs(env),
+        });
       } else {
-        output = execCliSync(this.config.cliCommand, args, { env, input: prompt });
+        output = execCliSync(this.config.cliCommand, args, {
+          env,
+          input: prompt,
+          timeout: resolveCliGenerateTimeoutMs(env),
+        });
       }
 
       const text = this.parseResponse(output);
