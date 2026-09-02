@@ -30,14 +30,19 @@ export const MASK_SUFFIX = '...***';
 export const MAX_BODY_SIZE = 1_000_000;
 
 /**
- * HTTP generate timeout. OpenCode CLI generate is 170s; this must stay above
- * that so `requestTimeout` does not replace a completed 200 with 408.
- * Consorcio's worker attempt is 180s.
+ * HTTP generate timeout. OpenCode CLI generate is 600s; this must stay above
+ * that so `requestTimeout` does not treat a still-running generate as over
+ * budget.
  */
-export const GENERATE_HTTP_TIMEOUT_MS = 175_000;
+export const GENERATE_HTTP_TIMEOUT_MS = 620_000;
 
-/** Maximum prompt length (100KB) to prevent resource exhaustion. */
-export const MAX_PROMPT_LENGTH = 102_400;
+/**
+ * Maximum prompt length. 100KB rejected Consorcio RAG serving: K=10 of the
+ * largest units in the 2026-09-01 eval corpus is 233_870 chars of `texto`
+ * alone and ~252_024 with vigencia/relevancia, before XML wrapping and
+ * escaping. Stay under MAX_BODY_SIZE so the JSON envelope still parses.
+ */
+export const MAX_PROMPT_LENGTH = 512_000;
 
 /** Valid provider IDs for credential validation. */
 export const VALID_PROVIDERS = new Set([

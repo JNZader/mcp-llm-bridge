@@ -39,6 +39,9 @@ jobs:
 
       - name: Test
         run: pnpm test
+        env:
+          # Serving default is 600s; a hung `opencode run` in CI must not eat the 20m job.
+          OPENCODE_GENERATE_TIMEOUT_MS: "15000"
 
       - name: Build
         run: pnpm run build
