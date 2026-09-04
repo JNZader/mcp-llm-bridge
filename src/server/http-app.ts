@@ -126,9 +126,12 @@ export function bearerAuth(config: GatewayConfig) {
 	};
 }
 
-async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
+export async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
 	const contentLength = c.req.header("content-length");
-	if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+	if (contentLength && !/^\d+$/.test(contentLength)) {
+		return c.json({ error: "The request is invalid.", code: "VALIDATION_ERROR" }, 400);
+	}
+	if (contentLength && Number(contentLength) > MAX_BODY_SIZE) {
 		return c.json(
 			{ error: "Payload too large", code: "PAYLOAD_TOO_LARGE" },
 			413,
@@ -193,8 +196,8 @@ async function correlationId(c: Context, next: Next): Promise<void> {
 	await next();
 }
 
-function rateLimitMiddleware(limiter: RateLimiter) {
-	return async (c: Context, next: Next): Promise<void> => {
+export function rateLimitMiddleware(limiter: RateLimiter) {
+	return async (c: Context, next: Next): Promise<Response | void> => {
 		if (c.req.method === "GET" && c.req.path === "/health") {
 			return next();
 		}
@@ -203,17 +206,15 @@ function rateLimitMiddleware(limiter: RateLimiter) {
 
 		if (limiter.isRateLimited(ip)) {
 			const resetAt = limiter.getResetAt(ip);
-			const retryAfter = Math.ceil((resetAt - Date.now()) / 1000);
+			const retryAfter = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000));
 			c.header("Retry-After", String(retryAfter));
 			c.header("X-RateLimit-Remaining", "0");
-			c.header("X-RateLimit-Reset", String(Math.floor(resetAt / 1000)));
-			c.status(429);
-			c.json({
+			c.header("X-RateLimit-Reset", String(Math.max(0, Math.floor(resetAt / 1000))));
+			return c.json({
 				error: "Too many requests",
 				code: "RATE_LIMITED",
 				retryAfter,
-			});
-			return;
+			}, 429);
 		}
 
 		c.header("X-RateLimit-Remaining", String(limiter.getRemaining(ip)));
