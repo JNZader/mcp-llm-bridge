@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { safeOperation, safeOperationError } from "../../core/safe-operation.js";
 import type { ChatCompletionsRequest } from "../../core/schemas.js";
 import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
@@ -179,13 +180,12 @@ async function finalizeNonStreamingSuccess(
 		inputTokens: result.inputTokens,
 		outputTokens: result.outputTokens,
 		attempts: resolveAttemptsFromRouting(result),
-		responseData: JSON.stringify(result),
 	});
 }
 
 async function finalizeNonStreamingFailure(
 	logger: ReturnType<typeof createNonStreamingLogger>,
-	error: unknown,
+	_error: unknown,
 ) {
 	if (!logger.logCtx || !logger.requestLogger) {
 		return;
@@ -193,7 +193,7 @@ async function finalizeNonStreamingFailure(
 
 	await logger.requestLogger.captureEnd(logger.logCtx, {
 		attempts: 1,
-		error: error instanceof Error ? error : new Error(String(error)),
+		error: safeOperationError(safeOperation("failed")),
 	});
 }
 

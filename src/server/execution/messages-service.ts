@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { safeOperation, safeOperationError } from "../../core/safe-operation.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { InternalLLMResponse } from "../../core/internal-model.js";
 import type { Router } from "../../core/router.js";
@@ -150,7 +151,6 @@ export async function executeNonStreamingMessages(
 				inputTokens: result.usage.inputTokens,
 				outputTokens: result.usage.outputTokens,
 				attempts: 1,
-				responseData: JSON.stringify(result),
 			});
 		}
 
@@ -159,7 +159,7 @@ export async function executeNonStreamingMessages(
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
 				attempts: 1,
-				error: error instanceof Error ? error : new Error(String(error)),
+				error: safeOperationError(safeOperation("failed")),
 			});
 		}
 		throw error;
@@ -275,7 +275,7 @@ export async function* executeStreamingMessages(
 			result = await router.generateFromInternal(prepared.internalRequest);
 		} catch (error) {
 			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, { attempts, error: toError(error) });
+				await requestLogger.captureEnd(logCtx, { attempts, error: safeOperationError(safeOperation("failed")) });
 			}
 			throw error;
 		}
@@ -347,7 +347,7 @@ export async function* executeStreamingMessages(
 					success: false,
 					attempt: attempts,
 					project: scope?.project,
-					errorMessage: toError(error).message,
+					errorMessage: safeOperationError(safeOperation("failed")).message,
 				});
 			}
 		}
@@ -355,7 +355,7 @@ export async function* executeStreamingMessages(
 		if (!opened) {
 			const error = lastError ?? new Error("No streaming providers available");
 			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, { attempts, error: toError(error) });
+				await requestLogger.captureEnd(logCtx, { attempts, error: safeOperationError(safeOperation("failed")) });
 			}
 			throw error;
 		}
@@ -477,7 +477,7 @@ export async function* executeStreamingMessages(
 				provider: resolvedProvider,
 				model: finalModel,
 				attempts,
-				error: toError(error),
+				error: safeOperationError(safeOperation("failed")),
 			});
 		}
 		yield* closeTextBlockIfNeeded();
