@@ -150,7 +150,7 @@ export function collectRootInventory(root) {
     const cwd = realpathSync(root);
     rootFd = openSync(cwd, directoryFlags);
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-    const runGit = (args, input) => execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], {
+    const runGit = (args, input) => execFileSync('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', ...args], {
       cwd, env, input, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024, timeout: 10_000, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const git = (...args) => runGit(args);

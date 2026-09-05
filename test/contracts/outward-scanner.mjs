@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const MAGIC = Buffer.from('WP00PTH\0', 'ascii');
 const VERSION = 1;
@@ -120,4 +123,18 @@ export function createArtifactHash(pathsBin, manifest) {
 export function createBindingHash(providerSubjectHash, wp00ArtifactHash) {
   if (typeof providerSubjectHash !== 'string') fail('invalid provider subject hash'); assertScalarString(providerSubjectHash);
   return `sha256:${sha256(Buffer.concat([Buffer.from('wp00-provider-binding-v1\0'), Buffer.from(providerSubjectHash, 'utf8'), hashBytes(wp00ArtifactHash)]))}`;
+}
+
+// Defer the CLI import without top-level await: inventory imports this codec,
+// so awaiting its dynamic import here would deadlock an ESM dependency cycle.
+let direct = false;
+try { direct = !!process.argv[1] && pathToFileURL(realpathSync(resolve(process.argv[1]))).href === import.meta.url; } catch { /* Library imports stay silent. */ }
+if (direct) {
+  import('./scanner/root-coverage-cli.mjs').then(({ runCoverageCli }) => {
+    process.exitCode = runCoverageCli(process.argv.slice(2));
+  }).catch(() => {
+    process.stdout.write(JSON.stringify({ schema: 'wp00-root-coverage/v1', status: 'coverage_failed', admission: 'not_evaluated',
+      diagnostics: [{ code: 'cli_unavailable', line: null, column: null, field: null }] }) + '\n');
+    process.exitCode = 1;
+  });
 }
