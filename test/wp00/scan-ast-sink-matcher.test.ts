@@ -4,6 +4,8 @@ import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 // @ts-expect-error Deliberate ESM scanner module.
+import { createIdentityReturnInspector } from '../contracts/scanner/typescript-identity-return.mjs';
+// @ts-expect-error Deliberate ESM scanner module.
 import { createCallReferenceInspector } from '../contracts/scanner/typescript-call-references.mjs';
 // @ts-expect-error Deliberate ESM scanner module.
 import { createNodeNextProgramContext } from '../contracts/scanner/typescript-program.mjs';
@@ -235,6 +237,8 @@ describe('Explicit callback lexical scopes v2', () => {
     const result = parse.inspect([record('package.json', '{"type":"module"}'), record(path, text)], policy);
     assert.equal(result.status, 'inspected'); assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0].sink.callee, 'jsonDeleteError');
+    assert.equal(result.matches[0].identityReturnEvidence.status, 'unsupported');
+    assert.equal(result.matches[0].identityReturnEvidence.fact, null);
     const references = result.matches[0].argumentReturnEvidence;
     assert.equal(references.status, 'unresolved');
     assert.equal(references.valueOrigin, 'not_evaluated');
@@ -338,5 +342,102 @@ describe('Matched-call lexical argument and return evidence', () => {
     assert.deepEqual(evidence.parameterArguments, []);
     assert.deepEqual(evidence.boundaries, [{code: 'resource_limit'}]);
     assert.deepEqual(createCallReferenceInspector(context.program.getTypeChecker(), 0)(declaration, call), evidence);
+  });
+});
+
+describe('Conditional identity-return transfer on matched declarations', () => {
+  function inspectIdentity(sink: string, argument = '1', arity = 1, suffix = '') {
+    const source = ts.createSourceFile('sink.ts', sink, ts.ScriptTarget.ESNext, true);
+    const first = source.statements[0]!;
+    const declaration = ts.isVariableStatement(first) ? first.declarationList.declarations[0]! :
+      ts.isClassDeclaration(first) ? first.members[0]! : first;
+    const name = ts.isClassDeclaration(first) ? 'Sink.send' : 'send';
+    const imported = ts.isClassDeclaration(first) ? 'Sink' : 'send';
+    const main = `import { ${imported} } from './sink.js'; ${suffix} ${name}(${argument});`;
+    const selected = selector(main, null, sink);
+    Object.assign(selected.declaration, fingerprint(declaration, source));
+    const parse = createDirectSinkMatcher({ ...catalogs(1, arity),
+      selectCurrentDeclarations: () => projection([selected]) });
+    const inspected = parse.inspect(inputs(main, sink), policy);
+    assert.equal(inspected.status, 'inspected');
+    assert.equal(inspected.matches.length, 1);
+    return inspected;
+  }
+
+  it('proves only the selected synchronous declaration return identity with exact spans', () => {
+    for (const sink of ['export function send(p: unknown) { return p; }',
+      'export const send = (p: unknown) => p;',
+      'export const send = function(p: unknown) { return ((p)); };']) {
+      const result = inspectIdentity(sink, '"SECRET_ARGUMENT"');
+      const evidence = result.matches[0].identityReturnEvidence;
+      assert.equal(evidence.status, 'transfer_proven');
+      assert.equal(evidence.fact.parameterIndex, 0);
+      assert.equal(evidence.fact.relation, 'return_equals_entry_parameter');
+      assert.equal(evidence.semantics, 'declared_callable_normal_return');
+      assert.equal(evidence.runtimeBinding, 'not_evaluated');
+      assert.equal(result.flow, 'not_evaluated');
+      assert.equal(result.admission, 'not_evaluated');
+      assert.equal(evidence.fact.declarationSpan.path, 'sink.ts');
+      assert.equal(evidence.fact.returnSpan.path, 'sink.ts');
+      assert.ok(evidence.fact.returnSpan.endOffset > evidence.fact.returnSpan.startOffset);
+      assert.ok(Object.isFrozen(evidence.fact));
+      assert.doesNotMatch(JSON.stringify(evidence), /SECRET_ARGUMENT|unknown/);
+    }
+    const result = inspectIdentity('export function send(p: unknown, q: unknown) { return q; }', '1,2', 2);
+    assert.equal(result.matches[0].identityReturnEvidence.fact.parameterIndex, 1);
+  });
+
+  it('rejects all additional statements, aliases, side effects and nonidentity expressions', () => {
+    for (const body of ['p = 2; return p;', 'const alias = p; return alias;',
+      '{ let p = 2; return p; }', 'return p; p = 2;', '"use strict"; return p;',
+      'if (p) return p; return p;', 'return other(p);', 'return p.value;',
+      'return +p;', 'return p as unknown;', 'return p!;', 'return p satisfies unknown;',
+      'return (() => p);', 'return;', 'return missing;']) {
+      const evidence = inspectIdentity(`export function send(p: unknown) { ${body} }`).matches[0].identityReturnEvidence;
+      assert.equal(evidence.status, 'unsupported', body);
+      assert.equal(evidence.fact, null);
+    }
+  });
+
+  it('rejects transformed callables and special or duplicate parameters', () => {
+    for (const sink of ['export async function send(p: unknown) { return p; }',
+      'export function* send(p: unknown) { return p; }',
+      'export const send = async (p: unknown) => p;',
+      'export const send = function*(p: unknown) { return p; };',
+      'export function send(p?: unknown) { return p; }',
+      'export function send(p = 1) { return p; }',
+      'export function send(...p: unknown[]) { return p; }',
+      'export function send({p}: {p: unknown}) { return p; }',
+      'export function send(this: unknown, p: unknown) { return p; }',
+      'export function send(p: unknown, p: unknown) { return p; }',
+      '@decorate export class Sink { static send(p: unknown) { return p; } }']) {
+      const evidence = inspectIdentity(sink).matches[0].identityReturnEvidence;
+      assert.equal(evidence.status, 'unsupported', sink);
+      assert.equal(evidence.fact, null);
+    }
+  });
+
+  it('does not turn a declaration summary into a runtime binding proof after reassignment', () => {
+    const sink = 'export function send(p: unknown) { return p; } send = (p: unknown) => 0;';
+    const result = inspectIdentity(sink);
+    const evidence = result.matches[0].identityReturnEvidence;
+    assert.equal(evidence.status, 'transfer_proven');
+    assert.equal(evidence.runtimeBinding, 'not_evaluated');
+    assert.equal(result.flow, 'not_evaluated');
+  });
+
+  it('bounds cached summaries and clears the fact when aggregate budget is exhausted', () => {
+    const context = createNodeNextProgramContext(inputs(
+      "import { send } from './sink.js'; send(1);",
+      'export function send(p: unknown) { return p; }'), policy);
+    assert.equal(context.status, 'available');
+    const declaration = context.program.getSourceFile('/wp00-inventory/sink.ts').statements[0];
+    const inspect = createIdentityReturnInspector(context.program.getTypeChecker(), 12);
+    assert.equal(inspect(declaration).status, 'transfer_proven');
+    let evidence;
+    for (let i = 0; i < 12; i++) evidence = inspect(declaration);
+    assert.equal(evidence.status, 'unavailable');
+    assert.equal(evidence.fact, null);
+    assert.deepEqual(evidence.diagnostics, [{code: 'resource_limit'}]);
   });
 });
