@@ -130,10 +130,14 @@ export function createBindingHash(providerSubjectHash, wp00ArtifactHash) {
 let direct = false;
 try { direct = !!process.argv[1] && pathToFileURL(realpathSync(resolve(process.argv[1]))).href === import.meta.url; } catch { /* Library imports stay silent. */ }
 if (direct) {
-  import('./scanner/root-coverage-cli.mjs').then(({ runCoverageCli }) => {
-    process.exitCode = runCoverageCli(process.argv.slice(2));
+  const ast = process.argv[2] === 'ast-coverage';
+  const modulePath = ast ? './scanner/root-ast-coverage-cli.mjs' : './scanner/root-coverage-cli.mjs';
+  import(modulePath).then((cli) => {
+    const run = ast ? cli.runAstCoverageCli : cli.runCoverageCli;
+    process.exitCode = run(process.argv.slice(2));
   }).catch(() => {
-    process.stdout.write(JSON.stringify({ schema: 'wp00-root-coverage/v1', status: 'coverage_failed', admission: 'not_evaluated',
+    process.stdout.write(JSON.stringify({ schema: ast ? 'wp00-ast-coverage/v1' : 'wp00-root-coverage/v1', status: 'coverage_failed', admission: 'not_evaluated',
+      ...(ast ? { graph: 'not_evaluated', flow: 'not_evaluated' } : {}),
       diagnostics: [{ code: 'cli_unavailable', line: null, column: null, field: null }] }) + '\n');
     process.exitCode = 1;
   });
