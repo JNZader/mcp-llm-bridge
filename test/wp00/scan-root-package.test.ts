@@ -68,7 +68,7 @@ describe('SCAN-ROOT-PACKAGE component', () => {
     reject(createPackageJsonParser({ validateShell: () => { throw new Error('secret-canary'); } })(...input), 'parser_failure');
   });
   it('rejects unsupported execution fields, unsafe targets and ambiguous exports without inventing devcontainer support', () => {
-    for (const value of [{ browser: './browser.js' }, { pnpm: { onlyBuiltDependencies: ['native'] } }, { workspaces: { nohoist: [] } }]) {
+    for (const value of [{ browser: './browser.js' }, { pnpm: { patchedDependencies: { native: 'native.patch' } } }, { workspaces: { nohoist: [] } }]) {
       reject(parsePackageJson(...fixture(JSON.stringify(value))), 'unsupported_syntax');
     }
     for (const value of [{ main: '../secret-canary' }, { files: ['/secret-canary'] }, { exports: 'external' }, { module: '${secret-canary}' }]) {

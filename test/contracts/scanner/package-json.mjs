@@ -8,7 +8,7 @@ const diagnosticCodes = new Set(Object.values(ROOT_DIAGNOSTIC_CODES));
 const metadata = new Set(['name', 'version', 'description', 'keywords', 'license', 'author', 'contributors', 'homepage',
   'repository', 'bugs', 'funding', 'private', 'type', 'engines', 'os', 'cpu', 'packageManager',
   'dependencies', 'devDependencies', 'peerDependencies', 'peerDependenciesMeta', 'optionalDependencies', 'bundledDependencies']);
-const fields = new Set(['scripts', 'bin', 'main', 'module', 'exports', 'files', 'workspaces']);
+const fields = new Set(['scripts', 'bin', 'main', 'module', 'exports', 'files', 'workspaces', 'pnpm']);
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const pointer = (value) => value.replace(/~/g, '~0').replace(/\//g, '~1');
 const stop = (code) => { throw code; };
@@ -59,6 +59,34 @@ export function createPackageJsonParser({ validateShell = validateShellCommand }
         if (!Array.isArray(items)) stop('invalid_input');
         items.forEach((item, index) => edge(kind, `${field}/${index}`, localTarget(item)));
       };
+      if (Object.hasOwn(value, 'pnpm')) {
+        // pnpm 9 root policy, not evidence that dependency lifecycle code ran.
+        // Root/workspace admission and lockfile/package integrity remain external.
+        if (input.path !== 'package.json') stop('unresolved_execution');
+        const policy = value.pnpm;
+        if (!object(policy)) stop('invalid_input');
+        if (Object.keys(policy).some((key) => !['onlyBuiltDependencies', 'overrides'].includes(key))) stop('unsupported_syntax');
+        const packageName = (name) => typeof name === 'string' && name.length <= 214 && !['node_modules', 'favicon.ico'].includes(name) &&
+          /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name);
+        if (Object.hasOwn(policy, 'onlyBuiltDependencies')) {
+          const allowed = policy.onlyBuiltDependencies;
+          if (!Array.isArray(allowed) || !allowed.every(packageName)) stop('invalid_input');
+          if (new Set(allowed).size !== allowed.length) stop('ambiguous_structure');
+          // A present empty array disables dependency builds; absence does not.
+          edge('environment', '/pnpm/onlyBuiltDependencies', JSON.stringify(allowed));
+        }
+        if (Object.hasOwn(policy, 'overrides')) {
+          if (!object(policy.overrides)) stop('invalid_input');
+          for (const [selector, replacement] of Object.entries(policy.overrides)) {
+            if (!packageName(selector)) stop('unresolved_execution');
+            // Exact stable registry versions only. No range solving, aliases,
+            // local/git/URL protocols, parent selectors or $dependency lookup.
+            if (typeof replacement !== 'string' || !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(replacement)) stop('unresolved_execution');
+            edge('environment', `/pnpm/overrides/${pointer(selector)}`, replacement);
+          }
+          if (Object.keys(policy.overrides).length === 0) edge('environment', '/pnpm/overrides', '{}');
+        }
+      }
       for (const field of ['main', 'module']) {
         if (Object.hasOwn(value, field)) edge('entry', `/${field}`, localTarget(value[field]));
       }
