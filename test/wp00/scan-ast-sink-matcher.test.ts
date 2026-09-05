@@ -4,6 +4,10 @@ import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
 // @ts-expect-error Deliberate ESM scanner module.
+import { createCallReferenceInspector } from '../contracts/scanner/typescript-call-references.mjs';
+// @ts-expect-error Deliberate ESM scanner module.
+import { createNodeNextProgramContext } from '../contracts/scanner/typescript-program.mjs';
+// @ts-expect-error Deliberate ESM scanner module.
 import { createDirectSinkMatcher } from '../contracts/scanner/typescript-sink-matcher.mjs';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -231,9 +235,108 @@ describe('Explicit callback lexical scopes v2', () => {
     const result = parse.inspect([record('package.json', '{"type":"module"}'), record(path, text)], policy);
     assert.equal(result.status, 'inspected'); assert.equal(result.matches.length, 1);
     assert.equal(result.matches[0].sink.callee, 'jsonDeleteError');
+    const references = result.matches[0].argumentReturnEvidence;
+    assert.equal(references.status, 'unresolved');
+    assert.equal(references.valueOrigin, 'not_evaluated');
+    assert.equal(references.parameterArguments.length, 2);
+    assert.equal(references.returns.length, 3);
+    for (const returned of references.returns) {
+      assert.deepEqual(returned.parameterReferences.map((item: { parameterIndex: number }) => item.parameterIndex), [0, 1]);
+    }
+    assert.ok(references.boundaries.some((item: { code: string }) => item.code === 'call_boundary'));
+    assert.ok(references.boundaries.some((item: { code: string }) => item.code === 'control_boundary'));
     assert.equal(result.matches[0].sink.module, path);
     assert.equal(result.matches[0].sink.exportName, 'registerStorageRoutes');
     assert.equal(result.registration, 'not_evaluated');
     assert.ok(result.unclassified.some((item: { startOffset: number }) => item.startOffset === helperCalls[1]!.getStart(source)));
+  });
+});
+
+describe('Matched-call lexical argument and return evidence', () => {
+  function inspectBody(body: string, parameter = 'p: unknown', argument = '1') {
+    const sink = `export function send(${parameter}) { ${body} }`;
+    const main = `import { send } from './sink.js'; send(${argument});`;
+    return matcher(projection([selector(main, null, sink)])).inspect(inputs(main, sink), policy);
+  }
+
+  it('maps exact parameter symbols in shorthand and named object values without payloads', () => {
+    const result = inspectBody('return {p, key: p, text: "PRIVATE_CANARY"};', 'p: unknown', '"ARG_CANARY"');
+    const evidence = result.matches[0].argumentReturnEvidence;
+    assert.equal(evidence.status, 'references_reported');
+    assert.equal(evidence.parameterArguments.length, 1);
+    assert.deepEqual(evidence.returns[0].parameterReferences.map((item: { parameterIndex: number }) => item.parameterIndex), [0, 0]);
+    assert.equal(evidence.valueOrigin, 'not_evaluated');
+    assert.equal(result.flow, 'not_evaluated');
+    assert.doesNotMatch(JSON.stringify(evidence), /PRIVATE_CANARY|ARG_CANARY|unknown/);
+    assert.deepEqual(Object.keys(evidence.parameterArguments[0]).sort(), ['argumentIndex', 'argumentSpan', 'parameterIndex', 'parameterSpan']);
+    assert.ok(Object.isFrozen(evidence.returns[0].parameterReferences));
+  });
+
+  it('reports mutations, aliases, control and calls as unresolved despite parameter references', () => {
+    for (const body of ['p = 2; return p;', 'p += 1; return p;', 'p++; return p;',
+      '({p} = source); return p;', 'p.field = 1; return p;', 'delete p.field; return p;',
+      'const alias = p; return alias;', 'if (p) return p; return 0;',
+      'return other(p);', 'return p ? 1 : 2;', 'return p[index];']) {
+      const evidence = inspectBody(body).matches[0].argumentReturnEvidence;
+      assert.equal(evidence.status, 'unresolved', body);
+      assert.ok(evidence.boundaries.length, body);
+      assert.equal(evidence.valueOrigin, 'not_evaluated');
+    }
+  });
+
+  it('excludes closure returns and shadowed parameters without inheriting origin claims', () => {
+    const evidence = inspectBody('const nested = (p: unknown) => { return p; }; return p;').matches[0].argumentReturnEvidence;
+    assert.equal(evidence.status, 'unresolved');
+    assert.equal(evidence.returns.length, 1);
+    assert.equal(evidence.returns[0].parameterReferences.length, 1);
+    assert.ok(evidence.boundaries.some((item: { code: string }) => item.code === 'closure_boundary'));
+    const shadowed = inspectBody('{ let p = 1; return p; }').matches[0].argumentReturnEvidence;
+    assert.deepEqual(shadowed.returns[0].parameterReferences, []);
+  });
+
+  it('keeps unsupported parameter shapes and absent positional arguments explicit', () => {
+    for (const parameter of ['p?: unknown', 'p = 1', '...p: unknown[]', '{p}: {p: unknown}']) {
+      const evidence = inspectBody('return p;', parameter).matches[0].argumentReturnEvidence;
+      assert.equal(evidence.status, 'unresolved');
+      assert.deepEqual(evidence.parameterArguments, []);
+      assert.ok(evidence.boundaries.some((item: { code: string }) => item.code === 'unsupported_parameter'));
+    }
+    const sink = 'export function send(p: unknown, q: unknown) { return p; }';
+    const main = "import { send } from './sink.js'; send(1);";
+    const evidence = matcher(projection([selector(main, null, sink)])).inspect(inputs(main, sink), policy).matches[0].argumentReturnEvidence;
+    assert.ok(evidence.boundaries.some((item: { code: string }) => item.code === 'argument_parameter_count'));
+    assert.deepEqual(evidence.parameterArguments, []);
+  });
+
+  it('supports implicit arrow returns through the existing declaration binding', () => {
+    const sink = 'export const send = (p: unknown) => ({p});';
+    const main = "import { send } from './sink.js'; send(1);";
+    const source = ts.createSourceFile('sink.ts', sink, ts.ScriptTarget.ESNext, true);
+    const statement = source.statements[0] as ts.VariableStatement;
+    const declaration = statement.declarationList.declarations[0]!;
+    const selected = selector(main, null, sink);
+    Object.assign(selected.declaration, fingerprint(declaration, source));
+    const result = matcher(projection([selected])).inspect(inputs(main, sink), policy);
+    assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].argumentReturnEvidence.status, 'references_reported');
+    assert.equal(result.matches[0].argumentReturnEvidence.returns[0].parameterReferences.length, 1);
+  });
+
+  it('bounds aggregate repeated evidence work and never emits partial output on exhaustion', () => {
+    const sink = 'export function send(p: unknown) { return p; }';
+    const main = "import { send } from './sink.js'; send(1);";
+    const context = createNodeNextProgramContext(inputs(main, sink), policy);
+    assert.equal(context.status, 'available');
+    const declaration = context.program.getSourceFile('/wp00-inventory/sink.ts').statements[0];
+    const call = context.program.getSourceFile('/wp00-inventory/main.ts').statements[1].expression;
+    const inspect = createCallReferenceInspector(context.program.getTypeChecker(), 40);
+    assert.equal(inspect(declaration, call).status, 'references_reported');
+    let evidence;
+    for (let i = 0; i < 40; i++) evidence = inspect(declaration, call);
+    assert.equal(evidence.status, 'unresolved');
+    assert.deepEqual(evidence.returns, []);
+    assert.deepEqual(evidence.parameterArguments, []);
+    assert.deepEqual(evidence.boundaries, [{code: 'resource_limit'}]);
+    assert.deepEqual(createCallReferenceInspector(context.program.getTypeChecker(), 0)(declaration, call), evidence);
   });
 });

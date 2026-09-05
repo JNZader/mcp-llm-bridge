@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
+import { createCallReferenceInspector } from './typescript-call-references.mjs';
 import { createNodeNextProgramContext } from './typescript-program.mjs';
 import { VIRTUAL_ROOT } from './typescript-modules.mjs';
 import { decodeHistoricalSinkCatalog } from './typescript-sink-catalog.mjs';
@@ -153,6 +154,7 @@ export function createDirectSinkMatcher({ ledgerBytes, fixtureCatalogBytes, sele
         selected.set(selectionKey, expected);
       }
       const checker = program.getTypeChecker(), matches = [], unclassified = [];
+      const inspectReferences = createCallReferenceInspector(checker);
       calls.sort((left, right) => {
         const a = location(left), b = location(right);
         return Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)) || a.startOffset - b.startOffset;
@@ -174,6 +176,7 @@ export function createDirectSinkMatcher({ ledgerBytes, fixtureCatalogBytes, sele
             const expected = selected.get(JSON.stringify([point.path, scopeKey, declarationKey(origins[0])]));
             if (expected && call.arguments.length === expected.sink.arity) {
               matches.push({ recordIndex: expected.recordIndex, fixtureId: expected.fixtureId,
+                argumentReturnEvidence: inspectReferences(origins[0], call),
                 metadata: 'historical_expectation', evidence: callbacks ? 'callback_lexical_direct_binding' : 'direct_checker_binding',
                 sink: { path: point.path, startLine: point.startLine, endLine: point.endLine, module: point.path,
                   exportName, callee: name, arity: call.arguments.length, signatureId: expected.sink.signatureId,
