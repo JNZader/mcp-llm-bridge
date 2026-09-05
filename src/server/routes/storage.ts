@@ -1,6 +1,7 @@
 import type { Context, Hono } from "hono";
 
 import { VALID_PROVIDERS } from "../../core/constants.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import {
 	validateCredentialStore,
 	validateFileStore,
@@ -10,6 +11,8 @@ import {
 	getValidationIssue,
 	resolveRequestProject,
 } from "../http-helpers/request-validation.js";
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
 
 export interface StorageRouteDeps {
 	vault: Vault;
@@ -76,9 +79,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 				},
 				201,
 			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -86,9 +88,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 		try {
 			const credentials = vault.listMasked(getScopedProject(c));
 			return c.json({ credentials });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -148,9 +149,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 				},
 				201,
 			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -158,9 +158,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 		try {
 			const files = vault.listFiles(getScopedProject(c));
 			return c.json({ files });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
