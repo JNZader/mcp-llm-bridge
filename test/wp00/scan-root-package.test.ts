@@ -48,7 +48,7 @@ describe('SCAN-ROOT-PACKAGE component', () => {
   });
   it('requires separately trusted shell admission and delegates every script without claiming actual shell coverage', () => {
     const input = fixture('{"main":"index.js","scripts":{"prestart":"check","start":"node index.js"}}');
-    reject(parsePackageJson(...input), 'parser_unavailable');
+    reject(createPackageJsonParser({ validateShell: null })(...input), 'parser_unavailable');
     const calls: string[] = [];
     const parse = createPackageJsonParser({ validateShell(command: string) {
       calls.push(command);

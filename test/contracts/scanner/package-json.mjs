@@ -1,6 +1,7 @@
 import { posix } from 'node:path';
 import { parseJsonWithoutDuplicateKeys } from '../outward-scanner.mjs';
 import { createRootParserRegistry, ROOT_DIAGNOSTIC_CODES } from './root-api.mjs';
+import { validateShell as validateShellCommand } from './posix-shell-validation.mjs';
 
 const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const diagnosticCodes = new Set(Object.values(ROOT_DIAGNOSTIC_CODES));
@@ -39,7 +40,7 @@ function localTarget(value, exportTarget = false) {
 // Shell admission is injected by trusted composition, never by package content.
 // A validator is synchronous and returns the closed parsed/rejected result shape.
 // No validator means scripts are unavailable, not implicitly safe or unsupported.
-export function createPackageJsonParser({ validateShell } = {}) {
+export function createPackageJsonParser({ validateShell = validateShellCommand } = {}) {
   return createRootParserRegistry({ package_json(input) {
     const reject = (code) => ({ status: 'rejected', edges: [], diagnostics: [{ code, line: null, column: null, field: null }] });
     try {
