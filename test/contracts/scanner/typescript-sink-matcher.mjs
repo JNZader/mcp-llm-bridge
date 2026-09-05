@@ -48,6 +48,17 @@ function scope(node) {
   }
   return null;
 }
+function nearestFunction(node) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (ts.isFunctionLike(parent)) return parent;
+  }
+  return undefined;
+}
+function exactSpan(node, span) {
+  if (!node || !Number.isSafeInteger(span.startOffset) || !Number.isSafeInteger(span.endOffset) ||
+    span.startOffset !== node.getStart(node.getSourceFile()) || span.endOffset !== node.getEnd() ||
+    hash(normalized(node.getSourceFile().text.slice(span.startOffset, span.endOffset))) !== span.astSha256) fail();
+}
 function calleeName(expression) {
   if (ts.isIdentifier(expression)) return expression.text;
   if (ts.isPropertyAccessExpression(expression) && !expression.questionDotToken) {
@@ -57,7 +68,7 @@ function calleeName(expression) {
   return null;
 }
 const rejected = (code, status = 'rejected') => freeze({ schema: 'wp00-direct-sinks/v1', status,
-  admission: 'not_evaluated', flow: 'not_evaluated', matches: [], unclassified: [], diagnostics: [{ code }] });
+  admission: 'not_evaluated', flow: 'not_evaluated', registration: 'not_evaluated', matches: [], unclassified: [], diagnostics: [{ code }] });
 
 // The callback is separately trusted configuration, never scanned source code.
 // Hashes only bind its choices to current bytes; they do not create that trust.
@@ -74,25 +85,27 @@ export function createDirectSinkMatcher({ ledgerBytes, fixtureCatalogBytes, sele
       const { inventory, program } = context;
       const projection = select(catalog, inventory.identities);
       keys(projection, 'schema selectors');
-      if (projection.schema !== 'wp00-current-sink-selectors/v1' || !Array.isArray(projection.selectors) ||
+      const callbacks = projection.schema === 'wp00-current-sink-selectors/v2';
+      if ((!callbacks && projection.schema !== 'wp00-current-sink-selectors/v1') || !Array.isArray(projection.selectors) ||
         projection.selectors.length > LIMITS.selectors) fail();
       const identities = new Map(inventory.identities.map((item) => [item.path, item]));
-      const declarations = new Map(), calls = [], pending = inventory.rootNames.map((name) => program.getSourceFile(name));
+      const declarations = new Map(), functions = new Map(), calls = [], pending = inventory.rootNames.map((name) => program.getSourceFile(name));
       let visited = 0;
       while (pending.length) {
         const node = pending.pop();
         if (!node || ++visited > LIMITS.nodes) return rejected('resource_limit');
         if (callable(node)) declarations.set(declarationKey(node), node);
+        if (ts.isFunctionLike(node)) functions.set(declarationKey(node), node);
         if (ts.isCallExpression(node) || ts.isNewExpression(node) || ts.isTaggedTemplateExpression(node)) {
           if (calls.length === LIMITS.calls) return rejected('resource_limit');
           calls.push(node);
         }
         ts.forEachChild(node, (child) => { pending.push(child); });
       }
-      const selected = new Map(), seenFixtures = new Set();
+      const selected = new Map(), callbackScopes = new Map(), seenFixtures = new Set();
       for (const selector of projection.selectors) {
         keys(selector, 'recordIndex fixtureId callsiteScope declaration');
-        keys(selector.callsiteScope, 'path inputSha256 exportName');
+        keys(selector.callsiteScope, callbacks ? 'path inputSha256 exportName enclosingExport callback' : 'path inputSha256 exportName');
         keys(selector.declaration, 'path inputSha256 startOffset endOffset astSha256');
         const { callsiteScope: site, declaration } = selector;
         const expected = catalog.expectations[selector.recordIndex];
@@ -107,18 +120,35 @@ export function createDirectSinkMatcher({ ledgerBytes, fixtureCatalogBytes, sele
         if (site.exportName !== null && (typeof site.exportName !== 'string' || !site.exportName || site.exportName.length > 256)) fail();
         const source = program.getSourceFile(`${VIRTUAL_ROOT}/${site.path}`);
         if (!source) fail();
+        let exportNode;
         if (site.exportName !== null) {
           const scopes = source.statements.filter((statement) => ts.isFunctionDeclaration(statement) && !!statement.body &&
             statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
             (statement.modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword) ? 'default' : statement.name?.text) === site.exportName);
           if (scopes.length !== 1) fail();
+          exportNode = scopes[0];
+        }
+        let scopeKey = site.exportName;
+        if (callbacks) {
+          keys(site.enclosingExport, 'startOffset endOffset astSha256');
+          keys(site.callback, 'startOffset endOffset astSha256 argumentIndex');
+          exactSpan(exportNode, site.enclosingExport);
+          scopeKey = JSON.stringify([site.path, site.callback.startOffset, site.callback.endOffset]);
+          const callback = functions.get(scopeKey);
+          exactSpan(callback, site.callback);
+          // This proves lexical placement, never registration or invocation.
+          if (!(ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) ||
+            !ts.isCallExpression(callback.parent) || !Number.isSafeInteger(site.callback.argumentIndex) ||
+            site.callback.argumentIndex < 0 || callback.parent.arguments[site.callback.argumentIndex] !== callback ||
+            callback.parent.arguments.some(ts.isSpreadElement) || nearestFunction(callback) !== exportNode) fail();
+          callbackScopes.set(scopeKey, site.exportName);
         }
         if (!Number.isSafeInteger(declaration.startOffset) || !Number.isSafeInteger(declaration.endOffset) ||
           declaration.startOffset < 0 || declaration.endOffset <= declaration.startOffset) fail();
         const key = JSON.stringify([declaration.path, declaration.startOffset, declaration.endOffset]);
         const node = declarations.get(key);
         if (!node || hash(normalized(node.getSourceFile().text.slice(declaration.startOffset, declaration.endOffset))) !== declaration.astSha256) fail();
-        const selectionKey = JSON.stringify([site.path, site.exportName, key]);
+        const selectionKey = JSON.stringify([site.path, scopeKey, key]);
         if (selected.has(selectionKey)) fail();
         selected.set(selectionKey, expected);
       }
@@ -128,7 +158,10 @@ export function createDirectSinkMatcher({ ledgerBytes, fixtureCatalogBytes, sele
         return Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)) || a.startOffset - b.startOffset;
       });
       for (const call of calls) {
-        const point = location(call), exportName = scope(call);
+        const point = location(call);
+        const parent = callbacks ? nearestFunction(call) : undefined;
+        const scopeKey = callbacks ? (parent ? declarationKey(parent) : undefined) : scope(call);
+        const exportName = callbacks ? callbackScopes.get(scopeKey) : scopeKey;
         let reason = 'unselected_binding';
         const name = ts.isCallExpression(call) ? calleeName(call.expression) : null;
         if (!ts.isCallExpression(call) || !name || call.questionDotToken || exportName === undefined) reason = 'unsupported_call';
@@ -138,10 +171,10 @@ export function createDirectSinkMatcher({ ledgerBytes, fixtureCatalogBytes, sele
           const origin = symbol && (symbol.flags & ts.SymbolFlags.Alias) ? checker.getAliasedSymbol(symbol) : symbol;
           const origins = origin?.declarations ?? [];
           if (origins.length === 1 && callable(origins[0])) {
-            const expected = selected.get(JSON.stringify([point.path, exportName, declarationKey(origins[0])]));
+            const expected = selected.get(JSON.stringify([point.path, scopeKey, declarationKey(origins[0])]));
             if (expected && call.arguments.length === expected.sink.arity) {
               matches.push({ recordIndex: expected.recordIndex, fixtureId: expected.fixtureId,
-                metadata: 'historical_expectation', evidence: 'direct_checker_binding',
+                metadata: 'historical_expectation', evidence: callbacks ? 'callback_lexical_direct_binding' : 'direct_checker_binding',
                 sink: { path: point.path, startLine: point.startLine, endLine: point.endLine, module: point.path,
                   exportName, callee: name, arity: call.arguments.length, signatureId: expected.sink.signatureId,
                   ownerUnit: expected.sink.ownerUnit, disposition: expected.sink.disposition } });
@@ -153,7 +186,7 @@ export function createDirectSinkMatcher({ ledgerBytes, fixtureCatalogBytes, sele
         unclassified.push({ ...point, code: reason });
       }
       return freeze({ schema: 'wp00-direct-sinks/v1', status: 'inspected', admission: 'not_evaluated',
-        flow: 'not_evaluated', coverage: 'direct_calls_only', matches, unclassified, diagnostics: [] });
+        flow: 'not_evaluated', registration: 'not_evaluated', coverage: 'direct_calls_only', matches, unclassified, diagnostics: [] });
     } catch {
       return rejected('invalid_selector');
     }

@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 // @ts-expect-error Deliberate ESM scanner module.
 import { createDirectSinkMatcher } from '../contracts/scanner/typescript-sink-matcher.mjs';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const policy = 'nodenext-explicit-v1';
 const record = (path: string, text: string) => ({ path, mode: 0o100644, length: BigInt(Buffer.byteLength(text)), sha256: hash(text), bytes: Buffer.from(text) });
-function catalogs(count = 1) {
+function catalogs(count = 1, arity = 1) {
   const emptyDigest = `sha256:${hash('[]')}`;
   const ledger = { schema: 'wp00-baseline-ledger/v3', source: { grade: 'read', commit: 'a'.repeat(40), parser: 'typescript@5.9.3', inclusion: 'historical source', discovery: 'fixture' },
     fields: ['pathId', 'startLine', 'endLine', 'exportNameOrNull', 'calleeId', 'arity', 'signatureId', 'ownerUnitId', 'dispositionId', 'fixtureId'],
     paths: ['old.ts'], callees: ['oldSink'], signatures: ['H-HELPER'], ownerUnits: ['ERR-HTTP-FOUNDATION'], dispositions: ['typed_safe_projection'],
-    fixtures: Array.from({ length: count }, (_, i) => `FX-${i}`), records: Array.from({ length: count }, (_, i) => [0, i + 1, i + 1, null, 0, 1, 0, 0, 0, i]),
+    fixtures: Array.from({ length: count }, (_, i) => `FX-${i}`), records: Array.from({ length: count }, (_, i) => [0, i + 1, i + 1, null, 0, arity, 0, 0, 0, i]),
     completeness: { records: count, paths: 1, bySignature: { 'H-HELPER': count }, byOwner: { 'ERR-HTTP-FOUNDATION': count },
       regeneratedAdditions: { durable: 0, helperCalls: 0 }, sourceEvidenceDigest: emptyDigest, addedEvidenceNormalizationVersion: 'ts-expression-slice-lf/v1',
       sourceEvidenceDigestSchema: 'wp00-added-evidence-preimage/v1', sourceEvidenceDigestCoverage: 0 } };
@@ -138,5 +140,100 @@ describe('Trusted current declaration direct sink matcher', () => {
       const failed = createDirectSinkMatcher({ ...catalogs(), selectCurrentDeclarations }).inspect(inputs(main), policy);
       assert.equal(failed.status, 'rejected'); assert.doesNotMatch(JSON.stringify(failed), /secret-canary/);
     }
+  });
+});
+
+function fingerprint(node: ts.Node, source: ts.SourceFile) {
+  return { startOffset: node.getStart(source), endOffset: node.getEnd(),
+    astSha256: hash(node.getText(source).replace(/\r\n?/g, '\n')) };
+}
+function callbackSelector(main: string, index = 0) {
+  const source = ts.createSourceFile('main.ts', main, ts.ScriptTarget.ESNext, true);
+  const owner = source.statements.find((node): node is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === 'run')!;
+  const callbacks: ts.Node[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) callbacks.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  const selected = selector(main, 'run');
+  return { ...selected, callsiteScope: { ...selected.callsiteScope,
+    enclosingExport: fingerprint(owner, source),
+    callback: { ...fingerprint(callbacks[index]!, source), argumentIndex: 1 } } };
+}
+const projectionV2 = (selectors: unknown[]) => ({ schema: 'wp00-current-sink-selectors/v2', selectors });
+
+describe('Explicit callback lexical scopes v2', () => {
+  it('matches only the selected inline callback, without sibling or nested inheritance', () => {
+    const main = "import { send } from './sink.js'; export function run() { " +
+      "unknownReceiver('first', async () => { send(1); send(...args); send?.(1); nested(() => send(1)); }); " +
+      "unknownReceiver('second', () => send(1)); }";
+    const selected = callbackSelector(main);
+    const result = matcher(projectionV2([selected])).inspect(inputs(main), policy);
+    assert.equal(result.status, 'inspected'); assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].evidence, 'callback_lexical_direct_binding');
+    assert.equal(result.matches[0].sink.exportName, 'run');
+    assert.equal(result.registration, 'not_evaluated'); assert.equal(result.flow, 'not_evaluated');
+    assert.equal(result.unclassified.length, 7);
+    assert.ok(result.unclassified.some((item: { code: string }) => item.code === 'spread_arity'));
+    assert.equal(matcher(projection([selector(main, 'run')])).inspect(inputs(main), policy).matches.length, 0);
+  });
+
+  it('rejects mismatched spans, parents, argument positions, versions and non-inline callbacks', () => {
+    const main = "import { send } from './sink.js'; export function run() { receiver('x', () => send(1)); }";
+    const selected = callbackSelector(main);
+    for (const change of [
+      { ...selected.callsiteScope, callback: { ...selected.callsiteScope.callback, argumentIndex: 0 } },
+      { ...selected.callsiteScope, callback: { ...selected.callsiteScope.callback, astSha256: '0'.repeat(64) } },
+      { ...selected.callsiteScope, enclosingExport: { ...selected.callsiteScope.enclosingExport, startOffset: 1 } },
+      { ...selected.callsiteScope, exportName: null },
+    ]) {
+      const result = matcher(projectionV2([{ ...selected, callsiteScope: change }])).inspect(inputs(main), policy);
+      assert.equal(result.status, 'rejected'); assert.deepEqual(result.matches, []);
+      assert.equal(result.registration, 'not_evaluated');
+    }
+    assert.equal(matcher(projection([selected])).inspect(inputs(main), policy).status, 'rejected');
+    assert.equal(matcher(projectionV2([selector(main, 'run')])).inspect(inputs(main), policy).status, 'rejected');
+    for (const body of ["const cb = () => send(1); receiver('x', cb);", "receiver('x', (() => send(1)));",
+      "receiver(...args, () => send(1));"]) {
+      const source = "import { send } from './sink.js'; export function run() { " + body + " }";
+      assert.equal(matcher(projectionV2([callbackSelector(source)])).inspect(inputs(source), policy).status, 'rejected');
+    }
+    const nested = "import { send } from './sink.js'; export function run() { receiver('x', () => receiver('y', () => send(1))); }";
+    assert.equal(matcher(projectionV2([callbackSelector(nested, 1)])).inspect(inputs(nested), policy).status, 'rejected');
+  });
+
+  it('uses actual storage route source with a test-only trusted projection, not production policy', () => {
+    const path = 'src/server/routes/storage.ts';
+    const text = readFileSync(new URL('../../' + path, import.meta.url), 'utf8');
+    const source = ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true);
+    const owner = source.statements.find((node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === 'registerStorageRoutes')!;
+    const declaration = source.statements.find((node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === 'jsonDeleteError')!;
+    let callback: ts.Node | undefined;
+    const helperCalls: ts.CallExpression[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node)) {
+        if (ts.isIdentifier(node.expression) && node.expression.text === 'jsonDeleteError') helperCalls.push(node);
+        if (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'delete' &&
+          node.arguments[0] && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === '/v1/credentials/:id') callback = node.arguments[1];
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source); assert.ok(callback); assert.equal(helperCalls.length, 2);
+    const selected = { recordIndex: 0, fixtureId: 'FX-0',
+      callsiteScope: { path, inputSha256: hash(text), exportName: 'registerStorageRoutes',
+        enclosingExport: fingerprint(owner, source), callback: { ...fingerprint(callback, source), argumentIndex: 1 } },
+      declaration: { path, inputSha256: hash(text), ...fingerprint(declaration, source) } };
+    const parse = createDirectSinkMatcher({ ...catalogs(1, 2), selectCurrentDeclarations: () => projectionV2([selected]) });
+    const result = parse.inspect([record('package.json', '{"type":"module"}'), record(path, text)], policy);
+    assert.equal(result.status, 'inspected'); assert.equal(result.matches.length, 1);
+    assert.equal(result.matches[0].sink.callee, 'jsonDeleteError');
+    assert.equal(result.matches[0].sink.module, path);
+    assert.equal(result.matches[0].sink.exportName, 'registerStorageRoutes');
+    assert.equal(result.registration, 'not_evaluated');
+    assert.ok(result.unclassified.some((item: { startOffset: number }) => item.startOffset === helperCalls[1]!.getStart(source)));
   });
 });
