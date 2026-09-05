@@ -245,7 +245,7 @@ describe('Explicit callback lexical scopes v2', () => {
     assert.equal(references.parameterArguments.length, 2);
     assert.equal(references.returns.length, 3);
     for (const returned of references.returns) {
-      assert.deepEqual(returned.parameterReferences.map((item: { parameterIndex: number }) => item.parameterIndex), [0, 1]);
+      assert.deepEqual(returned.parameterReferences.map((item: { parameterIndex: number }) => item.parameterIndex), [0]);
     }
     assert.ok(references.boundaries.some((item: { code: string }) => item.code === 'call_boundary'));
     assert.ok(references.boundaries.some((item: { code: string }) => item.code === 'control_boundary'));

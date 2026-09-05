@@ -16,6 +16,7 @@ import { dirname } from 'node:path';
 import type { GatewayConfig, MaskedCredential, StoredFile } from '../core/types.js';
 import { encrypt, decrypt } from './crypto.js';
 import { initializeDb } from './schema.js';
+import { createVaultDeletionError } from './deletion-error.js';
 import {
   readClaudeOAuthToken,
   refreshTokenIfNeeded,
@@ -390,7 +391,7 @@ export class Vault {
       .get(id) as { project: string; provider: string; key_name: string } | undefined;
 
     if (!row) {
-      const err = new Error(`Credential not found: id ${id}`);
+      const err = createVaultDeletionError('NOT_FOUND', `Credential not found: id ${id}`);
       vaultAuditLogger.error({ action: 'delete', provider: 'unknown', project: project ?? GLOBAL_PROJECT, success: false, error: err.message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -400,7 +401,7 @@ export class Vault {
     const isSameProject = row.project === project;
 
     if (!isGlobal && !isSameProject) {
-      const err = new Error(
+      const err = createVaultDeletionError('UNAUTHORIZED',
         `Unauthorized: credential belongs to project "${row.project}", not "${project ?? '_global'}"`,
       );
       vaultAuditLogger.error({ action: 'delete', provider: row.provider, keyName: row.key_name, project: row.project, success: false, error: err.message } satisfies VaultAuditEvent);
@@ -523,7 +524,7 @@ export class Vault {
       .get(id) as { project: string; provider: string; file_name: string } | undefined;
 
     if (!row) {
-      const err = new Error(`File not found: id ${id}`);
+      const err = createVaultDeletionError('NOT_FOUND', `File not found: id ${id}`);
       vaultAuditLogger.error({ action: 'delete_file', provider: 'unknown', project: project ?? GLOBAL_PROJECT, success: false, error: err.message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -533,7 +534,7 @@ export class Vault {
     const isSameProject = row.project === project;
 
     if (!isGlobal && !isSameProject) {
-      const err = new Error(
+      const err = createVaultDeletionError('UNAUTHORIZED',
         `Unauthorized: file belongs to project "${row.project}", not "${project ?? '_global'}"`,
       );
       vaultAuditLogger.error({ action: 'delete_file', provider: row.provider, fileName: row.file_name, project: row.project, success: false, error: err.message } satisfies VaultAuditEvent);
