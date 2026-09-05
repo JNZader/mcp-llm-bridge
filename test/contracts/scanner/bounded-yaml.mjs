@@ -66,9 +66,11 @@ function pair(text) {
   return null;
 }
 
-export function decodeBoundedYaml(source, { preserveScalarStyle = false } = {}) {
+export function decodeBoundedYaml(source, { preserveScalarStyle = false, allowEmptySequences = false } = {}) {
   const wrap = (value, style) => preserveScalarStyle ? { [YAML_SCALAR]: true, value, style } : value;
-  const readScalar = (text) => wrap(scalar(text), /^["']/.test(text) ? 'quoted' : 'plain');
+  const readScalar = (text) => allowEmptySequences && text === '[]'
+    ? []
+    : wrap(scalar(text), /^["']/.test(text) ? 'quoted' : 'plain');
   if (typeof source !== 'string' || source.length > 65_536 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f\ufeff]/.test(source)) fail();
   source = source.replace(/\r\n?/g, '\n');
   const lines = source.split('\n').map((text, index, all) => ({ text, break: index < all.length - 1 }));
