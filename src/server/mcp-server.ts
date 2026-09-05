@@ -28,6 +28,28 @@ type ToolCallResult = {
   isError?: boolean;
 };
 
+const SAFE_MCP_FAILURE = {
+  error: 'An unexpected internal error occurred.',
+  code: 'INTERNAL_ERROR',
+} as const;
+
+function safeToolCallResult(): ToolCallResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(SAFE_MCP_FAILURE) }],
+    isError: true,
+  };
+}
+
+function dynamicPluginOperationEvent(summary: DynamicPluginLoadSummary) {
+  return {
+    enabled: summary.enabled,
+    loaded: summary.loaded.length,
+    skipped: summary.skipped.length,
+    errors: summary.errors.length,
+    collisions: summary.collisions.length,
+  };
+}
+
 export interface StartMcpServerOptions {
   router: Router;
   vault: Vault;
@@ -276,21 +298,25 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    return handleToolCall(
-      name,
-      (args ?? {}) as Record<string, unknown>,
-      router,
-      vault,
-      groupStore,
-      costTracker,
-      bridge,
-      codeSearch,
-      stateManager,
-      approvalStore,
-      securityProfile,
-      enforcer,
-      pageIndexTools,
-    );
+    try {
+      return await handleToolCall(
+        name,
+        (args ?? {}) as Record<string, unknown>,
+        router,
+        vault,
+        groupStore,
+        costTracker,
+        bridge,
+        codeSearch,
+        stateManager,
+        approvalStore,
+        securityProfile,
+        enforcer,
+        pageIndexTools,
+      );
+    } catch {
+      return safeToolCallResult();
+    }
   });
 
   // Apply security profile enforcement — overwrites handlers above with
@@ -302,22 +328,27 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
     enforcer.wrapHandlers(
       server,
       TOOLS,
-      (name, args) =>
-        handleToolCall(
-          name,
-          args,
-          router,
-          vault,
-          groupStore,
-          costTracker,
-          bridge,
-          codeSearch,
-          stateManager,
-          approvalStore,
-          securityProfile,
-          enforcer,
-          pageIndexTools,
-        ),
+      async (name, args) => {
+        try {
+          return await handleToolCall(
+            name,
+            args,
+            router,
+            vault,
+            groupStore,
+            costTracker,
+            bridge,
+            codeSearch,
+            stateManager,
+            approvalStore,
+            securityProfile,
+            enforcer,
+            pageIndexTools,
+          );
+        } catch {
+          return safeToolCallResult();
+        }
+      },
     );
   }
 
@@ -359,9 +390,9 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
       || dynamicPluginLoadSummary.errors.length > 0
       || dynamicPluginLoadSummary.collisions.length > 0
     ) {
-      logger.warn({ dynamicPluginLoadSummary }, 'Dynamic MCP plugin admission completed with quarantined entries');
+      logger.warn({ dynamicPluginOperation: dynamicPluginOperationEvent(dynamicPluginLoadSummary) }, 'Dynamic MCP plugin admission completed with quarantined entries');
     } else {
-      logger.info({ dynamicPluginLoadSummary }, 'Dynamic MCP plugin admission completed');
+      logger.info({ dynamicPluginOperation: dynamicPluginOperationEvent(dynamicPluginLoadSummary) }, 'Dynamic MCP plugin admission completed');
     }
   }
 

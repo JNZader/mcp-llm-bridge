@@ -30,6 +30,18 @@ import {
 } from './mcp-tool-handlers.js';
 import { dynamicToolAdapter } from './mcp-server.js';
 
+const SAFE_MCP_FAILURE = {
+  error: 'An unexpected internal error occurred.',
+  code: 'INTERNAL_ERROR',
+} as const;
+
+function safeMcpResult(): McpToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(SAFE_MCP_FAILURE) }],
+    isError: true,
+  };
+}
+
 export interface McpDispatchContext {
   router: Router;
   vault: Vault;
@@ -77,12 +89,7 @@ async function handleDynamicToolFallback(
   enforcer?: ProfileEnforcer,
 ): Promise<McpToolResult> {
   if (enforcer && !enforcer.authorize(toolName)) {
-    return {
-      content: [
-        { type: 'text', text: JSON.stringify({ error: `Tool '${toolName}' denied by security profile` }) },
-      ],
-      isError: true,
-    };
+    return safeMcpResult();
   }
 
   if (dynamicToolAdapter?.hasTool(toolName)) {
@@ -99,12 +106,7 @@ async function handleDynamicToolFallback(
     }
   }
 
-  return {
-    content: [
-      { type: 'text', text: JSON.stringify({ error: `Unknown tool: ${toolName}` }) },
-    ],
-    isError: true,
-  };
+  return safeMcpResult();
 }
 
 export async function dispatchToolCall(
@@ -140,7 +142,7 @@ export async function dispatchToolCall(
 
     switch (toolName) {
       case 'llm_generate':
-        return handleLlmGenerateTool(args, router, bridge);
+        return await handleLlmGenerateTool(args, router, bridge);
 
       case 'vault_store':
       case 'vault_list':
@@ -183,10 +185,10 @@ export async function dispatchToolCall(
         return handleApprovalTool(toolName, args, approvalStore)!;
 
       case 'local_llm_generate':
-        return handleLocalLlmGenerateTool(args, router);
+        return await handleLocalLlmGenerateTool(args, router);
 
       case 'discover_models':
-        return handleDiscoverModelsTool(args, vault);
+        return await handleDiscoverModelsTool(args, vault);
 
       case 'conversation_paginate':
       case 'conversation_get_page':
@@ -198,13 +200,9 @@ export async function dispatchToolCall(
         return (await handlePageIndexTool(toolName, args, pageIndexTools))!;
 
       default:
-        return handleDynamicToolFallback(toolName, args, enforcer);
+        return await handleDynamicToolFallback(toolName, args, enforcer);
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
-      isError: true,
-    };
+  } catch {
+    return safeMcpResult();
   }
 }

@@ -9,9 +9,15 @@ import { getLocalLLMUrls, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
 
+const SAFE_MCP_FAILURE = {
+  error: 'An unexpected internal error occurred.',
+  code: 'INTERNAL_ERROR',
+} as const;
+
 function jsonResult(payload: unknown, isError?: boolean): McpToolResult {
+  const body = isError ? SAFE_MCP_FAILURE : payload;
   return {
-    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    content: [{ type: 'text', text: JSON.stringify(body) }],
     ...(isError ? { isError: true } : {}),
   };
 }
