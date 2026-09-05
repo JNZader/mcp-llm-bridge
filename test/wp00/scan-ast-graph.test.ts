@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import ts from 'typescript';
+// @ts-expect-error Deliberate internal ESM JavaScript scanner seam.
+import { createNodeNextProgramContext } from '../contracts/scanner/typescript-program.mjs';
 // @ts-expect-error Deliberate ESM JavaScript contract module.
 import { inspectNodeNextModuleGraph } from '../contracts/scanner/typescript-graph.mjs';
 
@@ -91,6 +93,25 @@ describe('Explicit inventory-only NodeNext ESM module graph', () => {
     assert.equal(excess.status, 'rejected');
     assert.equal(excess.unresolved[0].code, 'resource_limit');
     assert.deepEqual(excess.edges, []);
+  });
+
+  it('keeps mutable compiler contexts local and graph results detached across inspections', () => {
+    const inputs = [scope(), record('main.ts', 'export const value = 1;')];
+    const context = createNodeNextProgramContext(inputs, 'nodenext-explicit-v1');
+    assert.equal(context.status, 'available');
+    assert.ok(Object.isFrozen(context));
+    assert.ok(Object.isFrozen(context.inventory.identities));
+    const expected = inspect(inputs);
+    assert.equal(expected.closed, true);
+    const source = context.program.getSourceFile(context.inventory.rootNames[0]);
+    source.text = 'mutated compiler object';
+    inputs[1]!.bytes.fill(0);
+    assert.equal(context.inventory.host.readFile('main.ts'), 'export const value = 1;');
+    const repeated = inspect([scope(), record('main.ts', 'export const value = 1;')]);
+    assert.deepEqual(repeated, expected);
+    assert.equal(Object.hasOwn(repeated, 'program'), false);
+    assert.equal(Object.hasOwn(repeated, 'inventory'), false);
+    assert.equal(createNodeNextProgramContext([], 'bundler').code, 'policy_unavailable');
   });
 
   it('constructs the real Program/checker without ambient filesystem fallbacks', () => {
