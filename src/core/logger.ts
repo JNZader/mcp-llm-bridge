@@ -22,10 +22,47 @@ export interface LoggerConfig {
   pretty?: boolean;
 }
 
+const SENSITIVE_LOG_PATHS = [
+  'apiKey',
+  'api_key',
+  'authorization',
+  'token',
+  'password',
+  'secret',
+  'credential',
+  'prompt',
+  'response',
+  'content',
+  'err',
+  'error',
+  '*.apiKey',
+  '*.api_key',
+  '*.authorization',
+  '*.token',
+  '*.password',
+  '*.secret',
+  '*.credential',
+  '*.prompt',
+  '*.response',
+  '*.content',
+  '*.err',
+  '*.error',
+];
+
+const LOG_OPTIONS = {
+  redact: {
+    paths: SENSITIVE_LOG_PATHS,
+    censor: '[REDACTED]',
+  },
+} satisfies Pick<pino.LoggerOptions, 'redact'>;
+
 /**
  * Create a configured logger instance.
  */
-export function createLogger(config: LoggerConfig = {}): pino.Logger {
+export function createLogger(
+  config: LoggerConfig = {},
+  destination?: pino.DestinationStream,
+): pino.Logger {
   const envLevel = (process.env['LOG_LEVEL'] ?? 'info').toLowerCase() as LogLevel;
   const level = config.level ?? envLevel;
   const pretty = config.pretty ?? process.env['NODE_ENV'] !== 'production';
@@ -36,6 +73,7 @@ export function createLogger(config: LoggerConfig = {}): pino.Logger {
   // logs-on-stderr is the canonical, harmless choice. So: stderr always.
   if (pretty) {
     return pino({
+      ...LOG_OPTIONS,
       level,
       transport: {
         target: 'pino-pretty',
@@ -49,7 +87,7 @@ export function createLogger(config: LoggerConfig = {}): pino.Logger {
     });
   }
 
-  return pino({ level }, pino.destination(2));
+  return pino({ ...LOG_OPTIONS, level }, destination ?? pino.destination(2));
 }
 
 /**
@@ -61,6 +99,9 @@ export const logger = createLogger();
 /**
  * Create a child logger with additional context.
  */
-export function childLogger(bindings: pino.Bindings): pino.Logger {
-  return logger.child(bindings);
+export function childLogger(
+  bindings: pino.Bindings,
+  parent: pino.Logger = logger,
+): pino.Logger {
+  return parent.child(bindings);
 }
