@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 // @ts-expect-error Deliberate ESM JavaScript contract module.
-import { decodeBoundedYaml } from '../contracts/scanner/bounded-yaml.mjs';
+import { decodeBoundedYaml, YAML_SCALAR } from '../contracts/scanner/bounded-yaml.mjs';
 
 const decode = (source: string) => decodeBoundedYaml(source).value;
 const plain = (source: string) => JSON.parse(JSON.stringify(decode(source)));
 const reject = (source: string) => assert.throws(() => decode(source), { message: 'WP00 YAML: unsupported_or_invalid' });
 
 describe('Bounded YAML decoding component, not Actions admission', () => {
+  it('optionally preserves unforgeable scalar style metadata without changing default textual decoding', () => {
+    const source = 'plain: false\nquoted: "false"\nblock: |-\n  false\n';
+    const value = decodeBoundedYaml(source, { preserveScalarStyle: true }).value;
+    assert.equal(value.plain[YAML_SCALAR], true);
+    assert.deepEqual([value.plain.style, value.quoted.style, value.block.style], ['plain', 'quoted', 'block']);
+    assert.deepEqual(plain(source), { plain: 'false', quoted: 'false', block: 'false' });
+  });
   it('decodes nested maps, block sequences and compact sequence mappings without implicit scalar coercion', () => {
     const source = 'on: push\njobs:\n  build:\n    steps:\n      - name: Check\n        run: echo ok\n      - uses: local/action\n    env:\n      FLAG: true\n      COUNT: 12\n';
     assert.deepEqual(plain(source), { on: 'push', jobs: { build: { steps: [{ name: 'Check', run: 'echo ok' }, { uses: 'local/action' }], env: { FLAG: 'true', COUNT: '12' } } } });

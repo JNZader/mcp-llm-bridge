@@ -3,6 +3,7 @@
 // are null. Supports maps, sequences, inline sequence maps, single-line quoted
 // scalars and |/> blocks. Flow collections, tags, anchors, aliases and merges reject.
 // Scalar semantics: https://yaml.org/spec/1.2.2/ sections 7.3 and 8.1.
+export const YAML_SCALAR = Symbol('wp00-yaml-scalar');
 const fail = () => { throw new Error('WP00 YAML: unsupported_or_invalid'); };
 const indent = (line) => /^ */.exec(line)[0].length;
 const escapeValues = { '0': '\0', a: '\x07', b: '\b', t: '\t', '\t': '\t', n: '\n', v: '\v', f: '\f', r: '\r',
@@ -65,7 +66,9 @@ function pair(text) {
   return null;
 }
 
-export function decodeBoundedYaml(source) {
+export function decodeBoundedYaml(source, { preserveScalarStyle = false } = {}) {
+  const wrap = (value, style) => preserveScalarStyle ? { [YAML_SCALAR]: true, value, style } : value;
+  const readScalar = (text) => wrap(scalar(text), /^["']/.test(text) ? 'quoted' : 'plain');
   if (typeof source !== 'string' || source.length > 65_536 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f\ufeff]/.test(source)) fail();
   source = source.replace(/\r\n?/g, '\n');
   const lines = source.split('\n').map((text, index, all) => ({ text, break: index < all.length - 1 }));
@@ -136,17 +139,17 @@ export function decodeBoundedYaml(source) {
           value.push(node(level + 2, depth + 1));
         } else {
           index += 1;
-          if (/^[|>]/.test(rest)) { value.push(block(rest, level)); continue; }
+          if (/^[|>]/.test(rest)) { value.push(wrap(block(rest, level), 'block')); continue; }
           skip();
-          value.push(rest ? scalar(rest) : index < lines.length && indent(lines[index].text) > level ? node(indent(lines[index].text), depth + 1) : null);
+          value.push(rest ? readScalar(rest) : index < lines.length && indent(lines[index].text) > level ? node(indent(lines[index].text), depth + 1) : null);
         }
       } else {
         const entry = pair(text);
         if (!entry || entry[0] === '<<' || Object.hasOwn(value, entry[0])) fail();
         index += 1;
         const [key, rest] = entry;
-        if (/^[|>]/.test(rest)) value[key] = block(rest, level);
-        else if (rest) value[key] = scalar(rest);
+        if (/^[|>]/.test(rest)) value[key] = wrap(block(rest, level), 'block');
+        else if (rest) value[key] = readScalar(rest);
         else {
           skip();
           const nextLevel = index < lines.length ? indent(lines[index].text) : -1;
