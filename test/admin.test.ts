@@ -1058,14 +1058,17 @@ describe('GET /v1/admin/models/sync/history', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; supportedProviders: string[] };
+      details: { field: string; supportedProviders: string[] };
     };
 
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid provider for provider');
-    assert.equal(data.details.field, 'provider');
-    assert.equal(data.details.received, 'invalid-provider');
-    assert.ok(Array.isArray(data.details.supportedProviders));
+    assert.equal('received' in data.details, false);
+    assert.deepEqual(data.details, {
+      field: 'provider',
+      supportedProviders: ['openai', 'groq', 'openrouter', 'anthropic', 'gemini'],
+    });
+    assert.equal(JSON.stringify(data).includes('invalid-provider'), false);
   });
 
   it('returns 400 for invalid limit filter with clear error payload', async () => {
@@ -1075,14 +1078,14 @@ describe('GET /v1/admin/models/sync/history', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; min: number; max: number };
+      details: { field: string; min: number; max: number };
     };
 
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid numeric value for limit');
+    assert.equal('received' in data.details, false);
     assert.deepEqual(data.details, {
       field: 'limit',
-      received: '0',
       min: 1,
       max: 500,
     });

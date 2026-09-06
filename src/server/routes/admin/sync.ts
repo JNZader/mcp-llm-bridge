@@ -1,5 +1,8 @@
 import type { Context, Hono } from 'hono';
 import type Database from 'better-sqlite3';
+import { safeError } from '../../../core/safe-error.js';
+import type { ModelSyncRunStatus } from '../../../model-sync/index.js';
+import type { PriceSyncRunStatus } from '../../../price-sync/index.js';
 
 import type { Vault } from '../../../vault/vault.js';
 import {
@@ -228,7 +231,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       const provider = c.req.query('provider') ?? undefined;
       const providerValidation = validateOptionalProvider(provider, 'provider');
       if (!providerValidation.ok) {
-        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', providerValidation.details);
+        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', { field: 'provider', supportedProviders: supportedSyncProviders });
       }
 
       const syncManager = new ModelSyncManager(deps.db);
@@ -237,12 +240,11 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         : supportedSyncProviders.map((supportedProvider) => syncManager.getRunStatus(supportedProvider));
 
       return c.json({
-        statuses,
+        statuses: statuses.map(projectModelSyncStatus),
         count: statuses.length,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -257,12 +259,12 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
 
       const providerValidation = validateOptionalProvider(provider, 'provider');
       if (!providerValidation.ok) {
-        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', providerValidation.details);
+        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', { field: 'provider', supportedProviders: supportedSyncProviders });
       }
 
       const limitValidation = validateLimit(limitStr, 'limit');
       if (!limitValidation.ok) {
-        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', limitValidation.details);
+        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', { field: 'limit', min: 1, max: maxSyncHistoryLimit });
       }
 
       const syncManager = new ModelSyncManager(deps.db);
@@ -279,13 +281,12 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           modelsFound: h.modelsFound,
           modelsAdded: h.modelsAdded,
           modelsRemoved: h.modelsRemoved,
-          error: h.error,
+          error: projectSyncDiagnostic(h, 'error'),
         })),
         count: history.length,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -356,10 +357,9 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       }
 
       const priceManager = new PriceManager(deps.db);
-      return c.json(priceManager.getRunStatus());
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+      return c.json(projectPriceSyncStatus(priceManager.getRunStatus()));
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -372,7 +372,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       const limitStr = c.req.query('limit');
       const limitValidation = validateLimit(limitStr, 'limit');
       if (!limitValidation.ok) {
-        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', limitValidation.details);
+        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', { field: 'limit', min: 1, max: maxSyncHistoryLimit });
       }
 
       const priceManager = new PriceManager(deps.db);
@@ -384,13 +384,59 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           syncedAt: entry.syncedAt,
           modelsUpdated: entry.modelsUpdated,
           modelsAdded: entry.modelsAdded,
-          error: entry.error,
+          error: projectSyncDiagnostic(entry, 'error'),
         })),
         count: history.length,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
+}
+
+function projectSyncDiagnostic(source: object, key: string): string | null | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (descriptor === undefined) return undefined;
+  if ('value' in descriptor && descriptor.value == null) return descriptor.value;
+  return safeError('INTERNAL_ERROR').message;
+}
+
+function projectSyncTiming(status: ModelSyncRunStatus | PriceSyncRunStatus) {
+  return {
+    isRunning: status.isRunning,
+    startedAt: status.startedAt,
+    lastCompletedAt: status.lastCompletedAt,
+    lastSuccessAt: status.lastSuccessAt,
+    lastError: projectSyncDiagnostic(status, 'lastError'),
+  };
+}
+
+function projectModelSyncStatus(status: ModelSyncRunStatus) {
+  const summary = status.lastResultSummary;
+  return {
+    provider: status.provider,
+    ...projectSyncTiming(status),
+    lastResultSummary: summary == null ? summary : {
+      provider: summary.provider,
+      timestamp: summary.timestamp,
+      modelsFound: summary.modelsFound,
+      modelsAdded: summary.modelsAdded,
+      modelsRemoved: summary.modelsRemoved,
+      error: projectSyncDiagnostic(summary, 'error'),
+    },
+  };
+}
+
+function projectPriceSyncStatus(status: PriceSyncRunStatus) {
+  const summary = status.lastResultSummary;
+  return {
+    ...projectSyncTiming(status),
+    lastResultSummary: summary == null ? summary : {
+      timestamp: summary.timestamp,
+      updated: summary.updated,
+      added: summary.added,
+      unchanged: summary.unchanged,
+      error: projectSyncDiagnostic(summary, 'error'),
+    },
+  };
 }
