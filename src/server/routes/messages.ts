@@ -71,13 +71,12 @@ async function handleStreamingMessages(
 	let first: IteratorResult<AnthropicSSEEvent>;
 	try {
 		first = await generator.next();
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return jsonAnthropicError(c, 500, "api_error", message);
+	} catch {
+		return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 	}
 
 	if (first.done) {
-		return jsonAnthropicError(c, 500, "api_error", "Streaming produced no events");
+		return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 	}
 
 	const firstEvent = first.value;
@@ -89,14 +88,13 @@ async function handleStreamingMessages(
 			let next: IteratorResult<AnthropicSSEEvent>;
 			try {
 				next = await generator.next();
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+			} catch {
 				try {
 					await stream.writeSSE({
 						event: "error",
 						data: JSON.stringify({
 							type: "error",
-							error: { type: "api_error", message },
+							error: { type: "api_error", message: INTERNAL_ERROR_MESSAGE },
 						}),
 					});
 				} catch {

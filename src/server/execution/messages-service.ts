@@ -12,6 +12,7 @@
 import { randomUUID } from "node:crypto";
 
 import { safeOperation, safeOperationError } from "../../core/safe-operation.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { InternalLLMResponse } from "../../core/internal-model.js";
 import type { Router } from "../../core/router.js";
@@ -172,10 +173,6 @@ function readMetadataString(
 ): string | undefined {
 	const value = metadata?.[key];
 	return typeof value === "string" ? value : undefined;
-}
-
-function toError(error: unknown): Error {
-	return error instanceof Error ? error : new Error(String(error));
 }
 
 async function* toAsyncIterable<T>(items: readonly T[]): AsyncGenerator<T> {
@@ -471,7 +468,7 @@ export async function* executeStreamingMessages(
 			if (chunk.done) break;
 			current = await chunkIterator.next();
 		}
-	} catch (error) {
+	} catch {
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
 				provider: resolvedProvider,
@@ -485,7 +482,7 @@ export async function* executeStreamingMessages(
 			event: "error",
 			data: {
 				type: "error",
-				error: { type: "api_error", message: toError(error).message },
+				error: { type: "api_error", message: toSafeHttpError(safeError("INTERNAL_ERROR")).body.error },
 			},
 		};
 		return;

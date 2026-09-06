@@ -507,7 +507,8 @@ describe("POST /v1/messages (stream: true)", () => {
 		const body = (await res.json()) as { type: string; error: { type: string; message: string } };
 		assert.equal(body.type, "error");
 		assert.equal(body.error.type, "api_error");
-		assert.match(body.error.message, /connection refused/);
+		assert.equal(body.error.message, toSafeHttpError(safeError("INTERNAL_ERROR")).body.error);
+		assert.equal(JSON.stringify(body).includes("connection refused"), false);
 	});
 
 	it("emits an `error` SSE event and closes the stream when the provider fails mid-stream", async () => {
@@ -537,6 +538,7 @@ describe("POST /v1/messages (stream: true)", () => {
 		assert.equal(errorEvent.data["type"], "error");
 		const error = errorEvent.data["error"] as Record<string, unknown>;
 		assert.equal(error["type"], "api_error");
-		assert.match(error["message"] as string, /provider dropped connection/);
+		assert.equal(error["message"], toSafeHttpError(safeError("INTERNAL_ERROR")).body.error);
+		assert.equal(JSON.stringify(events).includes("provider dropped connection"), false);
 	});
 });

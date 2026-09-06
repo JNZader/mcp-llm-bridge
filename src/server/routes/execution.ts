@@ -102,6 +102,22 @@ function handleStreamingRequest(
 
 		c.req.raw.signal.addEventListener("abort", abortHandler, { once: true });
 
+		let terminalStarted = false;
+		const writeTerminalError = async () => {
+			if (terminalStarted || c.req.raw.signal.aborted) return;
+			terminalStarted = true;
+			try {
+				await stream.writeSSE({
+					data: JSON.stringify({
+						error: { message: INTERNAL_ERROR_MESSAGE, type: "server_error", code: null },
+					}),
+				});
+				await stream.writeSSE({ data: "[DONE]" });
+			} catch {
+				// Client may have already disconnected; never retry a terminal write.
+			}
+		};
+
 		try {
 			await executor.execute({
 				writeChunk: async (chunk) => {
@@ -116,22 +132,16 @@ function handleStreamingRequest(
 						),
 					});
 				},
-				writeTerminalError: async (error) => {
-					try {
-						await stream.writeSSE({
-							data: JSON.stringify({
-								error: { message: error.message, type: "server_error", code: null },
-							}),
-						});
-						await stream.writeSSE({ data: "[DONE]" });
-					} catch {
-						// Stream may already be closed
-					}
-				},
+				writeTerminalError,
 				writeDone: async () => {
+					if (terminalStarted || c.req.raw.signal.aborted) return;
+					terminalStarted = true;
 					await stream.writeSSE({ data: "[DONE]" });
 				},
 			});
+		} catch {
+			// Resolution and fallback can fail before the executor invokes its terminal callback.
+			await writeTerminalError();
 		} finally {
 			c.req.raw.signal.removeEventListener("abort", abortHandler);
 		}
