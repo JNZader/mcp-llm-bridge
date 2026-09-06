@@ -3,6 +3,7 @@ import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import type { Router } from "../../core/router.js";
 import { validateChatCompletions, validateGenerateRequest } from "../../core/schemas.js";
 import {
@@ -18,9 +19,6 @@ import {
 	jsonGenerateValidationError,
 } from "../http-helpers/request-validation.js";
 import {
-	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
-} from "../http-helpers/chat-request.js";
-import {
 	resolveRequestScope,
 	type RequestScope,
 } from "../http-helpers/request-scope.js";
@@ -31,6 +29,8 @@ import {
 import { executeGenerateRequest } from "../execution/generate-service.js";
 import { createStreamExecutor } from "../streaming/stream-executor.js";
 import { buildSSEChunkEvent } from "../../transformers/streaming.js";
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
 
 export interface ExecutionRouteDeps {
 	router: Router;
@@ -167,9 +167,8 @@ export function registerExecutionRoutes(
 					requestLogger,
 				}),
 			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -191,9 +190,8 @@ export function registerExecutionRoutes(
 			let preparedRequest;
 			try {
 				preparedRequest = prepareChatCompletionsRequest(validated);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				return jsonChatInvalidRequestError(c, message, null);
+			} catch {
+				return jsonChatInvalidRequestError(c, "", null);
 			}
 
 			const scope = resolveRequestScope(c);
@@ -210,28 +208,19 @@ export function registerExecutionRoutes(
 				);
 			}
 
-			try {
-				return c.json(
-					await executeNonStreamingChatCompletions({
-						prepared: preparedRequest,
-						router,
-						scope,
-						requestLogger,
-					}),
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				if (message === CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED) {
-					return jsonChatInvalidRequestError(c, message, "messages");
-				}
-				throw error;
-			}
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			return c.json(
+				await executeNonStreamingChatCompletions({
+					prepared: preparedRequest,
+					router,
+					scope,
+					requestLogger,
+				}),
+			);
+		} catch {
 			return c.json(
 				{
 					error: {
-						message,
+						message: INTERNAL_ERROR_MESSAGE,
 						type: "server_error",
 						param: null,
 						code: null,

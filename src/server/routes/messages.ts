@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import type { Router } from "../../core/router.js";
 import { TransformError } from "../../core/transformer.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
@@ -13,6 +14,8 @@ import {
 	prepareMessagesRequest,
 } from "../execution/messages-service.js";
 import { resolveRequestScope, type RequestScope } from "../http-helpers/request-scope.js";
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
 
 export interface MessagesRouteDeps {
 	router: Router;
@@ -160,9 +163,8 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesRouteDeps): void
 				requestLogger,
 			});
 			return c.json(response);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return jsonAnthropicError(c, 500, "api_error", message);
+		} catch {
+			return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 		}
 	});
 }

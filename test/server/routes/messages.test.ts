@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { Hono } from "hono";
 
 import { registerMessagesRoutes } from "../../../src/server/routes/messages.js";
+import { safeError, toSafeHttpError } from "../../../src/core/safe-error.js";
 import type { InternalLLMResponse } from "../../../src/core/internal-model.js";
 import type { InternalLLMChunk } from "../../../src/transformers/streaming.js";
 
@@ -234,8 +235,9 @@ describe("POST /v1/messages", () => {
 	});
 
 	it("returns a 500 Anthropic-shaped error when the router fails", async () => {
+		const canary = "all providers failed: private-router-canary";
 		const app = buildApp(async () => {
-			throw new Error("all providers failed");
+			throw new Error(canary);
 		});
 
 		const res = await app.request("/v1/messages", {
@@ -251,7 +253,8 @@ describe("POST /v1/messages", () => {
 		const body = (await res.json()) as { type: string; error: { type: string; message: string } };
 		assert.equal(body.type, "error");
 		assert.equal(body.error.type, "api_error");
-		assert.match(body.error.message, /all providers failed/);
+		assert.equal(body.error.message, toSafeHttpError(safeError("INTERNAL_ERROR")).body.error);
+		assert.equal(JSON.stringify(body).includes(canary), false);
 	});
 });
 
