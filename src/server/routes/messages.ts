@@ -143,11 +143,18 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesRouteDeps): void
 		try {
 			prepared = prepareMessagesRequest(bodyRecord, scope);
 		} catch (error) {
-			if (error instanceof TransformError) {
-				return jsonAnthropicError(c, 400, "invalid_request_error", error.message);
+			let invalidRequest = false;
+			try {
+				// Only local preparation failures can be classified as client validation.
+				invalidRequest = error instanceof TransformError;
+			} catch {
+				// A hostile prototype trap is an unknown operational failure.
 			}
-			const message = error instanceof Error ? error.message : String(error);
-			return jsonAnthropicError(c, 400, "invalid_request_error", message);
+			if (invalidRequest) {
+				const message = toSafeHttpError(safeError("INVALID_REQUEST")).body.error;
+				return jsonAnthropicError(c, 400, "invalid_request_error", message);
+			}
+			return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 		}
 
 		if (bodyRecord["stream"] === true) {

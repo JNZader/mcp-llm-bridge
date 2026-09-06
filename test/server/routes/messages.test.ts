@@ -224,14 +224,15 @@ describe("POST /v1/messages", () => {
 		const res = await app.request("/v1/messages", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ max_tokens: 10, messages: [] }),
+			body: JSON.stringify({ max_tokens: 10, messages: [], private_metadata: "private-validation-canary" }),
 		});
 
 		assert.equal(res.status, 400);
 		const body = (await res.json()) as { type: string; error: { type: string; message: string } };
 		assert.equal(body.type, "error");
 		assert.equal(body.error.type, "invalid_request_error");
-		assert.match(body.error.message, /non-empty array/);
+		assert.equal(body.error.message, toSafeHttpError(safeError("INVALID_REQUEST")).body.error);
+		assert.equal(JSON.stringify(body).includes("private-validation-canary"), false);
 	});
 
 	it("returns a 500 Anthropic-shaped error when the router fails", async () => {
