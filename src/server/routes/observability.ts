@@ -7,10 +7,17 @@ import type {
 } from "../../analytics/index.js";
 import { getMetrics, getMetricsContentType, updateProviderAvailability } from "../../core/metrics.js";
 import type { Router } from "../../core/router.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import { LogQuerySchema } from "../../logging/schemas.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 
 const VALID_ANALYTICS_DIMENSIONS = ["total", "hourly", "daily", "channel", "provider", "model"] as const;
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
+const VALIDATION_ERROR_MESSAGE = toSafeHttpError(safeError("INVALID_REQUEST")).body.error;
+const LOG_VALIDATION_FIELDS = [
+	"from", "to", "provider", "model", "correlationId", "status", "minLatencyMs", "limit", "offset",
+] as const;
 
 const ANALYTICS_SOURCES = {
 	LIVE: "live",
@@ -79,27 +86,22 @@ export function registerObservabilityRoutes(
 				return c.json({ error: "Request logging not enabled" }, 503);
 			}
 
-			const query = LogQuerySchema.parse(c.req.query());
-			const logs = await requestLogger.getLogs(query);
-			return c.json(logs);
-		} catch (error) {
-			if (error && typeof error === "object" && "issues" in error) {
-				const issues = (
-					error as { issues: Array<{ message: string; path: string[] }> }
-				).issues;
-				const firstIssue = issues[0];
+			const query = LogQuerySchema.safeParse(c.req.query());
+			if (!query.success) {
+				const path = query.error.issues[0]?.path;
+				const field = path?.length === 1
+					? LOG_VALIDATION_FIELDS.find((allowed) => allowed === path[0]) ?? ""
+					: "";
 				return c.json(
-					{
-						error: firstIssue?.message ?? "Validation error",
-						code: "VALIDATION_ERROR",
-						field: firstIssue?.path?.join(".") ?? "",
-					},
+					{ error: VALIDATION_ERROR_MESSAGE, code: "VALIDATION_ERROR", field },
 					400,
 				);
 			}
 
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			const logs = await requestLogger.getLogs(query.data);
+			return c.json(logs);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -115,18 +117,19 @@ export function registerObservabilityRoutes(
 				return c.json({ error: "Analytics not enabled" }, 503);
 			}
 
-			const dimension = (c.req.query("dimension") ?? "hourly") as AnalyticsDimension;
+			const rawDimension = c.req.query("dimension") ?? "hourly";
+			const dimension = VALID_ANALYTICS_DIMENSIONS.find((allowed) => allowed === rawDimension);
 			const fromStr = c.req.query("from");
 			const toStr = c.req.query("to");
 			const channelId = c.req.query("channelId") || undefined;
 			const provider = c.req.query("provider") || undefined;
 			const model = c.req.query("model") || undefined;
 
-			if (!VALID_ANALYTICS_DIMENSIONS.includes(dimension)) {
+			if (dimension === undefined) {
 				return c.json(
 					{
 						error: "INVALID_PARAMS",
-						message: `Invalid dimension: ${dimension}`,
+						message: rawDimension === "week" ? "Invalid dimension: week" : "Invalid dimension",
 					},
 					400,
 				);
@@ -217,9 +220,8 @@ export function registerObservabilityRoutes(
 					retryRate,
 				},
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -227,9 +229,8 @@ export function registerObservabilityRoutes(
 		try {
 			const { compressionStats } = await import("../../context-compression/output-compression.js");
 			return c.json(compressionStats.getSummary());
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 }
