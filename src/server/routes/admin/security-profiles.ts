@@ -1,8 +1,28 @@
 import type { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
+import { safeError, toSafeHttpError } from '../../../core/safe-error.js';
 
 import { ToolCategorySchema, TrustLevelSchema } from '../../../security/profiles.js';
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError('INTERNAL_ERROR')).body.error;
+const INVALID_REQUEST_MESSAGE = toSafeHttpError(safeError('INVALID_REQUEST')).body.error;
+const VALIDATION_FIELDS = ['project', 'trustLevel', 'allowedCategories', 'rateLimitMax', 'rateLimitWindowMs', 'sandbox'] as const;
+
+function validationDetails(error: z.ZodError) {
+  // Only local schema issues are accepted; field names always come from the finite list.
+  const formErrors: string[] = [];
+  const fieldErrors: Record<string, string[]> = {};
+  for (const issue of error.issues) {
+    if (issue.path.length === 0) {
+      formErrors.push(INVALID_REQUEST_MESSAGE);
+      continue;
+    }
+    const field = VALIDATION_FIELDS.find((allowed) => allowed === issue.path[0]);
+    if (field !== undefined) (fieldErrors[field] ??= []).push(INVALID_REQUEST_MESSAGE);
+  }
+  return { formErrors, fieldErrors };
+}
 
 export interface AdminSecurityProfilesRouteDeps {
   db?: Database.Database;
@@ -31,7 +51,7 @@ export function registerAdminSecurityProfileRoutes(
       const parsed = CreateProfileSchema.safeParse(body);
 
       if (!parsed.success) {
-        return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
+        return c.json({ error: INVALID_REQUEST_MESSAGE, details: validationDetails(parsed.error) }, 400);
       }
 
       const { project, trustLevel, allowedCategories, rateLimitMax, rateLimitWindowMs, sandbox } = parsed.data;
@@ -66,9 +86,8 @@ export function registerAdminSecurityProfileRoutes(
         rateLimitWindowMs,
         sandbox,
       }, 201);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
     }
   });
 
@@ -103,9 +122,8 @@ export function registerAdminSecurityProfileRoutes(
       }));
 
       return c.json({ profiles });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
     }
   });
 
@@ -119,13 +137,12 @@ export function registerAdminSecurityProfileRoutes(
       const result = deps.db.prepare('DELETE FROM security_profiles WHERE project = ?').run(project);
 
       if (result.changes === 0) {
-        return c.json({ error: `No profile found for project "${project}"`, code: 'NOT_FOUND' }, 404);
+        return c.json({ error: 'The requested resource was not found.', code: 'NOT_FOUND' }, 404);
       }
 
       return c.json({ ok: true, project, message: `Profile for "${project}" deleted` });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
     }
   });
 }

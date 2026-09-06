@@ -1,9 +1,29 @@
 import type { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
+import { safeError, toSafeHttpError } from '../../../core/safe-error.js';
 
 import { createApiKey, revokeApiKey, listApiKeys } from '../../../auth/keys.js';
 import { TrustLevelSchema } from '../../../security/profiles.js';
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError('INTERNAL_ERROR')).body.error;
+const INVALID_REQUEST_MESSAGE = toSafeHttpError(safeError('INVALID_REQUEST')).body.error;
+const VALIDATION_FIELDS = ['userId', 'project', 'trustLevel', 'rateLimitMax', 'rateLimitWindowMs', 'budgetUsd', 'expiresAt'] as const;
+
+function validationDetails(error: z.ZodError) {
+  // Only local schema issues are accepted; field names always come from the finite list.
+  const formErrors: string[] = [];
+  const fieldErrors: Record<string, string[]> = {};
+  for (const issue of error.issues) {
+    if (issue.path.length === 0) {
+      formErrors.push(INVALID_REQUEST_MESSAGE);
+      continue;
+    }
+    const field = VALIDATION_FIELDS.find((allowed) => allowed === issue.path[0]);
+    if (field !== undefined) (fieldErrors[field] ??= []).push(INVALID_REQUEST_MESSAGE);
+  }
+  return { formErrors, fieldErrors };
+}
 
 export interface AdminApiKeysRouteDeps {
   db?: Database.Database;
@@ -39,7 +59,7 @@ export function registerAdminApiKeyRoutes(
       const parsed = CreateKeySchema.safeParse(body);
 
       if (!parsed.success) {
-        return c.json({ error: 'Validation failed', details: parsed.error.flatten() }, 400);
+        return c.json({ error: INVALID_REQUEST_MESSAGE, details: validationDetails(parsed.error) }, 400);
       }
 
       const { apiKey, plaintextKey } = createApiKey(deps.db, parsed.data);
@@ -58,9 +78,8 @@ export function registerAdminApiKeyRoutes(
         expiresAt: apiKey.expiresAt,
         createdAt: apiKey.createdAt,
       }, 201);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
     }
   });
 
@@ -93,9 +112,8 @@ export function registerAdminApiKeyRoutes(
       }));
 
       return c.json({ keys: masked });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
     }
   });
 
@@ -114,13 +132,12 @@ export function registerAdminApiKeyRoutes(
       const revoked = revokeApiKey(deps.db, id);
 
       if (!revoked) {
-        return c.json({ error: `No API key found with id "${id}"`, code: 'NOT_FOUND' }, 404);
+        return c.json({ error: 'The requested resource was not found.', code: 'NOT_FOUND' }, 404);
       }
 
       return c.json({ ok: true, id, message: `API key ${id} revoked` });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
     }
   });
 }
