@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { safeError } from "../src/core/safe-error.js";
+import type { CaptureEndInput } from "../src/logging/request-logger.js";
 
 import { CostTracker } from "../src/core/cost-tracker.js";
 import { Router } from "../src/core/router.js";
@@ -72,7 +74,7 @@ function createProvider(id: string, modelId = "test-model"): LLMProvider {
 describe("createStreamExecutor", () => {
 	it("falls back cleanly with a bare Router and no transformer registry", async () => {
 		const router = new Router();
-		const logged: Array<{ error?: Error; responseData?: unknown }> = [];
+		const logged: CaptureEndInput[] = [];
 
 		router.register({
 			...createProvider("mock", "test-model"),
@@ -101,8 +103,8 @@ describe("createStreamExecutor", () => {
 			scope: {},
 			requestLogger: {
 				captureStart: () => ({}) as never,
-				captureEnd: async (_ctx: unknown, input?: { error?: Error; responseData?: unknown }) => {
-					logged.push({ error: input?.error, responseData: input?.responseData });
+				captureEnd: async (_ctx: unknown, input?: CaptureEndInput) => {
+					logged.push(input ?? {});
 				},
 			} as never,
 		});
@@ -113,6 +115,7 @@ describe("createStreamExecutor", () => {
 			},
 			writeFallbackResult: async (result) => {
 				events.push(`fallback:${result.text}`);
+				assert.equal(result.resolvedProvider, "mock");
 			},
 			writeTerminalError: async (error) => {
 				assert.fail(`unexpected terminal error: ${error.message}`);
@@ -125,11 +128,9 @@ describe("createStreamExecutor", () => {
 		assert.deepEqual(events, ["fallback:fallback", "done"]);
 		assert.equal(logged.length, 1);
 		assert.equal(logged[0]?.error, undefined);
-		assert.equal((logged[0]?.responseData as GenerateResponse | undefined)?.text, "fallback");
-		assert.equal(
-			(logged[0]?.responseData as GenerateResponse | undefined)?.resolvedProvider,
-			"mock",
-		);
+		assert.equal(logged[0]?.responseData, undefined);
+		assert.deepEqual(logged, [{ provider: "mock", model: "test-model", attempts: 1, totalTokens: 3 }]);
+		assert.equal(JSON.stringify(logged).includes("fallback"), false);
 	});
 
 	it("falls back to router.generate when no streaming providers resolve", async () => {
@@ -243,9 +244,10 @@ describe("createStreamExecutor", () => {
 				totalTokens: 3,
 				inputTokens: undefined,
 				outputTokens: undefined,
-				responseData: fallbackResult,
+				responseData: undefined,
 			},
 		]);
+		assert.equal(JSON.stringify(logged).includes(fallbackResult.text), false);
 	});
 
 	it("uses the generate compatibility wrapper during zero-stream fallback when transformers are configured", async () => {
@@ -333,12 +335,14 @@ describe("createStreamExecutor", () => {
 			} as never,
 		});
 
+		let delivered: GenerateResponse | undefined;
 		await executor.execute({
 			writeChunk: async () => {
 				assert.fail("should not write streaming chunks during fallback");
 			},
 			writeFallbackResult: async (result) => {
 				events.push(`fallback:${result.text}`);
+				delivered = result;
 			},
 			writeTerminalError: async (error) => {
 				assert.fail(`unexpected terminal error: ${error.message}`);
@@ -369,28 +373,28 @@ describe("createStreamExecutor", () => {
 				totalTokens: 7,
 				inputTokens: undefined,
 				outputTokens: undefined,
-				responseData: {
-					text: "fallback-via-internal",
-					provider: "mock",
-					model: "test-model",
-					tokensUsed: 7,
-					requestedProvider: undefined,
-					requestedModel: "test-model",
-					resolvedProvider: "mock",
-					resolvedModel: "test-model",
-					fallbackUsed: false,
-					latencyMs: (logged[0]?.responseData as GenerateResponse | undefined)?.latencyMs,
-					routing: {
-						strategy: "requested-model",
-						attemptedProviders: ["mock"],
-						decisionReason: "Model test-model requested explicitly",
-					},
-				},
+				responseData: undefined,
 			},
 		]);
-		assert.ok(
-			typeof (logged[0]?.responseData as GenerateResponse | undefined)?.latencyMs === "number",
-		);
+		assert.deepEqual(delivered, {
+			text: "fallback-via-internal",
+			provider: "mock",
+			model: "test-model",
+			tokensUsed: 7,
+			requestedProvider: undefined,
+			requestedModel: "test-model",
+			resolvedProvider: "mock",
+			resolvedModel: "test-model",
+			fallbackUsed: false,
+			latencyMs: delivered?.latencyMs,
+			routing: {
+				strategy: "requested-model",
+				attemptedProviders: ["mock"],
+				decisionReason: "Model test-model requested explicitly",
+			},
+		});
+		assert.equal(typeof delivered?.latencyMs, "number");
+		assert.equal(JSON.stringify(logged).includes("fallback-via-internal"), false);
 	});
 
 	it("omits usage in the zero-stream fallback SSE payload when usage is unknown", () => {
@@ -419,6 +423,13 @@ describe("createStreamExecutor", () => {
 	});
 
 	it("logs truthful routing metadata for successful streaming requests", async () => {
+		const executionContract = createStreamingExecutionContract({
+			requestedProvider: "primary-provider",
+			decisionReason: "Provider primary-provider requested explicitly",
+			strategy: "explicit-provider",
+		});
+		const chunks: string[] = [];
+		const attempts: string[] = [];
 		const logged: Array<{
 			provider?: string;
 			model?: string;
@@ -433,11 +444,6 @@ describe("createStreamExecutor", () => {
 			},
 			router: {
 				resolveStreamingProviders: async () => {
-					const executionContract = createStreamingExecutionContract({
-						requestedProvider: "primary-provider",
-						decisionReason: "Provider primary-provider requested explicitly",
-						strategy: "explicit-provider",
-					});
 
 					return [
 					{
@@ -446,6 +452,7 @@ describe("createStreamExecutor", () => {
 						streamTransformer: {
 							name: "primary-provider",
 							async *transformStream() {
+								attempts.push("primary-provider");
 								throw new Error("primary failed");
 							},
 						},
@@ -458,7 +465,8 @@ describe("createStreamExecutor", () => {
 						streamTransformer: {
 							name: "backup-provider",
 							async *transformStream() {
-								yield { content: "ok", done: false, model: "backup-model" };
+								attempts.push("backup-provider");
+								yield { content: "stream-response-canary", done: false, model: "backup-model" };
 								yield { content: "", done: true, finishReason: "stop" };
 							},
 						},
@@ -494,7 +502,9 @@ describe("createStreamExecutor", () => {
 		});
 
 		await executor.execute({
-			writeChunk: async () => {},
+			writeChunk: async (chunk) => {
+				if (chunk.content) chunks.push(chunk.content);
+			},
 			writeFallbackResult: async () => {
 				assert.fail("should not use fallback result");
 			},
@@ -509,25 +519,26 @@ describe("createStreamExecutor", () => {
 				provider: "backup-provider",
 				model: "backup-model",
 				attempts: 2,
-				responseData: {
-					stream: true,
-					provider: "backup-provider",
-					model: "backup-model",
-					requestedProvider: "primary-provider",
-					requestedModel: "test-model",
-					resolvedProvider: "backup-provider",
-					resolvedModel: "backup-model",
-					fallbackUsed: true,
-					routing: {
-						strategy: "explicit-provider",
-						attemptedProviders: ["primary-provider", "backup-provider"],
-						fallbackFrom: "primary-provider",
-						fallbackTo: "backup-provider",
-						decisionReason: "Provider primary-provider requested explicitly",
-					},
-				},
+				responseData: undefined,
 			},
 		]);
+		assert.deepEqual(executionContract.snapshot("backup-provider"), {
+			requestedProvider: "primary-provider",
+			requestedModel: "test-model",
+			attemptedProviders: ["primary-provider", "backup-provider"],
+			fallbackUsed: true,
+			routing: {
+				strategy: "explicit-provider",
+				attemptedProviders: ["primary-provider", "backup-provider"],
+				fallbackFrom: "primary-provider",
+				fallbackTo: "backup-provider",
+				decisionReason: "Provider primary-provider requested explicitly",
+			},
+		});
+		assert.deepEqual(attempts, ["primary-provider", "backup-provider"]);
+		assert.deepEqual(chunks, ["stream-response-canary"]);
+		assert.equal(JSON.stringify(logged).includes("stream-response-canary"), false);
+		assert.equal(JSON.stringify(logged).includes("primary failed"), false);
 	});
 
 	it("persists exactly one truthful usage row for a successful stream", async () => {
@@ -951,22 +962,8 @@ describe("createStreamExecutor", () => {
 				inputTokens: 2,
 				outputTokens: 3,
 				totalTokens: 5,
-				error: new Error("Stream aborted by client"),
-				responseData: {
-					stream: true,
-					provider: "abortable-provider",
-					model: "abort-model",
-					requestedProvider: undefined,
-					requestedModel: "test-model",
-					resolvedProvider: "abortable-provider",
-					resolvedModel: "abort-model",
-					fallbackUsed: false,
-					routing: {
-						strategy: "direct",
-						attemptedProviders: ["abortable-provider"],
-						decisionReason: "Only abortable-provider was available",
-					},
-				},
+				error: safeError("INTERNAL_ERROR"),
+				responseData: undefined,
 			},
 		]);
 		assert.equal(recordedResults.length, 1);
@@ -977,7 +974,8 @@ describe("createStreamExecutor", () => {
 		assert.equal(recordedResults[0]?.success, false);
 		assert.equal(recordedResults[0]?.attempt, 1);
 		assert.equal(recordedResults[0]?.project, "abort-project");
-		assert.equal(recordedResults[0]?.errorMessage, "Stream aborted by client");
+		assert.equal(recordedResults[0]?.errorMessage, safeError("INTERNAL_ERROR").message);
+		assert.equal(JSON.stringify(loggedEnds).includes("Stream aborted by client"), false);
 		assert.ok((recordedResults[0]?.latencyMs ?? 0) >= 0);
 		assert.equal(passedSignals.length, 1);
 		assert.equal(passedSignals[0]?.aborted, true);

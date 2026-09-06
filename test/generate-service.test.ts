@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { safeError } from "../src/core/safe-error.js";
 
 import { executeGenerateRequest } from "../src/server/execution/generate-service.js";
 
@@ -70,6 +71,10 @@ describe("generate-service", () => {
 			} as never,
 		});
 
+		const durable = captured.filter((entry) => entry.phase === "end");
+		assert.equal(durable.length, 1);
+		assert.equal(durable[0]?.responseData, undefined);
+		assert.equal(JSON.stringify(durable).includes("Strict mode catches more bugs."), false);
 		assert.deepEqual(captured, [
 			{
 				phase: "start",
@@ -98,21 +103,6 @@ describe("generate-service", () => {
 				model: "gpt-4o-mini",
 				totalTokens: 9,
 				attempts: 2,
-				responseData: JSON.stringify({
-					text: "Strict mode catches more bugs.",
-					provider: "mock-provider",
-					model: "gpt-4o-mini",
-					tokensUsed: 9,
-					resolvedProvider: "mock-provider",
-					resolvedModel: "gpt-4o-mini",
-					fallbackUsed: false,
-					routing: {
-						strategy: "mock",
-						attemptedProviders: ["first-provider", "mock-provider"],
-					},
-					stop_reason: "stop",
-					finish_reason: "stop",
-				}),
 			},
 		]);
 
@@ -176,6 +166,7 @@ describe("generate-service", () => {
 				}),
 			failure,
 		);
+		assert.equal(JSON.stringify(captured.filter((entry) => entry.phase === "end")).includes("router blew up"), false);
 
 		assert.deepEqual(captured, [
 			{
@@ -188,7 +179,7 @@ describe("generate-service", () => {
 			{
 				phase: "end",
 				attempts: 1,
-				error: "router blew up",
+				error: safeError("INTERNAL_ERROR").message,
 			},
 		]);
 	});

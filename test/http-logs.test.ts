@@ -1,3 +1,5 @@
+import { safeError } from "../src/core/safe-error.js";
+
 /**
  * HTTP Logs API endpoint tests — GET /v1/logs
  *
@@ -173,6 +175,19 @@ async function seedTestLogs(): Promise<void> {
     });
   }
 }
+
+function assertSafeStreamFailure(raw: string, privateMessage: string) {
+  const data = raw.split("\n").filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim());
+  assert.deepEqual(JSON.parse(data.at(-2)!), {
+    error: { message: safeError("INTERNAL_ERROR").message, type: "server_error", code: null },
+  });
+  assert.equal(data.at(-1), "[DONE]");
+  assert.equal(data.filter((value) => value === "[DONE]").length, 1);
+  assert.equal(data.filter((value) => value !== "[DONE]" && JSON.parse(value).error).length, 1);
+  assert.equal(raw.includes(privateMessage), false);
+}
+
 
 describe('GET /v1/logs', () => {
   before(async () => {
@@ -975,7 +990,7 @@ describe('GET /v1/logs', () => {
         });
 
         assert.equal(res.status, 200);
-        assert.match(res.data, /last startup failure/);
+        assertSafeStreamFailure(res.data, "last startup failure");
         assert.match(res.data, /data: \[DONE\]/);
 
         const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
@@ -990,7 +1005,8 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.provider, 'last-failing-provider');
         assert.equal(data.logs[0]?.model, streamModel);
         assert.equal(data.logs[0]?.attempts, 2);
-        assert.equal(data.logs[0]?.error, 'last startup failure');
+        assert.equal(data.logs[0]?.error, safeError("INTERNAL_ERROR").message);
+        assert.equal(JSON.stringify(data.logs).includes("last startup failure"), false);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);
@@ -1041,7 +1057,7 @@ describe('GET /v1/logs', () => {
 
         assert.equal(res.status, 200);
         assert.match(res.data, /partial/);
-        assert.match(res.data, /mid-stream failure/);
+        assertSafeStreamFailure(res.data, "mid-stream failure");
         assert.doesNotMatch(res.data, /should-not-appear/);
         assert.equal(recoveryProviderCalls, 0);
 
@@ -1057,7 +1073,8 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.provider, 'primary-stream-provider');
         assert.equal(data.logs[0]?.model, streamModel);
         assert.equal(data.logs[0]?.attempts, 1);
-        assert.equal(data.logs[0]?.error, 'mid-stream failure');
+        assert.equal(data.logs[0]?.error, safeError("INTERNAL_ERROR").message);
+        assert.equal(JSON.stringify(data.logs).includes("mid-stream failure"), false);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);
