@@ -40,6 +40,19 @@ export interface ComparisonServiceOptions {
 	defaultTimeoutMs?: number;
 }
 
+interface CostExceededDetails {
+	readonly estimatedCost: number;
+	readonly limit: number;
+}
+
+const costExceededDetails = new WeakMap<object, CostExceededDetails>();
+
+/** Reads constructor-captured budget data without inspecting the thrown value. */
+export function getCostExceededDetails(value: unknown): CostExceededDetails | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	return costExceededDetails.get(value);
+}
+
 /** Error thrown when estimated cost exceeds the budget. */
 export class CostExceededError extends Error {
 	constructor(
@@ -50,6 +63,7 @@ export class CostExceededError extends Error {
 			`Estimated cost $${estimatedCost.toFixed(4)} exceeds limit $${limit.toFixed(4)}`,
 		);
 		this.name = "CostExceededError";
+		costExceededDetails.set(this, Object.freeze({ estimatedCost, limit }));
 	}
 }
 

@@ -4,7 +4,7 @@ import { safeError } from "../../core/safe-error.js";
 
 import { CompareRequestSchema } from "../../comparison/schemas.js";
 import type { ComparisonService } from "../../comparison/service.js";
-import { CostExceededError } from "../../comparison/service.js";
+import { getCostExceededDetails } from "../../comparison/service.js";
 
 export interface ComparisonRouteDeps {
 	comparisonService?: ComparisonService;
@@ -84,22 +84,22 @@ export function registerComparisonRoutes(
 			}
 
 			const result = await comparisonService.compare(validated);
-			return c.json(result);
+			return c.json(projectComparisonResponse(result));
 		} catch (error) {
-			if (error instanceof CostExceededError) {
+			const budget = getCostExceededDetails(error);
+			if (budget !== undefined) {
 				return c.json(
 					{
-						error: error.message,
+						error: "Estimated cost exceeds the configured limit.",
 						code: "COST_EXCEEDED",
-						estimatedCost: error.estimatedCost,
-						limit: error.limit,
+						estimatedCost: budget.estimatedCost,
+						limit: budget.limit,
 					},
 					422,
 				);
 			}
 
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
