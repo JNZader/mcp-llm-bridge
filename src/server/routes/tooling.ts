@@ -1,10 +1,11 @@
 import type { Hono } from "hono";
+import type { getAllLoadBalanceModes } from "../../balancer/index.js";
 
 import { getLocalLLMUrls } from "../../core/local-llm-env.js";
 import { localLLMEnabled } from "../../core/runtime-flags.js";
 import { safeError } from "../../core/safe-error.js";
 import { getLocalLLMStatus } from "../../local-llm/detector.js";
-import { createCatalogFromMcpTools, type ToolSource } from "../../tool-catalog/index.js";
+import { createCatalogFromMcpTools, type ToolCatalog, type ToolSource } from "../../tool-catalog/index.js";
 import { getRuntimeMcpTools } from "../mcp.js";
 
 function getToolCatalog() {
@@ -13,6 +14,8 @@ function getToolCatalog() {
 
 export interface ToolingRouteDeps {
 	getLocalLLMStatus?: typeof getLocalLLMStatus;
+	getToolCatalog?: () => Pick<ToolCatalog, "listAll" | "search">;
+	getStrategies?: () => Promise<ReturnType<typeof getAllLoadBalanceModes>>;
 }
 
 export function registerToolingRoutes(
@@ -20,10 +23,15 @@ export function registerToolingRoutes(
 	deps: ToolingRouteDeps = {},
 ): void {
 	const readLocalLLMStatus = deps.getLocalLLMStatus ?? getLocalLLMStatus;
+	const readToolCatalog = deps.getToolCatalog ?? getToolCatalog;
+	const readStrategies = deps.getStrategies ?? (async () => {
+		const { getAllLoadBalanceModes } = await import("../../balancer/index.js");
+		return getAllLoadBalanceModes();
+	});
 	app.get("/v1/tools/catalog", (c) => {
 		try {
 			const source = c.req.query("source") as ToolSource | undefined;
-			const toolCatalog = getToolCatalog();
+			const toolCatalog = readToolCatalog();
 			const tools = toolCatalog.listAll(source);
 			return c.json({
 				count: tools.length,
@@ -37,9 +45,8 @@ export function registerToolingRoutes(
 					addedAt: t.addedAt,
 				})),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -48,7 +55,7 @@ export function registerToolingRoutes(
 			const query = c.req.query("q") ?? "";
 			const limitStr = c.req.query("limit");
 			const limit = limitStr ? parseInt(limitStr, 10) : 10;
-			const toolCatalog = getToolCatalog();
+			const toolCatalog = readToolCatalog();
 			const results = toolCatalog.search(query, isNaN(limit) ? 10 : limit);
 			return c.json({
 				query,
@@ -62,9 +69,8 @@ export function registerToolingRoutes(
 					tags: t.tags,
 				})),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -120,11 +126,9 @@ export function registerToolingRoutes(
 
 	app.get("/v1/balancer/strategies", async (c) => {
 		try {
-			const { getAllLoadBalanceModes } = await import("../../balancer/index.js");
-			return c.json({ strategies: getAllLoadBalanceModes() });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			return c.json({ strategies: await readStrategies() });
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }
