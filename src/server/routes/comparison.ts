@@ -1,4 +1,6 @@
 import type { Hono } from "hono";
+import type { CompareResponse } from "../../comparison/types.js";
+import { safeError } from "../../core/safe-error.js";
 
 import { CompareRequestSchema } from "../../comparison/schemas.js";
 import type { ComparisonService } from "../../comparison/service.js";
@@ -6,6 +8,43 @@ import { CostExceededError } from "../../comparison/service.js";
 
 export interface ComparisonRouteDeps {
 	comparisonService?: ComparisonService;
+}
+
+function projectComparisonResponse(response: CompareResponse) {
+	return {
+		id: response.id,
+		prompt: response.prompt,
+		createdAt: response.createdAt,
+		results: response.results.map((result) => {
+			const diagnostic = Object.getOwnPropertyDescriptor(result, "error");
+			let error: string | null | undefined;
+			if (diagnostic !== undefined) {
+				if ("value" in diagnostic && diagnostic.value === null) error = null;
+				else if (!("value" in diagnostic) || diagnostic.value !== undefined) {
+					error = safeError("INTERNAL_ERROR").message;
+				}
+			}
+			return {
+				model: result.model,
+				provider: result.provider,
+				status: result.status,
+				response: result.response,
+				error,
+				tokensIn: result.tokensIn,
+				tokensOut: result.tokensOut,
+				costUsd: result.costUsd,
+				latencyMs: result.latencyMs,
+				finishReason: result.finishReason,
+				stabilityScore: result.stabilityScore,
+			};
+		}),
+		summary: {
+			fastestModel: response.summary.fastestModel,
+			cheapestModel: response.summary.cheapestModel,
+			totalCost: response.summary.totalCost,
+			wallClockMs: response.summary.wallClockMs,
+		},
+	};
 }
 
 export function registerComparisonRoutes(
@@ -80,10 +119,9 @@ export function registerComparisonRoutes(
 				limit,
 				offset,
 			});
-			return c.json({ results, count: results.length });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			return c.json({ results: results.map(projectComparisonResponse), count: results.length });
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }
