@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { safeError } from "../../core/safe-error.js";
 
 import {
 	type LegacyCircuitBreakerConfigView,
@@ -11,9 +12,8 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 	app.get("/v1/circuit-breaker/config", (c) => {
 		try {
 			return c.json(getCircuitBreakerAdminConfig());
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -64,9 +64,8 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 				updated: true,
 				config: updateCircuitBreakerAdminConfig(update),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -77,9 +76,8 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 				enabled: config.enabled,
 				breakers: getCircuitBreakerAdminStats(),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }
