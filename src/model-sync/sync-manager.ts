@@ -14,6 +14,8 @@ import {
   type ModelSyncLogRecord,
 } from './types.js';
 import { getFetcherForProvider } from './fetcher.js';
+import { logger } from '../core/logger.js';
+import { safeOperation } from '../core/safe-operation.js';
 
 // === Database Interface (minimal, to be implemented by consumer) ===
 
@@ -351,8 +353,8 @@ export class ModelSyncManager {
         try {
           await this.syncProvider(config);
         } catch (error) {
-          if (!(error instanceof ModelSyncAlreadyRunningError)) {
-            console.error(error);
+          if (getModelSyncAlreadyRunningStatus(error) === undefined) {
+            logger.error(safeOperation('failed'), 'Model auto-sync failed.');
           }
         } finally {
           scheduleNext(config.autoSyncIntervalMs);
