@@ -36,6 +36,38 @@ import type {
 } from './types.js';
 import { ACP_METHODS, ACP_ERROR_CODES } from './types.js';
 import { AcpToMcpTranslator, type TranslationContext } from './translator.js';
+import { safeError } from '../core/safe-error.js';
+
+type AcpErrorCode = (typeof ACP_ERROR_CODES)[keyof typeof ACP_ERROR_CODES];
+
+interface PublicRpcError {
+  readonly code: AcpErrorCode;
+  readonly message: string;
+}
+
+const RPC_ERROR_MESSAGES: Readonly<Record<AcpErrorCode, string>> = Object.freeze({
+  [ACP_ERROR_CODES.TASK_NOT_FOUND]: 'Task was not found.',
+  [ACP_ERROR_CODES.TASK_ALREADY_COMPLETED]: 'Task is already completed.',
+  [ACP_ERROR_CODES.TASK_CANCELLED]: 'Task was cancelled.',
+  [ACP_ERROR_CODES.INVALID_TASK_STATE]: 'Task state is invalid.',
+  [ACP_ERROR_CODES.SERVER_NOT_INITIALIZED]: 'Server is not initialized.',
+  [ACP_ERROR_CODES.PARSE_ERROR]: 'Parse error.',
+  [ACP_ERROR_CODES.INVALID_REQUEST]: 'Invalid request.',
+  [ACP_ERROR_CODES.METHOD_NOT_FOUND]: 'Method was not found.',
+  [ACP_ERROR_CODES.INVALID_PARAMS]: 'Invalid parameters.',
+  [ACP_ERROR_CODES.INTERNAL_ERROR]: safeError('INTERNAL_ERROR').message,
+});
+
+const rpcErrorIdentities = new WeakMap<object, PublicRpcError>();
+
+function projectRpcError(value: unknown): PublicRpcError {
+  const captured = ((typeof value === 'object' && value !== null) || typeof value === 'function')
+    ? rpcErrorIdentities.get(value) : undefined;
+  return captured ?? {
+    code: ACP_ERROR_CODES.INTERNAL_ERROR,
+    message: RPC_ERROR_MESSAGES[ACP_ERROR_CODES.INTERNAL_ERROR],
+  };
+}
 
 // ─── Handler Contract ────────────────────────────────────────
 
@@ -151,14 +183,11 @@ export class AcpServer {
         result,
       };
     } catch (error) {
-      const err = error as { code?: number; message?: string };
+      const publicError = projectRpcError(error);
       return {
         jsonrpc: '2.0',
         id: request.id,
-        error: {
-          code: err.code ?? ACP_ERROR_CODES.INTERNAL_ERROR,
-          message: err.message ?? 'Internal server error',
-        },
+        error: publicError,
       };
     }
   }
@@ -371,9 +400,8 @@ export class AcpServer {
 
       this.tasks.set(taskId, updatedTask);
       this.emitTaskUpdate(updatedTask);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.failTask(taskId, 'EXECUTION_ERROR', message);
+    } catch {
+      this.failTask(taskId, 'EXECUTION_ERROR', safeError('INTERNAL_ERROR').message);
     }
   }
 
@@ -534,8 +562,11 @@ export class AcpServer {
     this.notificationHandler?.({ task });
   }
 
-  private rpcError(code: number, message: string): { code: number; message: string } {
-    return { code, message };
+  private rpcError(code: AcpErrorCode, _message: string): PublicRpcError {
+    const captured = Object.freeze({ code, message: RPC_ERROR_MESSAGES[code] });
+    const error = { ...captured };
+    rpcErrorIdentities.set(error, captured);
+    return error;
   }
 
   // ─── Test Helpers ──────────────────────────────────────────
