@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 
 import type { ApprovalStore } from "../../approval/index.js";
+import { safeError } from "../../core/safe-error.js";
 
 export interface ApprovalRouteDeps {
 	approvalStore?: ApprovalStore;
@@ -17,9 +18,8 @@ export function registerApprovalRoutes(app: Hono, deps: ApprovalRouteDeps): void
 		try {
 			const pending = approvalStore.getPending();
 			return c.json({ requests: pending, count: pending.length });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -39,9 +39,8 @@ export function registerApprovalRoutes(app: Hono, deps: ApprovalRouteDeps): void
 			}
 
 			return c.json(updated);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -61,9 +60,8 @@ export function registerApprovalRoutes(app: Hono, deps: ApprovalRouteDeps): void
 			}
 
 			return c.json(updated);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }
