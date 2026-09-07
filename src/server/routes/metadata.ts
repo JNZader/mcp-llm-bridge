@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 
 import { estimateCost, getPriceTable } from "../../core/pricing.js";
 import type { Router } from "../../core/router.js";
+import { safeError } from "../../core/safe-error.js";
 import { costEstimateQuerySchema } from "../../core/schemas.js";
 import type { LatencyMeasurer } from "../../latency/index.js";
 
@@ -31,12 +32,11 @@ export function registerMetadataRoutes(
 					max_tokens: m.maxTokens,
 				})),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+		} catch {
 			return c.json(
 				{
 					error: {
-						message,
+						message: safeError("INTERNAL_ERROR").message,
 						type: "server_error",
 						param: null,
 						code: null,
@@ -51,9 +51,8 @@ export function registerMetadataRoutes(
 		try {
 			const providers = await router.getProviderStatuses();
 			return c.json({ providers });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -83,9 +82,8 @@ export function registerMetadataRoutes(
 				count: measurements.length,
 				timestamp: new Date().toISOString(),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
