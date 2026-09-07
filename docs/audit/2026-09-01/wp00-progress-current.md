@@ -7,8 +7,10 @@ This report separates implemented behavior from the evidence still required for 
 ## Snapshot and evidence boundaries
 
 - Reconciliation date: **2026-09-06**; the directory retains the original audit date.
-- Source snapshot: **`6c9d998`**, `test(execution): align containment regression contracts`.
-- Latest recorded verification: **88 regression tests plus 517 scoped tests (605 total), and typecheck passed**.
+- Source snapshot: **`e98c308`**, `fix(admin): contain sync operational diagnostics`.
+- Latest recorded verification: **777 tests in the selected verification scope, and typecheck passed**.
+- Earlier scoped snapshots: operations `d422a487` (621), discovery `51a010ef` (654), sync GET `a10ee2d` (719), sync validation `8bf9528f` (752).
+- Successive snapshots overlap and must not be added together.
 - All 11 previously recorded baseline failures were resolved through contract-aligned tests; none remain excluded in those runs.
 - Those results were supplied by the isolated verification handoff; this documentation task did not rerun them.
 - These counts are not the complete product suite and do not establish a whole-product pass.
@@ -23,9 +25,9 @@ It was not a fresh audit of every historical foundation or all production code.
 
 ## Quick path
 
-1. Contain the two remaining `ERR-HTTP-ADMIN-A` operations routes with real route-level RED tests.
-2. Address discovery/catalog failure projections in the same unit without blindly redacting successful discovery data.
-3. Reconcile remaining `ERR-HTTP-ADMIN-B` sync projections after admin-A coverage is complete.
+1. Contain the three remaining `ERR-HTTP-ADMIN-B` approvals catches with real route-level RED tests.
+2. Classify the administrative shell responses against their exact requirements; do not invent a raw-error leak.
+3. Bound the remaining API-A/API-B route projections before implementing their next production slices.
 4. Return to scanner integration when it removes a concrete closure blocker, not merely to add precision.
 
 ## Delivered components versus unit closure
@@ -42,6 +44,11 @@ It was not a fresh audit of every historical foundation or all production code.
 | Execution HTTP | `1b47695`, `dd94f74`, `2a456e1` | Non-streaming failures, both public SSE protocols and Anthropic preparation use constant errors; genuine validation statuses and streaming lifecycle remain tested. |
 | Observability HTTP | `1cb858b` | Local finite validation fields and constant downstream errors; successful data, 503 behavior and the fixed week-dimension message remain compatible. |
 | Admin keys/profiles | `d9cab8d` | Six route catches, local validation and structured 404 responses contained; intentional key creation plaintext and revocation behavior retained. |
+| Admin operations | `d422a487`; `test/wp00/err-http-admin-operations.test.ts` | Two constant 500 catches and fixed missing-provider 404; breaker reset, flush and NOT_CONFIGURED behavior retained. |
+| Admin discovery | `51a010ef`; `test/wp00/err-http-admin-discovery.test.ts` | Exceptions and embedded diagnostics contained without changing discovery cardinality, backend status or intended success metadata. |
+| Sync GET readback | `a10ee2d`; `test/wp00/err-http-admin-sync-readback.test.ts` | Four GET failures, validation and historical diagnostics projected without rewriting persisted history. |
+| Sync POST validation | `8bf9528f`; `test/wp00/err-http-admin-sync-validation.test.ts` | Finite provider validation and canonical credentials instructions; request/environment/Vault precedence and JSON asymmetry preserved. |
+| Sync POST actions | `e98c308`; `test/wp00/err-http-admin-sync-actions.test.ts` | Unknown errors use constant 500; genuine conflicts retain 409 through private identity; active-run and price-result diagnostics projected. |
 | Contract regression debt | `6c9d998` | Eleven stale durable-payload/raw-error expectations reconciled; consumer payload/error identity and routing/retry/abort assertions retained. |
 | Root API/inventory | `6c4db2e`, `91bb703` | Implemented identity validation and inventory collection; not aggregate admission. |
 | Root format components | `05a01b3`, `40c1382`, `4a27cd2`, `be0361d`, `1744307`, `b803363` | Package/shell/Actions/Docker/Compose and bounded PNPM support have component tests. |
@@ -50,7 +57,13 @@ It was not a fresh audit of every historical foundation or all production code.
 
 Storage and observability are verified slices of `ERR-HTTP-API-B`, not completion of its entire ledger.
 The ledger assigns api-keys to `ERR-HTTP-ADMIN-A` but security-profiles to `ERR-HTTP-ADMIN-B`.
-Admin-A still owns discovery and operations; fixing keys and profiles did not close either canonical unit.
+Admin-A keys, discovery and operations now have verified production slices; this is not canonical unit closure.
+Admin-B also owns administrative shell and approvals; profiles and sync do not cover those remaining paths.
+Its historical ownership spans profiles 342–352, shell 353–355, sync 356–386 and approvals 387–394.
+The current approvals source still contains three raw exception projections; shell responses require separate contract classification.
+API-A also owns comparison and groups; API-B also owns circuit-breaker, metadata, tooling and usage.
+Raw catches remain visible in metadata, tooling and usage; their bounded fixes and compatibility evidence remain pending.
+The security-profile HTTP middleware already uses fixed 403 text; its broader closure is unverified, not an assumed raw-error defect.
 Execution fixes do not certify every API-A projection or upstream exception normalization.
 No handler-level regression suite establishes authentication, CSRF or whole-product safety.
 Vault's internal audit messages were preserved for compatibility; these fixes do not establish log sanitization.
@@ -106,13 +119,14 @@ Those records remain historical evidence, not a description of today's index or 
 
 | Priority | Canonical unit and predecessor | Concrete source gap | Acceptance focus |
 |---|---|---|---|
-| 1 | ERR-HTTP-ADMIN-A; ERR-HTTP-FOUNDATION | `src/server/routes/admin/operations.ts`: two raw catch projections and reflected provider in missing-breaker 404. | Constant 500 without exception inspection; fixed NOT_FOUND 404; unchanged reset/flush effects and NOT_CONFIGURED 404. |
-| 2 | ERR-HTTP-ADMIN-A; ERR-HTTP-FOUNDATION | `src/server/routes/admin/discovery.ts`: catalog refresh and discover catch messages. | Trace discovery result errors separately; preserve catalog LOAD_FAILED, NOT_CONFIGURED 404 and intentional success fields. |
-| 3 | ERR-HTTP-ADMIN-B; ERR-HTTP-ADMIN-A | `src/server/routes/admin/sync.ts`: remaining typed validation, credential and failure projections. | Preserve INVALID_JSON, MISSING_CREDENTIALS and conflict semantics; do not infer genuine operational status from arbitrary error text. |
+| 1 | ERR-HTTP-ADMIN-B; ERR-HTTP-ADMIN-A | `src/server/routes/approvals.ts`: three raw exception catches. | Constant 500 without inspection; preserve fixed 404, approval/denial effects, resolvedBy and successful responses. |
+| 2 | ERR-HTTP-ADMIN-B; ERR-HTTP-ADMIN-A | `src/server/routes/admin/shell.ts`: identity/profile responses still need scoped contract classification. | Preserve intended identity data; establish required behavior before authorizing changes, without inventing a catch defect. |
+| 3 | ERR-HTTP-API-A / ERR-HTTP-API-B; their declared predecessors | Comparison/groups and circuit-breaker/metadata/tooling/usage remain outside the delivered route slices. | Select a bounded surface, trace actual failure producers, preserve protocol shapes and intentional success payloads. |
 
-The first two slices have the existing HTTP foundation available; no scanner precision extension is needed first.
-The third priority remains conditional on admin-A evidence, not merely the committed security-profile slice.
-Historical ledger records 336–341 identify operations projections, and 330–335 identify discovery projections.
+Approvals is the next concrete production fix; injected store dependencies permit offline real-Hono tests.
+The shell step is classification first, not an assumed implementation defect or permission to redesign authentication.
+Operations, discovery and identified sync leaks are no longer future priorities; their verified slices are recorded above.
+Historical ledger records 387–394 identify approvals and 353–355 identify shell projections.
 Those historical indices establish ownership, not current span/hash admission.
 Each production slice should start with a failing behavior test and retain its compatibility assertions.
 
