@@ -1,14 +1,16 @@
 # WP00: current progress and the next production fixes
 
 WP00 has delivered verified components and storage, execution, observability and administrative error-containment fixes, but it is not closed.
-The next priority is production HTTP containment, not another isolated scanner precision rule.
+The next priority is MCP security containment, followed by HTTP security characterization and ACP, not another isolated scanner precision rule.
 This report separates implemented behavior from the evidence still required for canonical unit closure.
 
 ## Snapshot and evidence boundaries
 
 - Reconciliation date: **2026-09-07**; the directory retains the original audit date.
-- Source snapshot: **`1fd5d262`**, `fix(http): contain tooling route errors`.
-- Latest recorded verification: **941 tests in the selected verification scope, and typecheck passed**.
+- Source snapshot: **`8249c3fc`**, `fix(http): contain comparison validation details`.
+- Latest recorded verification: **1130 tests in the selected verification scope, and typecheck passed**.
+- New scoped snapshots: circuit-breaker `7fe63bc0` (966), groups `f64b9cef` (1036), comparison history `eee7c8b4` (1084), comparison actions `694a842b` (1101), comparison validation `8249c3fc` (1130).
+- The preceding tooling snapshot `1fd5d262` recorded 941 tests; these are successive, overlapping verification scopes.
 - Recent scoped snapshots: sync actions `e98c308` (777), approvals `4d953903` (819), usage `d38cec3b` (845), metadata `b91f0a4` (868), costs `7884ed1b` (898), local models `fa48fb90` (911).
 - Shell characterization `cbf2b70` has a separate 38-test result; it is test-only evidence, not a production fix or an additive snapshot.
 - Earlier scoped snapshots: operations `d422a487` (621), discovery `51a010ef` (654), sync GET `a10ee2d` (719), sync validation `8bf9528f` (752).
@@ -27,9 +29,9 @@ It was not a fresh audit of every historical foundation or all production code.
 
 ## Quick path
 
-1. Contain the three circuit-breaker catches while preserving legacy/V2 configuration and statistics.
-2. Bound groups validation, missing-resource responses and four raw catches with real route-level tests.
-3. Split comparison containment around validation, genuine budget rejection and embedded result/history diagnostics.
+1. Contain MCP security denial/rate responses without changing authorization, filtering or successful delegation.
+2. Characterize the already-fixed HTTP security denial envelope without inventing a production defect.
+3. Contain ACP failures while preserving exact numeric codes; continue to plugin issues after its ACP predecessor.
 4. Return to scanner integration when it removes a concrete closure blocker, not merely to add precision.
 
 ## Delivered components versus unit closure
@@ -58,6 +60,11 @@ It was not a fresh audit of every historical foundation or all production code.
 | Cost HTTP | `7884ed1b` | Constant unknown failures and finite validation details; unknown-model 400 and default pricing calculations retained. |
 | Local models HTTP | `fa48fb90` | Exception and backend diagnostics contained; full model/backend metadata, readiness, URLs, order and counters retained. |
 | Tooling HTTP | `1fd5d262` | Catalog/search/strategies catches contained; query parsing, result projections and lazy default dependencies retained. |
+| Circuit-breaker HTTP | `7fe63bc0` | Three constant 500 catches; validation 400, legacy/V2 configuration mapping, updates and statistics preserved. |
+| Groups HTTP | `f64b9cef` | Four constant catches, finite validation and fixed missing-resource responses; real CRUD effects and intended weights retained. |
+| Comparison history | `eee7c8b4` | History diagnostics projected without rewriting persisted records; metadata, null cost and pagination retained. |
+| Comparison actions | `694a842b` | Constructor-captured budget identity preserves genuine 422 numbers; unknown failures and successful-envelope diagnostics contained. |
+| Comparison validation | `8249c3fc` | Local safeParse returns finite first fields and constant 400; schema, defaults, bounds and downstream error classification retained. |
 | Contract regression debt | `6c9d998` | Eleven stale durable-payload/raw-error expectations reconciled; consumer payload/error identity and routing/retry/abort assertions retained. |
 | Root API/inventory | `6c4db2e`, `91bb703` | Implemented identity validation and inventory collection; not aggregate admission. |
 | Root format components | `05a01b3`, `40c1382`, `4a27cd2`, `be0361d`, `1744307`, `b803363` | Package/shell/Actions/Docker/Compose and bounded PNPM support have component tests. |
@@ -71,8 +78,9 @@ Admin-B also owns administrative shell and approvals; their new scoped evidence 
 Its historical ownership spans profiles 342–352, shell 353–355, sync 356–386 and approvals 387–394.
 Approvals catches are now contained; shell characterization preserves intended identity/profile fields without inventing a raw-error defect.
 API-A also owns comparison and groups; API-B also owns circuit-breaker, metadata, tooling and usage.
-Metadata, tooling and usage now have verified containment slices; circuit-breaker, groups and comparison remain concrete HTTP gaps.
-Comparison also returns service-produced errors inside successful result envelopes; fixing catches alone would not contain that surface.
+Metadata, tooling, usage, circuit-breaker, groups and comparison now have verified containment slices, not canonical API-A/API-B closure.
+Comparison projects service-produced diagnostics in both successful POST and history envelopes while preserving intended responses.
+Its fixed COST_EXCEEDED 422 message was an explicit delivery decision, distinct from the BUDGET_EXCEEDED 403 contract.
 The security-profile HTTP middleware already uses fixed 403 text; its broader closure is unverified, not an assumed raw-error defect.
 Execution fixes do not certify every API-A projection or upstream exception normalization.
 No handler-level regression suite establishes authentication, CSRF or whole-product safety.
@@ -125,20 +133,20 @@ Neither evidence type establishes safety, admission or whole-program flow closur
 The historical handoff contains old staging snapshots and native-block records.
 Those records remain historical evidence, not a description of today's index or a new DIRECT completion decision.
 
-## Next three production priorities
+## Next three priorities
 
 | Priority | Canonical unit and predecessor | Concrete source gap | Acceptance focus |
 |---|---|---|---|
-| 1 | ERR-HTTP-API-B; ERR-HTTP-API-A | `src/server/routes/circuit-breaker.ts`: three raw catches. | Constant 500; preserve fixed validation 400, positive-field selection, legacy/V2 configuration and statistics. |
-| 2 | ERR-HTTP-API-A; ERR-HTTP-FOUNDATION | `src/server/routes/groups.ts`: four raw catches, issue message/path projection and two ID-reflecting 404 responses. | Finite validation projection and constant failures; preserve storage effects, successful group metadata and genuine 404. |
-| 3 | ERR-HTTP-API-A; ERR-HTTP-FOUNDATION | `src/server/routes/comparison.ts`: validation, operational exceptions and result/history diagnostics. | Preserve genuine 422 COST_EXCEEDED and budget metadata; contain HTTP 200 embedded errors without redacting intended comparison responses. |
+| 1 | ERR-MCP-SECURITY; ERR-MCP-DYNAMIC | `src/security/enforcer.ts:wrapHandlers`: denial reflects requested tool name; rate response interpolates profile and time. | Constant public error text; preserve isError, authorization order, rate enforcement, filtering and successful delegation. |
+| 2 | ERR-HTTP-SECURITY; ERR-MCP-SECURITY | `src/security/enforcer.ts:securityProfileMiddleware`: fixed denial already exists; exact-envelope/nonreflection evidence is incomplete. | Characterize 403, SECURITY_PROFILE_DENIED and intended profile; no fabricated raw-error fix or general auth claim. |
+| 3 | ERR-ACP; ERR-MCP-SERVER | `src/acp/server.ts`: unknown code/message projection and execution diagnostics. | Preserve every specified numeric code and task lifecycle; distinguish genuine operational failures from arbitrary thrown values. |
 
-Circuit-breaker is the next bounded DIRECT proposal: 180–230 changed lines with offline real-Hono tests and restored singleton methods.
-This sequencing does not mark its canonical API-A predecessor complete or relax dependency/closure requirements.
-Groups and comparison need separate bounded slices; comparison must distinguish genuine budget rejection from arbitrary exceptions.
-Approvals, shell characterization, usage, metadata, costs and tooling are no longer the unimplemented priorities listed in the earlier snapshot.
+MCP security is the next bounded DIRECT proposal: 180–230 changed lines, offline handler tests and reliable limiter cleanup.
+The DAG orders ERR-MCP-DYNAMIC -> ERR-MCP-SECURITY -> ERR-HTTP-SECURITY; historical predecessor evidence is not a new closure decision.
+ERR-ACP separately follows ERR-MCP-SERVER, and ERR-PLUGIN follows ERR-ACP; plugin issue codes/messages remain specified in the acceptance contracts.
+Circuit-breaker, groups and all three comparison slices are no longer the unimplemented priorities listed in the earlier snapshot.
 Historical ledger indices establish ownership, not current span/hash admission.
-Each production slice should start with a failing behavior test and retain its compatibility assertions.
+Each production fix should start with a failing behavior test and retain its compatibility assertions; characterization may correctly pass without a production change.
 
 ## What can wait without weakening acceptance
 
