@@ -6,9 +6,11 @@ This report separates implemented behavior from the evidence still required for 
 
 ## Snapshot and evidence boundaries
 
-- Reconciliation date: **2026-09-06**; the directory retains the original audit date.
-- Source snapshot: **`e98c308`**, `fix(admin): contain sync operational diagnostics`.
-- Latest recorded verification: **777 tests in the selected verification scope, and typecheck passed**.
+- Reconciliation date: **2026-09-07**; the directory retains the original audit date.
+- Source snapshot: **`1fd5d262`**, `fix(http): contain tooling route errors`.
+- Latest recorded verification: **941 tests in the selected verification scope, and typecheck passed**.
+- Recent scoped snapshots: sync actions `e98c308` (777), approvals `4d953903` (819), usage `d38cec3b` (845), metadata `b91f0a4` (868), costs `7884ed1b` (898), local models `fa48fb90` (911).
+- Shell characterization `cbf2b70` has a separate 38-test result; it is test-only evidence, not a production fix or an additive snapshot.
 - Earlier scoped snapshots: operations `d422a487` (621), discovery `51a010ef` (654), sync GET `a10ee2d` (719), sync validation `8bf9528f` (752).
 - Successive snapshots overlap and must not be added together.
 - All 11 previously recorded baseline failures were resolved through contract-aligned tests; none remain excluded in those runs.
@@ -25,9 +27,9 @@ It was not a fresh audit of every historical foundation or all production code.
 
 ## Quick path
 
-1. Contain the three remaining `ERR-HTTP-ADMIN-B` approvals catches with real route-level RED tests.
-2. Classify the administrative shell responses against their exact requirements; do not invent a raw-error leak.
-3. Bound the remaining API-A/API-B route projections before implementing their next production slices.
+1. Contain the three circuit-breaker catches while preserving legacy/V2 configuration and statistics.
+2. Bound groups validation, missing-resource responses and four raw catches with real route-level tests.
+3. Split comparison containment around validation, genuine budget rejection and embedded result/history diagnostics.
 4. Return to scanner integration when it removes a concrete closure blocker, not merely to add precision.
 
 ## Delivered components versus unit closure
@@ -49,6 +51,13 @@ It was not a fresh audit of every historical foundation or all production code.
 | Sync GET readback | `a10ee2d`; `test/wp00/err-http-admin-sync-readback.test.ts` | Four GET failures, validation and historical diagnostics projected without rewriting persisted history. |
 | Sync POST validation | `8bf9528f`; `test/wp00/err-http-admin-sync-validation.test.ts` | Finite provider validation and canonical credentials instructions; request/environment/Vault precedence and JSON asymmetry preserved. |
 | Sync POST actions | `e98c308`; `test/wp00/err-http-admin-sync-actions.test.ts` | Unknown errors use constant 500; genuine conflicts retain 409 through private identity; active-run and price-result diagnostics projected. |
+| Approvals HTTP | `4d953903` | Three constant 500 catches; fixed 404, decisions, resolvedBy and intended successful payloads retained. |
+| Admin shell characterization | `cbf2b70`; `test/admin.test.ts` | Nondefault profile and signed-JWT extra-claim exclusion tested; no production change or general authentication proof. |
+| Usage HTTP | `d38cec3b` | Two constant 500 catches; filters, project precedence, successful payloads and unconfigured 404 retained. |
+| Metadata GET | `b91f0a4` | Three read failures contained; OpenAI model envelope, provider/latency payloads, staleness and disabled 503 retained. |
+| Cost HTTP | `7884ed1b` | Constant unknown failures and finite validation details; unknown-model 400 and default pricing calculations retained. |
+| Local models HTTP | `fa48fb90` | Exception and backend diagnostics contained; full model/backend metadata, readiness, URLs, order and counters retained. |
+| Tooling HTTP | `1fd5d262` | Catalog/search/strategies catches contained; query parsing, result projections and lazy default dependencies retained. |
 | Contract regression debt | `6c9d998` | Eleven stale durable-payload/raw-error expectations reconciled; consumer payload/error identity and routing/retry/abort assertions retained. |
 | Root API/inventory | `6c4db2e`, `91bb703` | Implemented identity validation and inventory collection; not aggregate admission. |
 | Root format components | `05a01b3`, `40c1382`, `4a27cd2`, `be0361d`, `1744307`, `b803363` | Package/shell/Actions/Docker/Compose and bounded PNPM support have component tests. |
@@ -58,11 +67,12 @@ It was not a fresh audit of every historical foundation or all production code.
 Storage and observability are verified slices of `ERR-HTTP-API-B`, not completion of its entire ledger.
 The ledger assigns api-keys to `ERR-HTTP-ADMIN-A` but security-profiles to `ERR-HTTP-ADMIN-B`.
 Admin-A keys, discovery and operations now have verified production slices; this is not canonical unit closure.
-Admin-B also owns administrative shell and approvals; profiles and sync do not cover those remaining paths.
+Admin-B also owns administrative shell and approvals; their new scoped evidence does not establish canonical Admin-B closure.
 Its historical ownership spans profiles 342–352, shell 353–355, sync 356–386 and approvals 387–394.
-The current approvals source still contains three raw exception projections; shell responses require separate contract classification.
+Approvals catches are now contained; shell characterization preserves intended identity/profile fields without inventing a raw-error defect.
 API-A also owns comparison and groups; API-B also owns circuit-breaker, metadata, tooling and usage.
-Raw catches remain visible in metadata, tooling and usage; their bounded fixes and compatibility evidence remain pending.
+Metadata, tooling and usage now have verified containment slices; circuit-breaker, groups and comparison remain concrete HTTP gaps.
+Comparison also returns service-produced errors inside successful result envelopes; fixing catches alone would not contain that surface.
 The security-profile HTTP middleware already uses fixed 403 text; its broader closure is unverified, not an assumed raw-error defect.
 Execution fixes do not certify every API-A projection or upstream exception normalization.
 No handler-level regression suite establishes authentication, CSRF or whole-product safety.
@@ -119,15 +129,15 @@ Those records remain historical evidence, not a description of today's index or 
 
 | Priority | Canonical unit and predecessor | Concrete source gap | Acceptance focus |
 |---|---|---|---|
-| 1 | ERR-HTTP-ADMIN-B; ERR-HTTP-ADMIN-A | `src/server/routes/approvals.ts`: three raw exception catches. | Constant 500 without inspection; preserve fixed 404, approval/denial effects, resolvedBy and successful responses. |
-| 2 | ERR-HTTP-ADMIN-B; ERR-HTTP-ADMIN-A | `src/server/routes/admin/shell.ts`: identity/profile responses still need scoped contract classification. | Preserve intended identity data; establish required behavior before authorizing changes, without inventing a catch defect. |
-| 3 | ERR-HTTP-API-A / ERR-HTTP-API-B; their declared predecessors | Comparison/groups and circuit-breaker/metadata/tooling/usage remain outside the delivered route slices. | Select a bounded surface, trace actual failure producers, preserve protocol shapes and intentional success payloads. |
+| 1 | ERR-HTTP-API-B; ERR-HTTP-API-A | `src/server/routes/circuit-breaker.ts`: three raw catches. | Constant 500; preserve fixed validation 400, positive-field selection, legacy/V2 configuration and statistics. |
+| 2 | ERR-HTTP-API-A; ERR-HTTP-FOUNDATION | `src/server/routes/groups.ts`: four raw catches, issue message/path projection and two ID-reflecting 404 responses. | Finite validation projection and constant failures; preserve storage effects, successful group metadata and genuine 404. |
+| 3 | ERR-HTTP-API-A; ERR-HTTP-FOUNDATION | `src/server/routes/comparison.ts`: validation, operational exceptions and result/history diagnostics. | Preserve genuine 422 COST_EXCEEDED and budget metadata; contain HTTP 200 embedded errors without redacting intended comparison responses. |
 
-Approvals is the next concrete production fix; injected store dependencies permit offline real-Hono tests.
-The shell step is classification first, not an assumed implementation defect or permission to redesign authentication.
-Operations, discovery and identified sync leaks are no longer future priorities; their verified slices are recorded above.
-Historical ledger records 387–394 identify approvals and 353–355 identify shell projections.
-Those historical indices establish ownership, not current span/hash admission.
+Circuit-breaker is the next bounded DIRECT proposal: 180–230 changed lines with offline real-Hono tests and restored singleton methods.
+This sequencing does not mark its canonical API-A predecessor complete or relax dependency/closure requirements.
+Groups and comparison need separate bounded slices; comparison must distinguish genuine budget rejection from arbitrary exceptions.
+Approvals, shell characterization, usage, metadata, costs and tooling are no longer the unimplemented priorities listed in the earlier snapshot.
+Historical ledger indices establish ownership, not current span/hash admission.
 Each production slice should start with a failing behavior test and retain its compatibility assertions.
 
 ## What can wait without weakening acceptance
