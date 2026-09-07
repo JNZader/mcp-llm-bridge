@@ -13,6 +13,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { RateLimiter } from '../server/rate-limit.js';
 import { logger } from '../core/logger.js';
+import { safeError } from '../core/safe-error.js';
 import type { TrustLevel } from '../core/types.js';
 import type { ToolSecurityMetadata } from '../mcp-builder/index.js';
 import {
@@ -230,7 +231,7 @@ export class ProfileEnforcer {
           content: [
             {
               type: 'text' as const,
-              text: `Access denied: tool "${name}" is not allowed under the "${this.profile.level}" security profile.`,
+              text: safeError('ACCESS_DENIED').message,
             },
           ],
           isError: true,
@@ -244,7 +245,7 @@ export class ProfileEnforcer {
           content: [
             {
               type: 'text' as const,
-              text: `Rate limit exceeded for "${this.profile.level}" profile. Try again in ${Math.ceil((rateResult.retryAfter ?? 0) / 1000)} seconds.`,
+              text: 'Rate limit exceeded.',
             },
           ],
           isError: true,
