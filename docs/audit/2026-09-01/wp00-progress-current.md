@@ -1,14 +1,16 @@
 # WP00: current progress and the next production fixes
 
 WP00 has delivered verified components and storage, execution, observability and administrative error-containment fixes, but it is not closed.
-The next priority is MCP security containment, followed by HTTP security characterization and ACP, not another isolated scanner precision rule.
+The next priority is resolving plugin identity prerequisites and remaining operational projections, not repeating delivered containment or adding isolated scanner precision rules.
 This report separates implemented behavior from the evidence still required for canonical unit closure.
 
 ## Snapshot and evidence boundaries
 
 - Reconciliation date: **2026-09-07**; the directory retains the original audit date.
-- Source snapshot: **`8249c3fc`**, `fix(http): contain comparison validation details`.
-- Latest recorded verification: **1130 tests in the selected verification scope, and typecheck passed**.
+- Source snapshot: **`8c4030ed`**, `fix(plugins): contain loader diagnostic messages`.
+- Latest recorded verification: **1271 tests in the selected verification scope, typecheck and normal commit hooks passed**.
+- Latest handoff groups: combined 1004, legacy 88, server 2, other regressions 62, comparison 30, security 35, ACP 35 and loader 15.
+- Deliveries after report commit `7ededa72`: MCP `1745d565` (1161), HTTP characterization `37fbd076` (1190, test-only), ACP `f23bed01` (1245), partial plugin messages `8c4030ed` (1271).
 - New scoped snapshots: circuit-breaker `7fe63bc0` (966), groups `f64b9cef` (1036), comparison history `eee7c8b4` (1084), comparison actions `694a842b` (1101), comparison validation `8249c3fc` (1130).
 - The preceding tooling snapshot `1fd5d262` recorded 941 tests; these are successive, overlapping verification scopes.
 - Recent scoped snapshots: sync actions `e98c308` (777), approvals `4d953903` (819), usage `d38cec3b` (845), metadata `b91f0a4` (868), costs `7884ed1b` (898), local models `fa48fb90` (911).
@@ -29,9 +31,9 @@ It was not a fresh audit of every historical foundation or all production code.
 
 ## Quick path
 
-1. Contain MCP security denial/rate responses without changing authorization, filtering or successful delegation.
-2. Characterize the already-fixed HTTP security denial envelope without inventing a production defect.
-3. Contain ACP failures while preserving exact numeric codes; continue to plugin issues after its ACP predecessor.
+1. Resolve the missing authority and identity contract before wiring opaque plugin IDs; do not invent an issuer.
+2. Continue bounded operational logging work while that integration remains unresolved.
+3. Keep outer filesystem failures and import cancellation explicit separate scopes, with compatibility evidence before changes.
 4. Return to scanner integration when it removes a concrete closure blocker, not merely to add precision.
 
 ## Delivered components versus unit closure
@@ -65,6 +67,10 @@ It was not a fresh audit of every historical foundation or all production code.
 | Comparison history | `eee7c8b4` | History diagnostics projected without rewriting persisted records; metadata, null cost and pagination retained. |
 | Comparison actions | `694a842b` | Constructor-captured budget identity preserves genuine 422 numbers; unknown failures and successful-envelope diagnostics contained. |
 | Comparison validation | `8249c3fc` | Local safeParse returns finite first fields and constant 400; schema, defaults, bounds and downstream error classification retained. |
+| MCP security | `1745d565` | Fixed denial/rate text; real SDK transport verifies filtering, quota and delegation. No universal delegate-exception containment. |
+| HTTP security characterization | `37fbd076` | Test-only evidence for existing fixed 403, configured profile, method/query distinctions and delegation; no authentication redesign. |
+| ACP server errors | `f23bed01` | Private protocol-error identity and fixed task diagnostics; reachable numeric codes and lifecycle tested, not external framing coverage. |
+| Plugin messages (partial) | `8c4030ed` | Four fixed issue messages and private per-import timeout identity; raw identity fields, outer filesystem errors and import cancellation remain unresolved. |
 | Contract regression debt | `6c9d998` | Eleven stale durable-payload/raw-error expectations reconciled; consumer payload/error identity and routing/retry/abort assertions retained. |
 | Root API/inventory | `6c4db2e`, `91bb703` | Implemented identity validation and inventory collection; not aggregate admission. |
 | Root format components | `05a01b3`, `40c1382`, `4a27cd2`, `be0361d`, `1744307`, `b803363` | Package/shell/Actions/Docker/Compose and bounded PNPM support have component tests. |
@@ -81,7 +87,8 @@ API-A also owns comparison and groups; API-B also owns circuit-breaker, metadata
 Metadata, tooling, usage, circuit-breaker, groups and comparison now have verified containment slices, not canonical API-A/API-B closure.
 Comparison projects service-produced diagnostics in both successful POST and history envelopes while preserving intended responses.
 Its fixed COST_EXCEEDED 422 message was an explicit delivery decision, distinct from the BUDGET_EXCEEDED 403 contract.
-The security-profile HTTP middleware already uses fixed 403 text; its broader closure is unverified, not an assumed raw-error defect.
+The security-profile HTTP middleware's existing fixed 403 now has characterization evidence; broader security closure remains unverified.
+Plugin proxy coverage compares the loader against native .mjs import behavior; it proves no additional loader inspection, not zero engine inspection.
 Execution fixes do not certify every API-A projection or upstream exception normalization.
 No handler-level regression suite establishes authentication, CSRF or whole-product safety.
 Vault's internal audit messages were preserved for compatibility; these fixes do not establish log sanitization.
@@ -133,20 +140,39 @@ Neither evidence type establishes safety, admission or whole-program flow closur
 The historical handoff contains old staging snapshots and native-block records.
 Those records remain historical evidence, not a description of today's index or a new DIRECT completion decision.
 
-## Next three priorities
+## Plugin identity integration: observed boundary and prerequisites
 
-| Priority | Canonical unit and predecessor | Concrete source gap | Acceptance focus |
-|---|---|---|---|
-| 1 | ERR-MCP-SECURITY; ERR-MCP-DYNAMIC | `src/security/enforcer.ts:wrapHandlers`: denial reflects requested tool name; rate response interpolates profile and time. | Constant public error text; preserve isError, authorization order, rate enforcement, filtering and successful delegation. |
-| 2 | ERR-HTTP-SECURITY; ERR-MCP-SECURITY | `src/security/enforcer.ts:securityProfileMiddleware`: fixed denial already exists; exact-envelope/nonreflection evidence is incomplete. | Characterize 403, SECURITY_PROFILE_DENIED and intended profile; no fabricated raw-error fix or general auth claim. |
-| 3 | ERR-ACP; ERR-MCP-SERVER | `src/acp/server.ts`: unknown code/message projection and execution diagnostics. | Preserve every specified numeric code and task lifecycle; distinguish genuine operational failures from arbitrary thrown values. |
+| Observed source | Current behavior | Missing integration prerequisite |
+|---|---|---|
+| `src/mcp-builder/loader.ts:PluginLoadIssue,loadPlugins` | Accepts only a directory; issues contain filename-derived plugin/file and optional raw toolName. | An independently admitted mapping from the exact candidate plugin/tool identities to scanner-issued opaque IDs. |
+| `src/server/mcp-server.ts:startMcpServer,getDynamicPluginLoadSummary` | Copies loader errors/skips into the exported summary; also exposes directory, loaded names/toolNames and collisions. | An explicit public projection and compatibility decision across those fields, not merely replacement of message strings. |
+| `src/server/mcp.ts` | Re-exports the summary accessor; the bounded source search found no other production caller. | Consumer verification must include external callers; absence of another internal caller does not make the export private. |
+| `test/contracts/scanner/root-batch-dispatch.mjs:createRootBatchDispatcher` | Requires an independently admitted existing snapshot; checks inventory and hashes and dispatches roots. | This local verification seam is neither a first-run issuer nor a plugin/tool ID registry. |
+| `src/server/mcp-server.ts:dynamicPluginOperationEvent` | Logging projection already reports counts rather than raw loader issue contents. | Preserve this existing containment; do not infer that all plugin summary consumers are equally contained. |
 
-MCP security is the next bounded DIRECT proposal: 180–230 changed lines, offline handler tests and reliable limiter cleanup.
-The DAG orders ERR-MCP-DYNAMIC -> ERR-MCP-SECURITY -> ERR-HTTP-SECURITY; historical predecessor evidence is not a new closure decision.
-ERR-ACP separately follows ERR-MCP-SERVER, and ERR-PLUGIN follows ERR-ACP; plugin issue codes/messages remain specified in the acceptance contracts.
-Circuit-breaker, groups and all three comparison slices are no longer the unimplemented priorities listed in the earlier snapshot.
+No production scanner-issued plugin/tool ID input was found in these inspected interfaces.
+The required issuer/binding must cover path, mode, bytes/hash, candidate scope and stable tool association before import.
+External plugin directories and dynamically produced tool definitions cannot be assumed covered by a repository snapshot.
+Missing, stale, duplicate or ambiguous bindings need an explicitly approved fail-closed behavior and tests before wiring.
+Filename hashes, local counters, historical test catalog entries or caller-created self-hashes do not supply that authority.
+The current scanner's resource, grammar and admission gaps above remain unchanged.
+A complete identity integration is not honestly scoped as one ready sub-400-line change from the evidence available here.
+
+## Next bounded work
+
+| Priority | Scope and status | Acceptance focus |
+|---|---|---|
+| 1 | Plugin identity prerequisites: mapping above is read-only evidence, not an implemented registry or approved schema. | Identify the real issuer and immutable binding/consumer contract before any production ID wiring; no fake admission. |
+| 2 | LOG-OPERATIONS candidate: `src/security/enforcer.ts:filterTools,authorize,securityProfileMiddleware` still passes raw tool/path fields to logger calls. | Inspect existing logger serialization before claiming an emitted leak; then scope a focused operational-event fix preserving denial decisions and useful finite metadata. |
+| 3 | Loader filesystem/lifecycle follow-up: `loadPlugins` still inspects outer filesystem error.code and rethrows non-ENOENT; timed-out imports continue running. | Preserve missing-directory compatibility; distinguish safe filesystem-error projection from actual execution cancellation, which needs a separate boundary. |
+
+The smallest concrete next implementation candidate is the security operational-log slice, estimated 150–220 lines including focused tests, subject to a bounded logger/contract readback first.
+Do not block that independent work on unresolved plugin identity, or label logger call arguments as proven emitted payload without checking the serializer.
+The DAG still orders ERR-MCP-DYNAMIC -> ERR-MCP-SECURITY -> ERR-HTTP-SECURITY, and ERR-MCP-SERVER -> ERR-ACP -> ERR-PLUGIN.
+Delivered components do not close those canonical predecessors or relax LOG-OPERATIONS dependencies.
+MCP/HTTP security, ACP diagnostics and plugin messages are no longer the unimplemented priorities in the preceding snapshot.
 Historical ledger indices establish ownership, not current span/hash admission.
-Each production fix should start with a failing behavior test and retain its compatibility assertions; characterization may correctly pass without a production change.
+Each production fix should start with a failing behavior test; characterization may correctly pass without a production change.
 
 ## What can wait without weakening acceptance
 
