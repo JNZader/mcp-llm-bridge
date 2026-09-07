@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 
 import { getLocalLLMUrls } from "../../core/local-llm-env.js";
 import { localLLMEnabled } from "../../core/runtime-flags.js";
+import { safeError } from "../../core/safe-error.js";
 import { getLocalLLMStatus } from "../../local-llm/detector.js";
 import { createCatalogFromMcpTools, type ToolSource } from "../../tool-catalog/index.js";
 import { getRuntimeMcpTools } from "../mcp.js";
@@ -10,7 +11,15 @@ function getToolCatalog() {
 	return createCatalogFromMcpTools(getRuntimeMcpTools());
 }
 
-export function registerToolingRoutes(app: Hono): void {
+export interface ToolingRouteDeps {
+	getLocalLLMStatus?: typeof getLocalLLMStatus;
+}
+
+export function registerToolingRoutes(
+	app: Hono,
+	deps: ToolingRouteDeps = {},
+): void {
+	const readLocalLLMStatus = deps.getLocalLLMStatus ?? getLocalLLMStatus;
 	app.get("/v1/tools/catalog", (c) => {
 		try {
 			const source = c.req.query("source") as ToolSource | undefined;
@@ -62,14 +71,50 @@ export function registerToolingRoutes(app: Hono): void {
 	app.get("/v1/local/models", async (c) => {
 		try {
 			const enabled = localLLMEnabled();
-			const status = await getLocalLLMStatus({
+			const status = await readLocalLLMStatus({
 				enabled,
 				...getLocalLLMUrls(),
 			}, enabled ? undefined : { skipDetectionWhenDisabled: true });
-			return c.json(status);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			return c.json({
+				enabled: status.enabled,
+				ready: status.ready,
+				readyReason: status.readyReason,
+				checkedAt: status.checkedAt,
+				source: status.source,
+				cacheHit: status.cacheHit,
+				backendCount: status.backendCount,
+				connectedBackendCount: status.connectedBackendCount,
+				disconnectedBackendCount: status.disconnectedBackendCount,
+				errorBackendCount: status.errorBackendCount,
+				modelCount: status.modelCount,
+				backends: status.backends.map((backend) => {
+					const diagnostic = Object.getOwnPropertyDescriptor(backend, "error");
+					let error: string | null | undefined;
+					if (diagnostic !== undefined) {
+						if ("value" in diagnostic && diagnostic.value === null) error = null;
+						else if (!("value" in diagnostic) || diagnostic.value !== undefined) {
+							error = safeError("INTERNAL_ERROR").message;
+						}
+					}
+					return {
+						backend: backend.backend,
+						status: backend.status,
+						baseUrl: backend.baseUrl,
+						modelCount: backend.modelCount,
+						models: backend.models.map((model) => ({
+							id: model.id,
+							name: model.name,
+							backend: model.backend,
+							parameterSize: model.parameterSize,
+							contextWindow: model.contextWindow,
+							loaded: model.loaded,
+						})),
+						error,
+					};
+				}),
+			});
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
