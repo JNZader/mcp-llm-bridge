@@ -33,6 +33,14 @@ export interface Statement {
   get(...params: unknown[]): unknown | undefined;
 }
 
+const alreadyRunningStatuses = new WeakMap<object, PriceSyncRunStatus>();
+
+// Only constructor-registered identity is recognized; no properties or prototypes are inspected.
+export function getPriceSyncAlreadyRunningStatus(value: unknown): PriceSyncRunStatus | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  return alreadyRunningStatuses.get(value);
+}
+
 export class PriceSyncAlreadyRunningError extends Error {
   readonly status: PriceSyncRunStatus;
 
@@ -40,6 +48,7 @@ export class PriceSyncAlreadyRunningError extends Error {
     super('Price sync already running');
     this.name = 'PriceSyncAlreadyRunningError';
     this.status = status;
+    alreadyRunningStatuses.set(this, status);
   }
 }
 

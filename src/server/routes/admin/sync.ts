@@ -6,13 +6,13 @@ import type { PriceSyncRunStatus } from '../../../price-sync/index.js';
 
 import type { Vault } from '../../../vault/vault.js';
 import {
-  ModelSyncAlreadyRunningError,
+  getModelSyncAlreadyRunningStatus,
   ModelSyncManager,
   isProviderType,
   PROVIDER_TYPE,
   type ProviderType,
 } from '../../../model-sync/index.js';
-import { PriceManager, PriceSyncAlreadyRunningError } from '../../../price-sync/index.js';
+import { PriceManager, getPriceSyncAlreadyRunningStatus } from '../../../price-sync/index.js';
 import {
   resolveProviderApiKey,
   resolveProviderBaseUrl,
@@ -195,10 +195,11 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           autoSyncIntervalMs,
         });
       } catch (error) {
-        if (error instanceof ModelSyncAlreadyRunningError) {
+        const activeRun = getModelSyncAlreadyRunningStatus(error);
+        if (activeRun !== undefined) {
           return jsonError(c, 409, 'Model sync already running', 'SYNC_ALREADY_RUNNING', {
             provider: resolvedProvider,
-            activeRun: error.status,
+            activeRun: projectModelSyncStatus(activeRun),
           });
         }
 
@@ -214,9 +215,8 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         removed: result.modelsRemoved,
         timestamp: result.timestamp,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -330,19 +330,29 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       try {
         result = await priceManager.syncPrices();
       } catch (error) {
-        if (error instanceof PriceSyncAlreadyRunningError) {
+        const activeRun = getPriceSyncAlreadyRunningStatus(error);
+        if (activeRun !== undefined) {
           return jsonError(c, 409, 'Price sync already running', 'SYNC_ALREADY_RUNNING', {
-            activeRun: error.status,
+            activeRun: projectPriceSyncStatus(activeRun),
           });
         }
 
         throw error;
       }
 
-      return c.json({ ok: true, synced: result.added + result.updated, details: result });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+      return c.json({
+        ok: true,
+        synced: result.added + result.updated,
+        details: {
+          timestamp: result.timestamp,
+          updated: result.updated,
+          added: result.added,
+          unchanged: result.unchanged,
+          error: projectSyncDiagnostic(result, 'error'),
+        },
+      });
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 

@@ -39,6 +39,7 @@ export type { ModelFetcher, FetcherClass } from './fetcher.js';
 // Sync Manager
 export {
   ModelSyncAlreadyRunningError,
+  getModelSyncAlreadyRunningStatus,
   ModelSyncManager,
   createModelSyncManager,
 } from './sync-manager.js';

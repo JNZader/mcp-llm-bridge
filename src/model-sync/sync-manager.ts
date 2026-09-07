@@ -27,6 +27,14 @@ export interface Statement {
   get(...params: unknown[]): unknown | undefined;
 }
 
+const alreadyRunningStatuses = new WeakMap<object, ModelSyncRunStatus>();
+
+// Only constructor-registered identity is recognized; no properties or prototypes are inspected.
+export function getModelSyncAlreadyRunningStatus(value: unknown): ModelSyncRunStatus | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  return alreadyRunningStatuses.get(value);
+}
+
 export class ModelSyncAlreadyRunningError extends Error {
   readonly status: ModelSyncRunStatus;
 
@@ -34,6 +42,7 @@ export class ModelSyncAlreadyRunningError extends Error {
     super(`Model sync already running for provider: ${status.provider}`);
     this.name = 'ModelSyncAlreadyRunningError';
     this.status = status;
+    alreadyRunningStatuses.set(this, status);
   }
 }
 
