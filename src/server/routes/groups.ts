@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { safeError } from "../../core/safe-error.js";
 
 import type { GroupStore } from "../../core/groups.js";
 import { CreateGroupSchema, UpdateGroupSchema } from "../../core/groups.js";
@@ -7,18 +8,14 @@ export interface GroupsRouteDeps {
 	groupStore?: GroupStore;
 }
 
-interface ValidationIssueLike {
-	message: string;
-	path: string[];
-}
-
-function getValidationIssue(error: unknown): ValidationIssueLike | null {
-	if (!(error && typeof error === "object" && "issues" in error)) {
-		return null;
-	}
-
-	const issues = (error as { issues: ValidationIssueLike[] }).issues;
-	return issues[0] ?? null;
+function validationError(field: unknown) {
+	const allowed = field === "name" || field === "modelPattern" || field === "members"
+		|| field === "strategy" || field === "weights" || field === "stickyTTL";
+	return {
+		error: safeError("INVALID_REQUEST").message,
+		code: "VALIDATION_ERROR",
+		field: allowed ? field : "",
+	};
 }
 
 export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
@@ -32,9 +29,8 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 		try {
 			const groups = groupStore.list();
 			return c.json({ groups });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -42,29 +38,15 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 		try {
 			const body = await c.req.json();
 
-			let validated: ReturnType<typeof CreateGroupSchema.parse>;
-			try {
-				validated = CreateGroupSchema.parse(body);
-			} catch (error) {
-				const issue = getValidationIssue(error);
-				if (issue) {
-					return c.json(
-						{
-							error: issue.message,
-							code: "VALIDATION_ERROR",
-							field: issue.path.join("."),
-						},
-						400,
-					);
-				}
-				throw error;
+			const validated = CreateGroupSchema.safeParse(body);
+			if (!validated.success) {
+				return c.json(validationError(validated.error.issues[0]?.path[0]), 400);
 			}
 
-			const group = groupStore.create(validated);
+			const group = groupStore.create(validated.data);
 			return c.json(group, 201);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -73,36 +55,22 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 			const id = c.req.param("id");
 			const body = await c.req.json();
 
-			let validated: ReturnType<typeof UpdateGroupSchema.parse>;
-			try {
-				validated = UpdateGroupSchema.parse(body);
-			} catch (error) {
-				const issue = getValidationIssue(error);
-				if (issue) {
-					return c.json(
-						{
-							error: issue.message,
-							code: "VALIDATION_ERROR",
-							field: issue.path.join("."),
-						},
-						400,
-					);
-				}
-				throw error;
+			const validated = UpdateGroupSchema.safeParse(body);
+			if (!validated.success) {
+				return c.json(validationError(validated.error.issues[0]?.path[0]), 400);
 			}
 
-			const updated = groupStore.update(id, validated);
+			const updated = groupStore.update(id, validated.data);
 			if (!updated) {
 				return c.json(
-					{ error: `Group not found: ${id}`, code: "NOT_FOUND" },
+					{ error: "The requested resource was not found.", code: "NOT_FOUND" },
 					404,
 				);
 			}
 
 			return c.json(updated);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -112,15 +80,14 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 			const deleted = groupStore.delete(id);
 			if (!deleted) {
 				return c.json(
-					{ error: `Group not found: ${id}`, code: "NOT_FOUND" },
+					{ error: "The requested resource was not found.", code: "NOT_FOUND" },
 					404,
 				);
 			}
 
 			return c.json({ ok: true });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }
