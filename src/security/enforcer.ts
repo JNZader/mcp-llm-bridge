@@ -14,16 +14,35 @@ import {
 import { RateLimiter } from '../server/rate-limit.js';
 import { logger } from '../core/logger.js';
 import { safeError } from '../core/safe-error.js';
+import { safeOperation } from '../core/safe-operation.js';
 import type { TrustLevel } from '../core/types.js';
 import type { ToolSecurityMetadata } from '../mcp-builder/index.js';
 import {
   PROFILES,
   TOOL_CATEGORIES,
+  ToolCategorySchema,
+  TrustLevelSchema,
   type SecurityProfile,
   type ToolCategory,
   type ProfileResolver,
 } from './profiles.js';
 import { ROUTE_CATEGORIES, isAdminRoute } from './http-categories.js';
+
+const LOG_HTTP_METHODS = new Set([
+  'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE',
+]);
+
+/** Project only finite metadata; never retain a tool name or request path. */
+function deniedLogMetadata(profile: unknown, category?: unknown, method?: unknown) {
+  const knownProfile = TrustLevelSchema.options.find((value) => value === profile);
+  const knownCategory = ToolCategorySchema.options.find((value) => value === category);
+  return {
+    ...safeOperation('denied'),
+    ...(knownProfile === undefined ? {} : { profile: knownProfile }),
+    ...(knownCategory === undefined ? {} : { category: knownCategory }),
+    ...(typeof method === 'string' && LOG_HTTP_METHODS.has(method) ? { method } : {}),
+  };
+}
 
 /** Minimal tool definition shape matching the TOOLS array in mcp.ts. */
 interface ToolDef {
@@ -151,7 +170,7 @@ export class ProfileEnforcer {
       if (!category) {
         // Unknown tools are blocked by default (safe-by-default)
         logger.warn(
-          { tool: tool.name, profile: this.profile.level },
+          deniedLogMetadata(this.profile.level),
           'Tool not found in TOOL_CATEGORIES — blocked by default',
         );
         return false;
@@ -169,11 +188,7 @@ export class ProfileEnforcer {
 
     if (!category || !this.allowedCategories.has(category)) {
       logger.warn(
-        {
-          tool: toolName,
-          category: category ?? 'unknown',
-          profile: this.profile.level,
-        },
+        deniedLogMetadata(this.profile.level, category),
         'Tool call denied by security profile',
       );
       return false;
@@ -310,7 +325,7 @@ export function securityProfileMiddleware(
     if (!category) {
       // Unknown route — blocked by default (safe-by-default)
       logger.warn(
-        { path, method, profile },
+        deniedLogMetadata(profile, undefined, method),
         'Route not found in ROUTE_CATEGORIES — blocked by default',
       );
       return c.json(
