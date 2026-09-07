@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
+import { safeError } from "../../core/safe-error.js";
 
 export interface UsageRouteDeps {
 	costTracker?: CostTracker;
@@ -41,9 +42,8 @@ export function registerUsageRoutes(app: Hono, deps: UsageRouteDeps): void {
 			});
 
 			return c.json({ records, count: records.length });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -72,9 +72,8 @@ export function registerUsageRoutes(app: Hono, deps: UsageRouteDeps): void {
 			});
 
 			return c.json(summary);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }
