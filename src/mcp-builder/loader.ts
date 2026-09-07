@@ -35,27 +35,15 @@ export interface PluginLoadSummary {
 
 let importNonce = 0;
 
-class PluginImportTimeoutError extends Error {
-  readonly code = PLUGIN_LOAD_ERROR.LOAD_TIMEOUT;
 
-  constructor(
-    readonly plugin: string,
-    readonly file: string,
-    readonly timeoutMs: number,
-  ) {
-    super(`Plugin import timed out after ${timeoutMs}ms`);
-    this.name = 'PluginImportTimeoutError';
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => Error): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutIdentity: symbol): Promise<T> {
   let timeoutId: NodeJS.Timeout | undefined;
 
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timeoutId = setTimeout(() => reject(onTimeout()), timeoutMs);
+        timeoutId = setTimeout(() => reject(timeoutIdentity), timeoutMs);
       }),
     ]);
   } finally {
@@ -103,7 +91,7 @@ function sanitizePluginDefinition(
         file,
         toolName: tool.name,
         code: PLUGIN_LOAD_ERROR.INVALID_TOOL_SECURITY,
-        message: `Tool "${tool.name}" must declare valid security metadata with category and optional requiresApproval`,
+        message: 'Plugin tool security metadata is invalid.',
       });
       continue;
     }
@@ -133,13 +121,14 @@ export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary
       const pluginName = file.replace('.mcp-server.js', '');
       const sourcePath = resolve(pluginsDir, file);
       const shadowModulePath = resolve(dirname(sourcePath), `.mcp-loader-${importNonce++}-${file}.tmp.mjs`);
+      const timeoutIdentity = Symbol();
 
       try {
         await copyFile(sourcePath, shadowModulePath);
         const module = await withTimeout(
           import(pathToFileURL(shadowModulePath).href),
           importTimeoutMs,
-          () => new PluginImportTimeoutError(pluginName, file, importTimeoutMs),
+          timeoutIdentity,
         );
         const definition = module.default || module.server || module.definition;
         if (!isValidPluginDefinition(definition)) {
@@ -147,7 +136,7 @@ export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary
             plugin: pluginName,
             file,
             code: PLUGIN_LOAD_ERROR.INVALID_TOP_LEVEL_SHAPE,
-            message: 'Plugin export must include string name/version/description and array tools/resources/prompts',
+            message: 'Plugin definition is invalid.',
           });
           continue;
         }
@@ -156,22 +145,21 @@ export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary
         skipped.push(...sanitized.skipped);
         loaded.push({ name: pluginName, definition: sanitized.definition });
       } catch (e) {
-        if (e instanceof PluginImportTimeoutError) {
+        if (e === timeoutIdentity) {
           errors.push({
-            plugin: e.plugin,
-            file: e.file,
-            code: e.code,
-            message: e.message,
+            plugin: pluginName,
+            file,
+            code: PLUGIN_LOAD_ERROR.LOAD_TIMEOUT,
+            message: 'Plugin loading timed out.',
           });
           continue;
         }
 
-        const message = e instanceof Error ? e.message : String(e);
         errors.push({
           plugin: pluginName,
           file,
           code: PLUGIN_LOAD_ERROR.LOAD_FAILED,
-          message,
+          message: 'Plugin loading failed.',
         });
       } finally {
         await rm(shadowModulePath, { force: true });

@@ -179,7 +179,7 @@ describe('loadPlugins', () => {
       assert.strictEqual(result.errors.length, 1);
       assert.strictEqual(result.errors[0]!.plugin, 'hung');
       assert.strictEqual(result.errors[0]!.code, 'load-timeout');
-      assert.ok(result.errors[0]!.message.includes('25ms'));
+      assert.strictEqual(result.errors[0]!.message, 'Plugin loading timed out.');
     } finally {
       delete process.env.MCP_PLUGIN_LOAD_TIMEOUT_MS;
     }
