@@ -61,29 +61,22 @@ export function registerComparisonRoutes(
 		try {
 			const body = await c.req.json();
 
-			let validated: ReturnType<typeof CompareRequestSchema.parse>;
-			try {
-				validated = CompareRequestSchema.parse(body);
-			} catch (error) {
-				if (error && typeof error === "object" && "issues" in error) {
-					const issues = (
-						error as { issues: Array<{ message: string; path: string[] }> }
-					).issues;
-					const firstIssue = issues[0];
-					return c.json(
-						{
-							error: firstIssue?.message ?? "Validation error",
-							code: "VALIDATION_ERROR",
-							field: firstIssue?.path?.join(".") ?? "",
-						},
-						400,
-					);
-				}
-
-				throw error;
+			const validated = CompareRequestSchema.safeParse(body);
+			if (!validated.success) {
+				const firstField = validated.error.issues[0]?.path[0];
+				const allowedFields = [
+					"prompt", "system", "models", "maxTokens",
+					"timeoutMs", "maxEstimatedCost", "persist", "project",
+				];
+				const field = typeof firstField === "string" && allowedFields.includes(firstField)
+					? firstField : "";
+				return c.json(
+					{ error: safeError("INVALID_REQUEST").message, code: "VALIDATION_ERROR", field },
+					400,
+				);
 			}
 
-			const result = await comparisonService.compare(validated);
+			const result = await comparisonService.compare(validated.data);
 			return c.json(projectComparisonResponse(result));
 		} catch (error) {
 			const budget = getCostExceededDetails(error);
