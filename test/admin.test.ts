@@ -606,6 +606,35 @@ describe('GET /v1/admin/model-router/stats', () => {
 // ── GET /v1/admin/me ─────────────────────────────────────
 
 describe('GET /v1/admin/me', () => {
+  it('excludes signed subject and expiry claims from the identity response', async () => {
+    const previousSecret = process.env['GITHUB_OAUTH_SECRET'];
+    process.env['GITHUB_OAUTH_SECRET'] = 'fixture-shell-signing-secret';
+    try {
+      const token = createDashboardJwt({
+        id: 987654321, login: 'fixture-login', name: 'Fixture Name',
+        avatar_url: 'https://fixture.invalid/avatar.png',
+      });
+      const encoded = token.split('.')[1];
+      assert.ok(encoded);
+      const claims = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Record<string, unknown>;
+      assert.equal(claims['sub'], '987654321');
+      assert.equal(typeof claims['exp'], 'number');
+      const res = await request('GET', '/v1/admin/me', undefined, token);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data, {
+        authMethod: 'github', login: 'fixture-login', name: 'Fixture Name',
+        avatar: 'https://fixture.invalid/avatar.png',
+      });
+      const body = res.data as Record<string, unknown>;
+      assert.equal('sub' in body, false);
+      assert.equal('exp' in body, false);
+      assert.equal(JSON.stringify(body).includes(token), false);
+      assert.equal(JSON.stringify(body).includes('fixture-shell-signing-secret'), false);
+    } finally {
+      if (previousSecret === undefined) delete process.env['GITHUB_OAUTH_SECRET'];
+      else process.env['GITHUB_OAUTH_SECRET'] = previousSecret;
+    }
+  });
   it('returns token auth identity when using static admin auth', async () => {
     const res = await request('GET', '/v1/admin/me');
     assert.equal(res.status, 200);
@@ -644,6 +673,22 @@ describe('GET /v1/admin/me', () => {
 // ── GET /v1/admin/security-profile ───────────────────────
 
 describe('GET /v1/admin/security-profile', () => {
+  it('preserves the explicit restricted profile shell without claiming effective permissions', async () => {
+    const previousProfile = config.securityProfile;
+    config.securityProfile = 'restricted';
+    try {
+      const res = await request('GET', '/v1/admin/security-profile');
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data, {
+        profile: 'restricted',
+        allowedCategories: ['destructive', 'read', 'generate', 'admin'],
+        rateLimit: null,
+      });
+    } finally {
+      if (previousProfile === undefined) delete config.securityProfile;
+      else config.securityProfile = previousProfile;
+    }
+  });
   it('returns the default local-dev security shell payload', async () => {
     const res = await request('GET', '/v1/admin/security-profile');
     assert.equal(res.status, 200);
