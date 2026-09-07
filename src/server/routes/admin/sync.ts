@@ -15,7 +15,6 @@ import {
 import { PriceManager, PriceSyncAlreadyRunningError } from '../../../price-sync/index.js';
 import {
   resolveProviderApiKey,
-  resolveProviderApiKeyEnv,
   resolveProviderBaseUrl,
 } from '../../../core/provider-runtime-config.js';
 
@@ -138,7 +137,10 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
 
       const providerValidation = validateProvider(provider, 'provider');
       if (!providerValidation.ok) {
-        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', providerValidation.details);
+        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', {
+          field: 'provider',
+          supportedProviders: supportedSyncProviders,
+        });
       }
 
       const resolvedProvider = providerValidation.provider;
@@ -167,16 +169,12 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         return jsonError(
           c,
           400,
-          `No API key found for provider: ${resolvedProvider}`,
+          'Provider credentials are not configured.',
           'MISSING_CREDENTIALS',
           {
-              provider: resolvedProvider,
-              resolution: [
-                'Provide apiKey in the request body',
-                `Set ${resolveProviderApiKeyEnv(resolvedProvider)} in the environment`,
-                'Store a default credential in the vault',
-              ],
-            },
+            provider: resolvedProvider,
+            resolution: ['REQUEST_API_KEY', 'PROVIDER_ENV_KEY', 'DEFAULT_VAULT_CREDENTIAL'],
+          },
         );
       }
 
@@ -311,7 +309,6 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           if (!isProviderType(provider)) {
             return jsonError(c, 400, 'Invalid provider for provider parameter', 'VALIDATION_ERROR', {
               field: 'provider',
-              received: provider ?? null,
               supportedProviders: supportedSyncProviders,
             });
           }
@@ -323,7 +320,6 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
             'UNSUPPORTED_PARAMETER',
             {
               field: 'provider',
-              received: provider,
             },
           );
         }

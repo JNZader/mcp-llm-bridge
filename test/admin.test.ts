@@ -949,13 +949,14 @@ describe('POST /v1/admin/models/sync', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; supportedProviders: string[] };
+      details: { field: string; supportedProviders: string[] };
     };
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid provider for provider');
     assert.equal(data.details.field, 'provider');
-    assert.equal(data.details.received, 'invalid-provider');
-    assert.ok(Array.isArray(data.details.supportedProviders));
+    assert.equal('received' in data.details, false);
+    assert.deepEqual(data.details.supportedProviders, ['openai', 'groq', 'openrouter', 'anthropic', 'gemini']);
+    assert.equal(JSON.stringify(data).includes('invalid-provider'), false);
   });
 
   it('returns 400 when credentials are missing', async () => {
@@ -1162,14 +1163,15 @@ describe('POST /v1/admin/prices/sync', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; supportedProviders: string[] };
+      details: { field: string; supportedProviders: string[] };
     };
 
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid provider for provider parameter');
     assert.equal(data.details.field, 'provider');
-    assert.equal(data.details.received, 'invalid-provider');
-    assert.ok(Array.isArray(data.details.supportedProviders));
+    assert.equal('received' in data.details, false);
+    assert.deepEqual(data.details.supportedProviders, ['openai', 'groq', 'openrouter', 'anthropic', 'gemini']);
+    assert.equal(JSON.stringify(data).includes('invalid-provider'), false);
   });
 
   it('returns 409 with active run details when a price sync overlaps', async () => {
