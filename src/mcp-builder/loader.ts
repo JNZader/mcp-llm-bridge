@@ -109,67 +109,69 @@ function sanitizePluginDefinition(
 }
 
 export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary> {
+  let entries: string[];
   try {
-    const entries = await readdir(pluginsDir);
-    const jsFiles = entries.filter((f) => f.endsWith('.mcp-server.js')).sort();
-    const importTimeoutMs = dynamicPluginLoadTimeoutMs();
-
-    const loaded: LoadedPlugin[] = [];
-    const skipped: PluginLoadIssue[] = [];
-    const errors: PluginLoadIssue[] = [];
-    for (const file of jsFiles) {
-      const pluginName = file.replace('.mcp-server.js', '');
-      const sourcePath = resolve(pluginsDir, file);
-      const shadowModulePath = resolve(dirname(sourcePath), `.mcp-loader-${importNonce++}-${file}.tmp.mjs`);
-      const timeoutIdentity = Symbol();
-
-      try {
-        await copyFile(sourcePath, shadowModulePath);
-        const module = await withTimeout(
-          import(pathToFileURL(shadowModulePath).href),
-          importTimeoutMs,
-          timeoutIdentity,
-        );
-        const definition = module.default || module.server || module.definition;
-        if (!isValidPluginDefinition(definition)) {
-          skipped.push({
-            plugin: pluginName,
-            file,
-            code: PLUGIN_LOAD_ERROR.INVALID_TOP_LEVEL_SHAPE,
-            message: 'Plugin definition is invalid.',
-          });
-          continue;
-        }
-
-        const sanitized = sanitizePluginDefinition(pluginName, file, definition);
-        skipped.push(...sanitized.skipped);
-        loaded.push({ name: pluginName, definition: sanitized.definition });
-      } catch (e) {
-        if (e === timeoutIdentity) {
-          errors.push({
-            plugin: pluginName,
-            file,
-            code: PLUGIN_LOAD_ERROR.LOAD_TIMEOUT,
-            message: 'Plugin loading timed out.',
-          });
-          continue;
-        }
-
-        errors.push({
-          plugin: pluginName,
-          file,
-          code: PLUGIN_LOAD_ERROR.LOAD_FAILED,
-          message: 'Plugin loading failed.',
-        });
-      } finally {
-        await rm(shadowModulePath, { force: true });
-      }
-    }
-    return { loaded, skipped, errors };
+    entries = await readdir(pluginsDir);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       return { loaded: [], skipped: [], errors: [] };
     }
     throw e;
   }
+
+  const jsFiles = entries.filter((f) => f.endsWith('.mcp-server.js')).sort();
+  const importTimeoutMs = dynamicPluginLoadTimeoutMs();
+
+  const loaded: LoadedPlugin[] = [];
+  const skipped: PluginLoadIssue[] = [];
+  const errors: PluginLoadIssue[] = [];
+  for (const file of jsFiles) {
+    const pluginName = file.replace('.mcp-server.js', '');
+    const sourcePath = resolve(pluginsDir, file);
+    const shadowModulePath = resolve(dirname(sourcePath), `.mcp-loader-${importNonce++}-${file}.tmp.mjs`);
+    const timeoutIdentity = Symbol();
+
+    try {
+      await copyFile(sourcePath, shadowModulePath);
+      const module = await withTimeout(
+        import(pathToFileURL(shadowModulePath).href),
+        importTimeoutMs,
+        timeoutIdentity,
+      );
+      const definition = module.default || module.server || module.definition;
+      if (!isValidPluginDefinition(definition)) {
+        skipped.push({
+          plugin: pluginName,
+          file,
+          code: PLUGIN_LOAD_ERROR.INVALID_TOP_LEVEL_SHAPE,
+          message: 'Plugin definition is invalid.',
+        });
+        continue;
+      }
+
+      const sanitized = sanitizePluginDefinition(pluginName, file, definition);
+      skipped.push(...sanitized.skipped);
+      loaded.push({ name: pluginName, definition: sanitized.definition });
+    } catch (e) {
+      if (e === timeoutIdentity) {
+        errors.push({
+          plugin: pluginName,
+          file,
+          code: PLUGIN_LOAD_ERROR.LOAD_TIMEOUT,
+          message: 'Plugin loading timed out.',
+        });
+        continue;
+      }
+
+      errors.push({
+        plugin: pluginName,
+        file,
+        code: PLUGIN_LOAD_ERROR.LOAD_FAILED,
+        message: 'Plugin loading failed.',
+      });
+    } finally {
+      await rm(shadowModulePath, { force: true });
+    }
+  }
+  return { loaded, skipped, errors };
 }
