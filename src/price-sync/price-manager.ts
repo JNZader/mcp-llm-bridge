@@ -20,6 +20,8 @@ import {
   DEFAULT_UPSTREAM_TIMEOUT_MS,
 } from './types.js';
 import { createPriceFetcher } from './fetcher.js';
+import { logger } from '../core/logger.js';
+import { safeOperation } from '../core/safe-operation.js';
 
 // === Database Interface (minimal, to be implemented by consumer) ===
 
@@ -373,8 +375,8 @@ export class PriceManager {
         try {
           await this.syncFromUpstream();
         } catch (error) {
-          if (!(error instanceof PriceSyncAlreadyRunningError)) {
-            console.error(error);
+          if (getPriceSyncAlreadyRunningStatus(error) === undefined) {
+            logger.error(safeOperation('failed'), 'Price auto-sync failed.');
           }
         } finally {
           scheduleNext(interval);
