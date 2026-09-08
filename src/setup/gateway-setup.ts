@@ -300,7 +300,13 @@ export async function runSetupGateway(
     envVarsRecord.ANTHROPIC_AUTH_TOKEN = gatewayEnv.ANTHROPIC_AUTH_TOKEN;
   }
 
-  const result = mergeGatewayEnvIntoSettings(settingsPath, envVarsRecord);
+  let result: SettingsEnvMergeResult;
+  try {
+    result = mergeGatewayEnvIntoSettings(settingsPath, envVarsRecord);
+  } catch {
+    console.error('[setup-gateway] Unable to update Claude Code settings.');
+    return 1;
+  }
 
   console.log('');
   console.log(`[setup-gateway] Wrote env block to ${result.settingsPath} (scope: ${scope})`);

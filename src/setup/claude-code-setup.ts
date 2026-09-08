@@ -221,10 +221,16 @@ export async function runSetupClaudeCode(
   }
 
   const configPath = options.configPathOverride ?? join(homedir(), '.claude.json');
-  const result = mergeClaudeCodeConfig(configPath, 'llm-bridge', {
-    command: 'node',
-    args: [entrypoint.path],
-  });
+  let result: ClaudeConfigMergeResult;
+  try {
+    result = mergeClaudeCodeConfig(configPath, 'llm-bridge', {
+      command: 'node',
+      args: [entrypoint.path],
+    });
+  } catch {
+    console.error('[setup-claude-code] Unable to update Claude Code configuration.');
+    return 1;
+  }
 
   console.log(`[setup-claude-code] Wrote MCP server entry to ${result.configPath}`);
   if (result.backupPath) {
