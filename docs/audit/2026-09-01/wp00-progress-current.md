@@ -6,10 +6,13 @@ This report separates implemented behavior from the evidence still required for 
 
 ## Snapshot and evidence boundaries
 
-- Reconciliation date: **2026-09-07**; the directory retains the original audit date.
-- Source snapshot: **`d6f8bfc2`**, `fix(vault): contain OAuth sync failure logs`.
-- Latest recorded verification: **1389 tests in the selected verification scope, typecheck and normal commit hooks passed**.
-- Latest handoff groups: combined 1040, legacy 88, server 2, other regressions 62, comparison 30, security 35, ACP 35, loader 15, fetcher 29, migrations 41 and OAuth 12.
+- Reconciliation date: **2026-09-08**; the directory retains the original audit date.
+- Source snapshot: **`eb57de62`**, `fix(vault): preserve failures during audit logging`.
+- Latest recorded verification: **168 targeted tests across eight files and 24 suites passed**, exit 0 in 3032.180 ms; typecheck and normal commit hooks passed.
+- This targeted run is not a rerun of the earlier 1476-test selected aggregate. No per-file breakdown is inferred.
+- Preceding gateway verification `2f6dc49`: **69 tests** = 19 new gateway + 27 gateway legacy + 15 Claude setup + 8 Claude setup legacy.
+- Historical selected aggregates: price autosync `15fae347` (1398), Vault refresh `604a06b9` (1453), Claude setup `877537ac` (1476).
+- The preceding `d6f8bfc2` snapshot recorded 1389 selected tests. These distinct scopes are not additive.
 - Deliveries after report commit `318bc35f`: security logs `de8c39b` (1280), model autosync `8a16ac4` (1318), migration logs `3b030a7` (1368), OAuth sync logging `d6f8bfc2` (1389).
 - Deliveries after report commit `7ededa72`: MCP `1745d565` (1161), HTTP characterization `37fbd076` (1190, test-only), ACP `f23bed01` (1245), partial plugin messages `8c4030ed` (1271).
 - New scoped snapshots: circuit-breaker `7fe63bc0` (966), groups `f64b9cef` (1036), comparison history `eee7c8b4` (1084), comparison actions `694a842b` (1101), comparison validation `8249c3fc` (1130).
@@ -76,6 +79,11 @@ It was not a fresh audit of every historical foundation or all production code.
 | Model autosync logging | `8a16ac4`; `test/wp00/log-model-sync.test.ts` | Unknown callback errors become fixed events; genuine overlap silence and scheduling retained. Internal history is unchanged. |
 | Migration logging | `3b030a7`; `test/wp00/log-db-migrations.test.ts` | Five fixed events retain only valid numeric versions; SQLite transaction, order, reconciliation and rollback controls preserved. |
 | OAuth sync logging | `d6f8bfc2`; `test/wp00/log-claude-oauth.test.ts` | One catch contains diagnostics; isolated synthetic HOME verifies compatibility without accessing real credentials. No storage-permission or atomicity improvement claimed. |
+| Price autosync logging | `15fae347`; `test/wp00/log-price-sync.test.ts` | Fixed failure event and private conflict identity; genuine overlap, scheduling and stop behavior preserved. |
+| Vault refresh fallback | `604a06b9`; `test/wp00/log-vault-refresh.test.ts` | Fixed warning preserves fallback token and sync; guarded synthetic HOME and internal-fault injection, not remote refresh implementation. |
+| Claude setup diagnostics | `877537ac`; `test/wp00/log-setup-claude.test.ts` | Two fixed Console catch messages; CLI stub, exit codes, fallback merge and backups tested without real CLI execution. |
+| Gateway setup diagnostics | `2f6dc49`; `test/wp00/log-setup-gateway.test.ts` | Two fixed Console catch messages; synthetic env/settings preserve intentional token output, parsing and merge behavior. |
+| Vault audit normalization | `eb57de62`; `test/wp00/log-vault-audit.test.ts` | Four catch normalizers preserve original error identity without inspection; 29 new cases prove failure audits, existing Pino redaction and CRUD compatibility. |
 | Contract regression debt | `6c9d998` | Eleven stale durable-payload/raw-error expectations reconciled; consumer payload/error identity and routing/retry/abort assertions retained. |
 | Root API/inventory | `6c4db2e`, `91bb703` | Implemented identity validation and inventory collection; not aggregate admission. |
 | Root format components | `05a01b3`, `40c1382`, `4a27cd2`, `be0361d`, `1744307`, `b803363` | Package/shell/Actions/Docker/Compose and bounded PNPM support have component tests. |
@@ -96,7 +104,9 @@ The security-profile HTTP middleware's existing fixed 403 now has characterizati
 Plugin proxy coverage compares the loader against native .mjs import behavior; it proves no additional loader inspection, not zero engine inspection.
 Execution fixes do not certify every API-A projection or upstream exception normalization.
 No handler-level regression suite establishes authentication, CSRF or whole-product safety.
-Vault's internal audit messages were preserved for compatibility; these fixes do not establish log sanitization.
+Vault's four unknown-error audit normalizers now use a canonical message; original rethrows and audit identity fields remain unchanged.
+Pino already redacts the error field: the latest correction proves zero inspection and original-error preservation, not a newly discovered serialized-message leak.
+Typed deletion diagnostics and freeform audit identity metadata remain separate compatibility scopes.
 Component commits do not automatically satisfy every scenario attached to a canonical row.
 
 ## Mandatory closure work still outstanding
@@ -172,27 +182,28 @@ The table separates emitted logs from state/storage projections that the histori
 |---|---|---|
 | `src/db/migrate.ts` | Five fixed version-only Pino events delivered. | Focused SQLite evidence exists; no schema or error-classification redesign. |
 | `src/model-sync/sync-manager.ts` | Autosync catch delivered; summaries, lastError and SQL history still retain diagnostic strings. | HTTP projection does not sanitize internal persistence; remaining nonlogging records require separate treatment. |
-| `src/price-sync/price-manager.ts` | Reflection gap: autosync still uses `instanceof` and `console.error(error)`; diagnostic state/history also remain. | Source inference, not a new executed emission test. Existing private identity accessor can support a bounded catch fix. |
+| `src/price-sync/price-manager.ts` | Autosync catch delivered with fixed event and private conflict identity. | Diagnostic state/history remain separate nonlogging projections; no persistence sanitization claim. |
 | `src/security/enforcer.ts` | Three warning projections delivered; constructor logs configured profile/categories/rate limits and finite mode. | Constructor is not a raw exception sink; arbitrary runtime mutation and complete unit coverage are not certified. |
 | `src/server/admin.ts` | Historical adminAuth sites currently return fixed HTTP responses, not logs. | No logging defect inferred; authentication redesign remains separately pending. |
-| `src/setup/claude-code-setup.ts` | Mixed fixed instructions, entrypoint/config/backup paths and interpolated error messages. | Remaining projection gap; any fixture must isolate CLI execution and configuration writes before testing. |
-| `src/setup/gateway-setup.ts` | Mixed fixed instructions and raw errors/paths; prints token-bearing exports and JSON env settings. | Sensitive output remains by source readback; preserve setup functionality with approved constant instructions, not a silent compatibility change. |
+| `src/setup/claude-code-setup.ts` | Both caught scope/registration diagnostics are fixed Console messages. | Entrypoint/config/backup path instructions and outer filesystem exceptions remain; isolated tests never execute the real CLI. |
+| `src/setup/gateway-setup.ts` | Both caught scope/port diagnostics are fixed Console messages. | Intentional token-bearing exports, JSON env settings, paths and outer exceptions are unchanged; changing them requires an explicit compatibility scope. |
 | `src/vault/claude-oauth.ts` | Sync failure catch delivered; refresh warning is already a fixed instruction. | Do not fabricate a refresh-message defect. Credential storage and actual refresh implementation remain outside this delivery. |
-| `src/vault/vault.ts` | Audit child logger includes freeform provider/keyName/fileName/project; token-refresh fallback still logs raw error through Console. | Pino redacts error keys, not those identity fields. Intended file-content returns are nonlogging data, not blanket-redaction targets; fresh emitted evidence and compatibility scope are needed. |
+| `src/vault/vault.ts` | Refresh fallback warning and four unknown-error audit normalizers delivered. | Audit provider/keyName/fileName/project remain freeform and unchanged; typed deletion messages remain distinct. Intended file-content returns are not blanket-redaction targets. |
 
-No all-contained conclusion follows: price autosync, setup output, Vault projections and diagnostic persistence remain distinct gaps.
-The four delivered log slices do not close LOG-OPERATIONS or establish its LOG-SERVICES predecessor.
+No all-contained conclusion follows: intentional setup output, audit identity metadata, outer failures and diagnostic persistence remain distinct boundaries.
+Delivered catches must not be listed as pending defects; remaining behavior needs a bounded contract/evidence decision before another implementation.
+These deliveries do not close LOG-OPERATIONS or establish its LOG-SERVICES predecessor.
 
 ## Next bounded work
 
 | Priority | Scope and status | Acceptance focus |
 |---|---|---|
 | 1 | Plugin identity prerequisites: mapping above is read-only evidence, not an implemented registry or approved schema. | Identify the real issuer and immutable binding/consumer contract before any production ID wiring; no fake admission. |
-| 2 | Price autosync catch: `src/price-sync/price-manager.ts:startAutoSync` still passes unknown errors to Console. | RED with actual Console/Pino output; use existing conflict identity accessor and a separately approved fixed event, preserving scheduling and stop behavior. |
+| 2 | Operational boundary reconciliation: audit identity metadata, intentional setup exports/path instructions, outer setup filesystem failures and persisted diagnostics remain distinct scopes. | Select one contract-compatible boundary first; preserve useful setup/audit behavior and original failures. No identity schema or token-output redesign is approved by this report. |
 | 3 | Loader filesystem/lifecycle follow-up: `loadPlugins` still inspects outer filesystem error.code and rethrows non-ENOENT; timed-out imports continue running. | Preserve missing-directory compatibility; distinguish safe filesystem-error projection from actual execution cancellation, which needs a separate boundary. |
 
-The smallest next implementation candidate is the price autosync catch, estimated 150–220 lines including focused tests.
-It can reuse the model-autosync fixture pattern without executing providers; the new fixed message must be approved before RED assertions.
+The next concrete step is a bounded read-only scope decision for outer setup filesystem failures or remaining audit metadata, not another delivered catch fix.
+Neither option is represented as approved implementation: establish error/exit compatibility or identity-field requirements and an isolated RED fixture first.
 Do not block independent containment on unresolved plugin identity, or confuse source-inferred exposure with newly executed evidence.
 The DAG still orders ERR-MCP-DYNAMIC -> ERR-MCP-SECURITY -> ERR-HTTP-SECURITY, and ERR-MCP-SERVER -> ERR-ACP -> ERR-PLUGIN.
 Delivered components do not close those canonical predecessors or relax LOG-OPERATIONS dependencies.
@@ -214,6 +225,9 @@ Deferring precision work changes sequencing, not the final acceptance contract.
 - Historical evidence: `openspec/changes/containment-and-evidence-harness/implementation-handoff.md`.
 - Storage regressions: `test/wp00/err-http-storage.test.ts`, `test/wp00/err-http-storage-delete.test.ts`.
 - Vault compatibility regressions: `test/vault-audit.test.ts`, `test/vault.test.ts`.
+- Focused recent evidence: `test/wp00/log-price-sync.test.ts`, `test/wp00/log-vault-refresh.test.ts`, `test/wp00/log-setup-claude.test.ts`, `test/wp00/log-setup-gateway.test.ts`, `test/wp00/log-vault-audit.test.ts`.
+- Setup compatibility regressions: `test/setup/claude-code-setup.test.ts`, `test/setup/gateway-setup.test.ts`.
+- Test totals above are prior executed handoff evidence; this passive refresh performs structural checks only.
 
 Update this report with a source revision, scoped verification result and explicit remaining limitations.
 Do not convert test counts, historical checkboxes or component commit counts into a percentage of WP00 completion.
