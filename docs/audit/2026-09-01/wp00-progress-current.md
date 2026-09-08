@@ -7,9 +7,12 @@ This report separates implemented behavior from the evidence still required for 
 ## Snapshot and evidence boundaries
 
 - Reconciliation date: **2026-09-08**; the directory retains the original audit date.
-- Source snapshot: **`eb57de62`**, `fix(vault): preserve failures during audit logging`.
-- Latest recorded verification: **168 targeted tests across eight files and 24 suites passed**, exit 0 in 3032.180 ms; typecheck and normal commit hooks passed.
-- This targeted run is not a rerun of the earlier 1476-test selected aggregate. No per-file breakdown is inferred.
+- Source snapshot: **`8db102a0`**, `fix(plugins): validate enumeration error shapes`.
+- Latest recorded verification: **57 targeted tests in four suites passed**, exit 0 in 504.048 ms for `8db102a0`; typecheck and normal commit hooks passed.
+- Preceding loader catch-scope verification `9b987767`: **42 tests in three suites**, exit 0 in 336.532 ms; typecheck and normal hooks passed.
+- Setup merge verification `e9453315`: **92 tests in 12 suites**, exit 0 in 3734.881 ms; typecheck and normal hooks passed.
+- Earlier Vault audit verification `eb57de62`: **168 targeted tests across eight files and 24 suites**, exit 0 in 3032.180 ms; typecheck and normal hooks passed.
+- The latest 57-test scope is not a rerun of the 168-test Vault, 92-test setup, 42-test loader or historical 1476-test aggregate. No totals are summed or renewed implicitly.
 - Preceding gateway verification `2f6dc49`: **69 tests** = 19 new gateway + 27 gateway legacy + 15 Claude setup + 8 Claude setup legacy.
 - Historical selected aggregates: price autosync `15fae347` (1398), Vault refresh `604a06b9` (1453), Claude setup `877537ac` (1476).
 - The preceding `d6f8bfc2` snapshot recorded 1389 selected tests. These distinct scopes are not additive.
@@ -37,7 +40,7 @@ It was not a fresh audit of every historical foundation or all production code.
 
 1. Resolve the missing authority and identity contract before wiring opaque plugin IDs; do not invent an issuer.
 2. Continue bounded operational logging work while that integration remains unresolved.
-3. Keep outer filesystem failures and import cancellation explicit separate scopes, with compatibility evidence before changes.
+3. Keep residual pre-merge setup failures and true import cancellation separate from the delivered merge and enumeration corrections.
 4. Return to scanner integration when it removes a concrete closure blocker, not merely to add precision.
 
 ## Delivered components versus unit closure
@@ -74,7 +77,7 @@ It was not a fresh audit of every historical foundation or all production code.
 | MCP security | `1745d565` | Fixed denial/rate text; real SDK transport verifies filtering, quota and delegation. No universal delegate-exception containment. |
 | HTTP security characterization | `37fbd076` | Test-only evidence for existing fixed 403, configured profile, method/query distinctions and delegation; no authentication redesign. |
 | ACP server errors | `f23bed01` | Private protocol-error identity and fixed task diagnostics; reachable numeric codes and lifecycle tested, not external framing coverage. |
-| Plugin messages (partial) | `8c4030ed` | Four fixed issue messages and private per-import timeout identity; raw identity fields, outer filesystem errors and import cancellation remain unresolved. |
+| Plugin messages (partial) | `8c4030ed` | Four fixed issue messages and private per-import timeout identity; raw identity fields and true import cancellation remain unresolved. Enumeration corrections are recorded separately below. |
 | Security operational warnings | `de8c39b`; `test/wp00/log-security.test.ts` | Three warnings use finite metadata without tool/path reflection; authorization, quotas and HTTP delegation preserved. |
 | Model autosync logging | `8a16ac4`; `test/wp00/log-model-sync.test.ts` | Unknown callback errors become fixed events; genuine overlap silence and scheduling retained. Internal history is unchanged. |
 | Migration logging | `3b030a7`; `test/wp00/log-db-migrations.test.ts` | Five fixed events retain only valid numeric versions; SQLite transaction, order, reconciliation and rollback controls preserved. |
@@ -84,6 +87,9 @@ It was not a fresh audit of every historical foundation or all production code.
 | Claude setup diagnostics | `877537ac`; `test/wp00/log-setup-claude.test.ts` | Two fixed Console catch messages; CLI stub, exit codes, fallback merge and backups tested without real CLI execution. |
 | Gateway setup diagnostics | `2f6dc49`; `test/wp00/log-setup-gateway.test.ts` | Two fixed Console catch messages; synthetic env/settings preserve intentional token output, parsing and merge behavior. |
 | Vault audit normalization | `eb57de62`; `test/wp00/log-vault-audit.test.ts` | Four catch normalizers preserve original error identity without inspection; 29 new cases prove failure audits, existing Pino redaction and CRUD compatibility. |
+| Setup merge failures | `e9453315`; `test/wp00/log-setup-merge.test.ts` | Both orchestrators return 1 with fixed Console errors for merge failures; low-level helpers retain original throws and partial filesystem effects. |
+| Plugin enumeration boundary | `9b987767`; `test/wp00/err-plugin-enumeration.test.ts` | Missing-directory recovery surrounds only readdir; subsequent processing/cleanup failures propagate without false empty success. |
+| Plugin enumeration shapes | `8db102a0`; `test/wp00/err-plugin-enumeration.test.ts` | Native-error guard plus own data descriptor restrict ENOENT recovery; matrix proves original rejections and zero observable traps, not filesystem provenance. |
 | Contract regression debt | `6c9d998` | Eleven stale durable-payload/raw-error expectations reconciled; consumer payload/error identity and routing/retry/abort assertions retained. |
 | Root API/inventory | `6c4db2e`, `91bb703` | Implemented identity validation and inventory collection; not aggregate admission. |
 | Root format components | `05a01b3`, `40c1382`, `4a27cd2`, `be0361d`, `1744307`, `b803363` | Package/shell/Actions/Docker/Compose and bounded PNPM support have component tests. |
@@ -101,7 +107,9 @@ Metadata, tooling, usage, circuit-breaker, groups and comparison now have verifi
 Comparison projects service-produced diagnostics in both successful POST and history envelopes while preserving intended responses.
 Its fixed COST_EXCEEDED 422 message was an explicit delivery decision, distinct from the BUDGET_EXCEEDED 403 contract.
 The security-profile HTTP middleware's existing fixed 403 now has characterization evidence; broader security closure remains unverified.
-Plugin proxy coverage compares the loader against native .mjs import behavior; it proves no additional loader inspection, not zero engine inspection.
+Plugin import proxy coverage compares the loader against native .mjs behavior; it proves no additional loader inspection, not zero engine inspection.
+Enumeration coverage is separate: native-error recognition precedes an own DATA descriptor check with strict ENOENT comparison, without reading an error accessor.
+Constructed native Errors with own ENOENT, including cross-realm errors, remain accepted by shape. This is not filesystem provenance, scanner authority or ERR-PLUGIN closure.
 Execution fixes do not certify every API-A projection or upstream exception normalization.
 No handler-level regression suite establishes authentication, CSRF or whole-product safety.
 Vault's four unknown-error audit normalizers now use a canonical message; original rethrows and audit identity fields remain unchanged.
@@ -185,8 +193,8 @@ The table separates emitted logs from state/storage projections that the histori
 | `src/price-sync/price-manager.ts` | Autosync catch delivered with fixed event and private conflict identity. | Diagnostic state/history remain separate nonlogging projections; no persistence sanitization claim. |
 | `src/security/enforcer.ts` | Three warning projections delivered; constructor logs configured profile/categories/rate limits and finite mode. | Constructor is not a raw exception sink; arbitrary runtime mutation and complete unit coverage are not certified. |
 | `src/server/admin.ts` | Historical adminAuth sites currently return fixed HTTP responses, not logs. | No logging defect inferred; authentication redesign remains separately pending. |
-| `src/setup/claude-code-setup.ts` | Both caught scope/registration diagnostics are fixed Console messages. | Entrypoint/config/backup path instructions and outer filesystem exceptions remain; isolated tests never execute the real CLI. |
-| `src/setup/gateway-setup.ts` | Both caught scope/port diagnostics are fixed Console messages. | Intentional token-bearing exports, JSON env settings, paths and outer exceptions are unchanged; changing them requires an explicit compatibility scope. |
+| `src/setup/claude-code-setup.ts` | Scope/registration diagnostics and orchestrator merge failures have fixed Console messages. | Pre-merge path/output failures are not globally contained; low-level throws, path instructions and partial writes remain. No real CLI integration or atomicity claim. |
+| `src/setup/gateway-setup.ts` | Scope/port diagnostics and orchestrator merge failures have fixed Console messages. | Intentional token exports, JSON settings and pre-merge path/output failures remain; no rollback or global exception-containment claim. |
 | `src/vault/claude-oauth.ts` | Sync failure catch delivered; refresh warning is already a fixed instruction. | Do not fabricate a refresh-message defect. Credential storage and actual refresh implementation remain outside this delivery. |
 | `src/vault/vault.ts` | Refresh fallback warning and four unknown-error audit normalizers delivered. | Audit provider/keyName/fileName/project remain freeform and unchanged; typed deletion messages remain distinct. Intended file-content returns are not blanket-redaction targets. |
 
@@ -199,11 +207,11 @@ These deliveries do not close LOG-OPERATIONS or establish its LOG-SERVICES prede
 | Priority | Scope and status | Acceptance focus |
 |---|---|---|
 | 1 | Plugin identity prerequisites: mapping above is read-only evidence, not an implemented registry or approved schema. | Identify the real issuer and immutable binding/consumer contract before any production ID wiring; no fake admission. |
-| 2 | Operational boundary reconciliation: audit identity metadata, intentional setup exports/path instructions, outer setup filesystem failures and persisted diagnostics remain distinct scopes. | Select one contract-compatible boundary first; preserve useful setup/audit behavior and original failures. No identity schema or token-output redesign is approved by this report. |
-| 3 | Loader filesystem/lifecycle follow-up: `loadPlugins` still inspects outer filesystem error.code and rethrows non-ENOENT; timed-out imports continue running. | Preserve missing-directory compatibility; distinguish safe filesystem-error projection from actual execution cancellation, which needs a separate boundary. |
+| 2 | Operational boundary reconciliation: audit identity metadata, intentional setup exports/path instructions, residual pre-merge failures and persisted diagnostics remain distinct scopes. | Preserve useful setup/audit behavior and helper error identity; delivered merge catches must not be repeated. No identity schema or token-output redesign is approved. |
+| 3 | Loader lifecycle prerequisites: enumeration shape handling is delivered; timed-out imports still continue running. | Scope true execution cancellation separately from timeout reporting and opaque identity binding; no implementation-ready isolation design is implied. |
 
-The next concrete step is a bounded read-only scope decision for outer setup filesystem failures or remaining audit metadata, not another delivered catch fix.
-Neither option is represented as approved implementation: establish error/exit compatibility or identity-field requirements and an isolated RED fixture first.
+The next concrete step can be a bounded read-only scope of true import cancellation and identity requirements, or remaining audit metadata.
+Neither option is approved implementation: establish lifecycle/identity compatibility and an isolated RED fixture before selecting a production change.
 Do not block independent containment on unresolved plugin identity, or confuse source-inferred exposure with newly executed evidence.
 The DAG still orders ERR-MCP-DYNAMIC -> ERR-MCP-SECURITY -> ERR-HTTP-SECURITY, and ERR-MCP-SERVER -> ERR-ACP -> ERR-PLUGIN.
 Delivered components do not close those canonical predecessors or relax LOG-OPERATIONS dependencies.
@@ -227,6 +235,8 @@ Deferring precision work changes sequencing, not the final acceptance contract.
 - Vault compatibility regressions: `test/vault-audit.test.ts`, `test/vault.test.ts`.
 - Focused recent evidence: `test/wp00/log-price-sync.test.ts`, `test/wp00/log-vault-refresh.test.ts`, `test/wp00/log-setup-claude.test.ts`, `test/wp00/log-setup-gateway.test.ts`, `test/wp00/log-vault-audit.test.ts`.
 - Setup compatibility regressions: `test/setup/claude-code-setup.test.ts`, `test/setup/gateway-setup.test.ts`.
+- Recent boundary evidence: `test/wp00/log-setup-merge.test.ts`, `test/wp00/fixtures/log-setup-merge-child.ts`, `test/wp00/err-plugin-enumeration.test.ts`, `test/mcp-builder/loader.test.ts`.
+- Builtin reference: [Node.js 22.23.2 util.types](https://nodejs.org/download/release/v22.23.2/docs/api/util.html#utiltypes); documentation explains the native guard, while the executed matrix supplies observable-trap evidence.
 - Test totals above are prior executed handoff evidence; this passive refresh performs structural checks only.
 
 Update this report with a source revision, scoped verification result and explicit remaining limitations.
