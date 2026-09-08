@@ -7,9 +7,10 @@ This report separates implemented behavior from the evidence still required for 
 ## Snapshot and evidence boundaries
 
 - Reconciliation date: **2026-09-07**; the directory retains the original audit date.
-- Source snapshot: **`8c4030ed`**, `fix(plugins): contain loader diagnostic messages`.
-- Latest recorded verification: **1271 tests in the selected verification scope, typecheck and normal commit hooks passed**.
-- Latest handoff groups: combined 1004, legacy 88, server 2, other regressions 62, comparison 30, security 35, ACP 35 and loader 15.
+- Source snapshot: **`d6f8bfc2`**, `fix(vault): contain OAuth sync failure logs`.
+- Latest recorded verification: **1389 tests in the selected verification scope, typecheck and normal commit hooks passed**.
+- Latest handoff groups: combined 1040, legacy 88, server 2, other regressions 62, comparison 30, security 35, ACP 35, loader 15, fetcher 29, migrations 41 and OAuth 12.
+- Deliveries after report commit `318bc35f`: security logs `de8c39b` (1280), model autosync `8a16ac4` (1318), migration logs `3b030a7` (1368), OAuth sync logging `d6f8bfc2` (1389).
 - Deliveries after report commit `7ededa72`: MCP `1745d565` (1161), HTTP characterization `37fbd076` (1190, test-only), ACP `f23bed01` (1245), partial plugin messages `8c4030ed` (1271).
 - New scoped snapshots: circuit-breaker `7fe63bc0` (966), groups `f64b9cef` (1036), comparison history `eee7c8b4` (1084), comparison actions `694a842b` (1101), comparison validation `8249c3fc` (1130).
 - The preceding tooling snapshot `1fd5d262` recorded 941 tests; these are successive, overlapping verification scopes.
@@ -71,6 +72,10 @@ It was not a fresh audit of every historical foundation or all production code.
 | HTTP security characterization | `37fbd076` | Test-only evidence for existing fixed 403, configured profile, method/query distinctions and delegation; no authentication redesign. |
 | ACP server errors | `f23bed01` | Private protocol-error identity and fixed task diagnostics; reachable numeric codes and lifecycle tested, not external framing coverage. |
 | Plugin messages (partial) | `8c4030ed` | Four fixed issue messages and private per-import timeout identity; raw identity fields, outer filesystem errors and import cancellation remain unresolved. |
+| Security operational warnings | `de8c39b`; `test/wp00/log-security.test.ts` | Three warnings use finite metadata without tool/path reflection; authorization, quotas and HTTP delegation preserved. |
+| Model autosync logging | `8a16ac4`; `test/wp00/log-model-sync.test.ts` | Unknown callback errors become fixed events; genuine overlap silence and scheduling retained. Internal history is unchanged. |
+| Migration logging | `3b030a7`; `test/wp00/log-db-migrations.test.ts` | Five fixed events retain only valid numeric versions; SQLite transaction, order, reconciliation and rollback controls preserved. |
+| OAuth sync logging | `d6f8bfc2`; `test/wp00/log-claude-oauth.test.ts` | One catch contains diagnostics; isolated synthetic HOME verifies compatibility without accessing real credentials. No storage-permission or atomicity improvement claimed. |
 | Contract regression debt | `6c9d998` | Eleven stale durable-payload/raw-error expectations reconciled; consumer payload/error identity and routing/retry/abort assertions retained. |
 | Root API/inventory | `6c4db2e`, `91bb703` | Implemented identity validation and inventory collection; not aggregate admission. |
 | Root format components | `05a01b3`, `40c1382`, `4a27cd2`, `be0361d`, `1744307`, `b803363` | Package/shell/Actions/Docker/Compose and bounded PNPM support have component tests. |
@@ -158,16 +163,37 @@ Filename hashes, local counters, historical test catalog entries or caller-creat
 The current scanner's resource, grammar and admission gaps above remain unchanged.
 A complete identity integration is not honestly scoped as one ready sub-400-line change from the evidence available here.
 
+## LOG-OPERATIONS: bounded current-source reconciliation
+
+All nine source paths assigned by the historical ledger were inspected for current producers; this is not a repository-wide log scan or current scanner admission.
+The table separates emitted logs from state/storage projections that the historical ownership also includes.
+
+| Assigned source | Current classification | Evidence limit / remaining work |
+|---|---|---|
+| `src/db/migrate.ts` | Five fixed version-only Pino events delivered. | Focused SQLite evidence exists; no schema or error-classification redesign. |
+| `src/model-sync/sync-manager.ts` | Autosync catch delivered; summaries, lastError and SQL history still retain diagnostic strings. | HTTP projection does not sanitize internal persistence; remaining nonlogging records require separate treatment. |
+| `src/price-sync/price-manager.ts` | Reflection gap: autosync still uses `instanceof` and `console.error(error)`; diagnostic state/history also remain. | Source inference, not a new executed emission test. Existing private identity accessor can support a bounded catch fix. |
+| `src/security/enforcer.ts` | Three warning projections delivered; constructor logs configured profile/categories/rate limits and finite mode. | Constructor is not a raw exception sink; arbitrary runtime mutation and complete unit coverage are not certified. |
+| `src/server/admin.ts` | Historical adminAuth sites currently return fixed HTTP responses, not logs. | No logging defect inferred; authentication redesign remains separately pending. |
+| `src/setup/claude-code-setup.ts` | Mixed fixed instructions, entrypoint/config/backup paths and interpolated error messages. | Remaining projection gap; any fixture must isolate CLI execution and configuration writes before testing. |
+| `src/setup/gateway-setup.ts` | Mixed fixed instructions and raw errors/paths; prints token-bearing exports and JSON env settings. | Sensitive output remains by source readback; preserve setup functionality with approved constant instructions, not a silent compatibility change. |
+| `src/vault/claude-oauth.ts` | Sync failure catch delivered; refresh warning is already a fixed instruction. | Do not fabricate a refresh-message defect. Credential storage and actual refresh implementation remain outside this delivery. |
+| `src/vault/vault.ts` | Audit child logger includes freeform provider/keyName/fileName/project; token-refresh fallback still logs raw error through Console. | Pino redacts error keys, not those identity fields. Intended file-content returns are nonlogging data, not blanket-redaction targets; fresh emitted evidence and compatibility scope are needed. |
+
+No all-contained conclusion follows: price autosync, setup output, Vault projections and diagnostic persistence remain distinct gaps.
+The four delivered log slices do not close LOG-OPERATIONS or establish its LOG-SERVICES predecessor.
+
 ## Next bounded work
 
 | Priority | Scope and status | Acceptance focus |
 |---|---|---|
 | 1 | Plugin identity prerequisites: mapping above is read-only evidence, not an implemented registry or approved schema. | Identify the real issuer and immutable binding/consumer contract before any production ID wiring; no fake admission. |
-| 2 | LOG-OPERATIONS candidate: `src/security/enforcer.ts:filterTools,authorize,securityProfileMiddleware` still passes raw tool/path fields to logger calls. | Inspect existing logger serialization before claiming an emitted leak; then scope a focused operational-event fix preserving denial decisions and useful finite metadata. |
+| 2 | Price autosync catch: `src/price-sync/price-manager.ts:startAutoSync` still passes unknown errors to Console. | RED with actual Console/Pino output; use existing conflict identity accessor and a separately approved fixed event, preserving scheduling and stop behavior. |
 | 3 | Loader filesystem/lifecycle follow-up: `loadPlugins` still inspects outer filesystem error.code and rethrows non-ENOENT; timed-out imports continue running. | Preserve missing-directory compatibility; distinguish safe filesystem-error projection from actual execution cancellation, which needs a separate boundary. |
 
-The smallest concrete next implementation candidate is the security operational-log slice, estimated 150–220 lines including focused tests, subject to a bounded logger/contract readback first.
-Do not block that independent work on unresolved plugin identity, or label logger call arguments as proven emitted payload without checking the serializer.
+The smallest next implementation candidate is the price autosync catch, estimated 150–220 lines including focused tests.
+It can reuse the model-autosync fixture pattern without executing providers; the new fixed message must be approved before RED assertions.
+Do not block independent containment on unresolved plugin identity, or confuse source-inferred exposure with newly executed evidence.
 The DAG still orders ERR-MCP-DYNAMIC -> ERR-MCP-SECURITY -> ERR-HTTP-SECURITY, and ERR-MCP-SERVER -> ERR-ACP -> ERR-PLUGIN.
 Delivered components do not close those canonical predecessors or relax LOG-OPERATIONS dependencies.
 MCP/HTTP security, ACP diagnostics and plugin messages are no longer the unimplemented priorities in the preceding snapshot.
