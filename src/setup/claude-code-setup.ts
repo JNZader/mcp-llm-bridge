@@ -181,8 +181,8 @@ export async function runSetupClaudeCode(
   let scope: ClaudeMcpScope;
   try {
     scope = parseScope(argv);
-  } catch (err) {
-    console.error(`[setup-claude-code] ${(err as Error).message}`);
+  } catch {
+    console.error('[setup-claude-code] Invalid --scope value. Expected "user" or "project".');
     return 1;
   }
 
@@ -209,10 +209,9 @@ export async function runSetupClaudeCode(
           `Verify with: claude mcp list`,
       );
       return 0;
-    } catch (err) {
+    } catch {
       console.warn(
-        `[setup-claude-code] "claude mcp add" failed (${(err as Error).message}). ` +
-          `Falling back to direct config merge.`,
+        '[setup-claude-code] "claude mcp add" failed. Falling back to direct config merge.',
       );
     }
   } else {
