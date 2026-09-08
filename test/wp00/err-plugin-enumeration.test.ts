@@ -5,6 +5,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { loadPlugins } from '../../src/mcp-builder/loader.js';
 
 const EMPTY = { loaded: [], skipped: [], errors: [] };
@@ -139,4 +140,109 @@ describe('Plugin directory enumeration boundary', { concurrency: false }, () => 
       rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+describe('Plugin enumeration error shapes (not filesystem provenance)', { concurrency: false }, () => {
+  const rejectedShapes = [
+    'ordinary', 'prototype-imitation', 'inherited-data', 'inherited-getter',
+    'own-getter-return', 'own-getter-throw', 'native-proxy', 'ordinary-proxy',
+    'revoked', 'null', 'string', 'coercion-code', 'different-code',
+  ];
+  for (const scenario of [...rejectedShapes, 'native-own', 'cross-realm']) {
+    it('classifies enumeration shape ' + scenario + ' without observable inspection', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'wp00-enumeration-shape-'));
+      const original = { readdir: fs.readdir, copyFile: fs.copyFile, rm: fs.rm };
+      const enumerations: unknown[][] = [];
+      let copies = 0;
+      let removals = 0;
+      let inspections = 0;
+      const inspect = () => { inspections++; throw new Error('inspection-replacement'); };
+      const native = () => Object.assign(new Error('synthetic'), { code: 'ENOENT' });
+      let failure: unknown;
+      switch (scenario) {
+        case 'ordinary': failure = { code: 'ENOENT' }; break;
+        case 'prototype-imitation':
+          failure = Object.assign(Object.create(Error.prototype), { code: 'ENOENT' });
+          break;
+        case 'inherited-data':
+        case 'inherited-getter': {
+          const prototype = Object.create(Error.prototype);
+          Object.defineProperty(prototype, 'code', scenario === 'inherited-data'
+            ? { value: 'ENOENT' }
+            : { get() { inspections++; return 'ENOENT'; } });
+          failure = Object.setPrototypeOf(new Error('synthetic'), prototype);
+          break;
+        }
+        case 'own-getter-return':
+          failure = Object.defineProperty(new Error('synthetic'), 'code',
+            { get() { inspections++; return 'ENOENT'; } });
+          break;
+        case 'own-getter-throw':
+          failure = Object.defineProperty(new Error('synthetic'), 'code', { get: inspect });
+          break;
+        case 'native-proxy':
+        case 'ordinary-proxy':
+          failure = new Proxy(scenario === 'native-proxy' ? native() : {}, {
+            get: inspect, getPrototypeOf: inspect, getOwnPropertyDescriptor: inspect, has: inspect,
+          });
+          break;
+        case 'revoked': {
+          const revoked = Proxy.revocable(native(), {});
+          revoked.revoke();
+          failure = revoked.proxy;
+          break;
+        }
+        case 'null': failure = null; break;
+        case 'string': failure = 'ENOENT'; break;
+        case 'coercion-code':
+          failure = Object.assign(new Error('synthetic'), {
+            code: { toString: inspect, valueOf: inspect, [Symbol.toPrimitive]: inspect },
+          });
+          break;
+        case 'different-code':
+          failure = Object.assign(new Error('synthetic'), { code: 'EACCES' });
+          break;
+        case 'native-own': failure = native(); break;
+        case 'cross-realm':
+          // Fixed fixture expression only; never evaluate candidate plugin source.
+          failure = runInNewContext("Object.assign(new Error('synthetic'), { code: 'ENOENT' })");
+          break;
+        default: assert.fail('Unknown fixture scenario');
+      }
+      try {
+        Reflect.defineProperty(fs, 'readdir', { configurable: true, writable: true,
+          value: async (...args: unknown[]) => { enumerations.push(args); throw failure; },
+        });
+        Reflect.defineProperty(fs, 'copyFile', { configurable: true, writable: true,
+          value: async () => { copies++; throw new Error('unexpected-copy'); },
+        });
+        Reflect.defineProperty(fs, 'rm', { configurable: true, writable: true,
+          value: async () => { removals++; throw new Error('unexpected-cleanup'); },
+        });
+        syncBuiltinESMExports();
+        let caught: unknown;
+        let result: unknown;
+        let rejected = false;
+        try { result = await loadPlugins(root); }
+        catch (error) { rejected = true; caught = error; }
+        assert.deepEqual(enumerations, [[root]]);
+        assert.equal(copies, 0);
+        assert.equal(removals, 0);
+        assert.deepEqual(readdirSync(root), []);
+        if (rejectedShapes.includes(scenario)) {
+          assert.equal(rejected, true, 'unsupported shapes must not become empty success');
+          assert.equal(Object.is(caught, failure), true);
+        } else {
+          // Constructed native errors remain accepted: shape is not provenance.
+          assert.equal(rejected, false);
+          assert.deepEqual(result, EMPTY);
+        }
+        assert.equal(inspections, 0);
+      } finally {
+        Object.assign(fs, original);
+        syncBuiltinESMExports();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 });

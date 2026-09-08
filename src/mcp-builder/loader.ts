@@ -1,6 +1,7 @@
 import { copyFile, readdir, rm } from 'fs/promises';
 import { dirname, resolve } from 'path';
 import { pathToFileURL } from 'url';
+import { types } from 'node:util';
 import { dynamicPluginLoadTimeoutMs } from '../core/mcp-runtime-config.js';
 import { ToolCategorySchema } from '../security/profiles.js';
 import type { McpServerDefinition, ToolPattern, ToolSecurityMetadata } from './index.js';
@@ -108,12 +109,21 @@ function sanitizePluginDefinition(
   };
 }
 
+// This validates an error shape, not filesystem provenance.
+function isMissingDirectoryError(error: unknown): boolean {
+  if (!types.isNativeError(error)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+  return descriptor !== undefined
+    && Object.hasOwn(descriptor, 'value')
+    && descriptor.value === 'ENOENT';
+}
+
 export async function loadPlugins(pluginsDir: string): Promise<PluginLoadSummary> {
   let entries: string[];
   try {
     entries = await readdir(pluginsDir);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (isMissingDirectoryError(e)) {
       return { loaded: [], skipped: [], errors: [] };
     }
     throw e;
