@@ -28,7 +28,8 @@ import {
   MASK_VISIBLE_CHARS,
   MASK_SUFFIX,
 } from '../core/constants.js';
-import { childLogger } from '../core/logger.js';
+import { childLogger, logger } from '../core/logger.js';
+import { safeOperation } from '../core/safe-operation.js';
 
 // ── Vault Audit Logging ─────────────────────────────────────
 
@@ -714,9 +715,9 @@ export class Vault {
     if (token.refreshToken) {
       try {
         token = await refreshTokenIfNeeded(token);
-      } catch (error) {
+      } catch {
         // Log but continue with existing token
-        console.warn('[vault] Token refresh failed, using existing token:', error);
+        logger.warn(safeOperation('failed'), '[vault] Token refresh failed, using existing token:');
       }
     }
 
