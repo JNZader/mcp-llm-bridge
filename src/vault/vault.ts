@@ -30,6 +30,7 @@ import {
 } from '../core/constants.js';
 import { childLogger, logger } from '../core/logger.js';
 import { safeOperation } from '../core/safe-operation.js';
+import { safeError } from '../core/safe-error.js';
 
 // ── Vault Audit Logging ─────────────────────────────────────
 
@@ -260,7 +261,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'store', provider, keyName, project: proj, success: true } satisfies VaultAuditEvent);
       return Number(result.lastInsertRowid);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'store', provider, keyName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -295,7 +296,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'access', provider, keyName, project: proj, success: true } satisfies VaultAuditEvent);
       return decrypted;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'access', provider, keyName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -369,7 +370,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'list', provider: '*', project: proj, success: true } satisfies VaultAuditEvent);
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'list', provider: '*', project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -481,7 +482,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'store_file', provider, fileName, project: proj, success: true } satisfies VaultAuditEvent);
       return Number(result.lastInsertRowid);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'store_file', provider, fileName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
