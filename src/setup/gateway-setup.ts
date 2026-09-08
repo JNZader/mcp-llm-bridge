@@ -229,16 +229,16 @@ export async function runSetupGateway(
   let scope: GatewaySetupScope;
   try {
     ({ apply, scope } = parseGatewayArgs(argv));
-  } catch (err) {
-    console.error(`[setup-gateway] ${(err as Error).message}`);
+  } catch {
+    console.error('[setup-gateway] Invalid --scope value. Expected "user" or "project".');
     return 1;
   }
 
   let port: number;
   try {
     port = resolveGatewayPort(env);
-  } catch (err) {
-    console.error(`[setup-gateway] ${(err as Error).message}`);
+  } catch {
+    console.error('[setup-gateway] LLM_GATEWAY_PORT must be a valid port number (1-65535).');
     return 1;
   }
 
