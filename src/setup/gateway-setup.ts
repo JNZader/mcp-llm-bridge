@@ -292,7 +292,6 @@ export async function runSetupGateway(
     return 0;
   }
 
-  const settingsPath = options.settingsPathOverride ?? resolveSettingsPath(scope);
   const envVarsRecord: Record<string, string> = {
     ANTHROPIC_BASE_URL: gatewayEnv.ANTHROPIC_BASE_URL,
   };
@@ -302,6 +301,7 @@ export async function runSetupGateway(
 
   let result: SettingsEnvMergeResult;
   try {
+    const settingsPath = options.settingsPathOverride ?? resolveSettingsPath(scope);
     result = mergeGatewayEnvIntoSettings(settingsPath, envVarsRecord);
   } catch {
     console.error('[setup-gateway] Unable to update Claude Code settings.');

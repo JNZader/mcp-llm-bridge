@@ -20,6 +20,9 @@ assert.equal(fs.lstatSync(root).isDirectory(), true);
 assert.deepEqual(fs.readdirSync(root), ['fixture-marker']);
 assert.equal(fs.readFileSync(join(root, 'fixture-marker'), 'utf8'), marker);
 assert.ok(kind === 'claude' || kind === 'gateway');
+const importedGateway = scenario === 'removed-cwd'
+  ? await import('../../../src/setup/gateway-setup.js')
+  : undefined;
 const cwd = process.cwd();
 const project = join(root, 'project');
 fs.mkdirSync(join(project, 'dist'), { recursive: true });
@@ -52,7 +55,7 @@ switch (scenario) {
     break;
   }
   case 'null': failure = null; break;
-  default: assert.ok(['directory', 'missing-parent', 'backup-collision', 'success', 'dry'].includes(scenario));
+  default: assert.ok(['directory', 'missing-parent', 'backup-collision', 'success', 'dry', 'removed-cwd'].includes(scenario));
 }
 const originalExec = childProcess.execFileSync;
 const originalWrite = fs.writeFileSync;
@@ -98,7 +101,7 @@ try {
   console.warn = realConsole.warn.bind(realConsole);
   // Only setup modules, never src/index.ts or gateway runtime initialization.
   const claude = await import('../../../src/setup/claude-code-setup.js');
-  const gateway = await import('../../../src/setup/gateway-setup.js');
+  const gateway = importedGateway ?? await import('../../../src/setup/gateway-setup.js');
   assert.equal(requests.length, 0);
   let helperIdentity = true;
   if (hostile) {
@@ -114,12 +117,23 @@ try {
   }
   let code: number | undefined;
   let escaped = false;
+  let removedCwd: string | undefined;
+  if (scenario === 'removed-cwd') {
+    removedCwd = join(root, 'removed-cwd');
+    fs.mkdirSync(removedCwd);
+    assert.deepEqual(fs.readdirSync(removedCwd), []);
+    process.chdir(removedCwd);
+    fs.rmdirSync(removedCwd);
+  }
   try {
     code = kind === 'claude'
       ? await claude.runSetupClaudeCode([], pathToFileURL(join(project, 'src', 'index.ts')).href, { configPathOverride: target })
-      : await gateway.runSetupGateway(scenario === 'dry' ? [] : ['--apply'], {
-        settingsPathOverride: target, env: { LLM_GATEWAY_PORT: '4321', LLM_GATEWAY_AUTH_TOKEN: 'synthetic-intentional-token' },
-      });
+      : await gateway.runSetupGateway(
+        scenario === 'dry' ? [] : scenario === 'removed-cwd' ? ['--apply', '--scope', 'project'] : ['--apply'],
+        scenario === 'removed-cwd'
+          ? { env: { LLM_GATEWAY_PORT: '4321', LLM_GATEWAY_AUTH_TOKEN: 'synthetic-intentional-token' } }
+          : { settingsPathOverride: target, env: { LLM_GATEWAY_PORT: '4321', LLM_GATEWAY_AUTH_TOKEN: 'synthetic-intentional-token' } },
+      );
   } catch { escaped = true; }
   assert.deepEqual(requests, kind === 'claude' ? [{ command: 'claude', args: ['--version'] }] : []);
   assert.equal(unexpectedWrites, 0);
@@ -146,7 +160,7 @@ try {
   }
   assert.equal(fs.existsSync(join(root, '.llm-gateway')), false);
   assert.deepEqual(fs.readdirSync(project), ['dist']);
-  process.stdout.write(JSON.stringify({ code, escaped, inspections, helperIdentity, out, err }));
+  process.stdout.write(JSON.stringify({ code, escaped, inspections, helperIdentity, removedCwd, out, err }));
 } finally {
   fs.writeFileSync = originalWrite;
   childProcess.execFileSync = originalExec;

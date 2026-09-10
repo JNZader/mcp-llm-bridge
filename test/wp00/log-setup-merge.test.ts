@@ -15,6 +15,7 @@ interface Report {
   escaped: boolean;
   inspections: number;
   helperIdentity: boolean;
+  removedCwd?: string;
   out: string[];
   err: string[];
 }
@@ -67,5 +68,15 @@ describe('Setup merge failure boundaries', { concurrency: false }, () => {
     assert.equal(report.escaped, false);
     assert.deepEqual(report.err, []);
     assert.ok(report.out.join('').includes('Dry run (default): no files were modified.'));
+  });
+  it('gateway project apply contains a removed working-directory resolution failure', async () => {
+    const report = await run('gateway', 'removed-cwd');
+    assert.equal(report.escaped, false);
+    assert.equal(report.code, 1);
+    assert.deepEqual(report.err, ['[setup-gateway] Unable to update Claude Code settings.\n']);
+    assert.ok(report.removedCwd);
+    assert.equal(report.err.join('').includes(report.removedCwd), false);
+    assert.equal(report.err.join('').includes('Error:'), false);
+    assert.equal(report.err.join('').includes('\n    at '), false);
   });
 });
