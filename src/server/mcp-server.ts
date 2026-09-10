@@ -22,6 +22,7 @@ import { McpDefinitionAdapter, type DynamicToolRuntimeHealth } from '../mcp-buil
 import { loadPlugins, type LoadedPlugin, type PluginLoadIssue } from '../mcp-builder/loader.js';
 import { PageIndexTools } from '../pageindex/tools.js';
 import { TOOLS, getRuntimeMcpTools as getRuntimeMcpToolsFromRegistry } from './mcp-tool-registry.js';
+import { createDynamicPluginDiagnostics, type DynamicPluginDiagnostics } from './plugin-diagnostics.js';
 
 type ToolCallResult = {
   content: Array<{ type: 'text'; text: string }>;
@@ -259,6 +260,14 @@ export function getDynamicPluginLoadSummary(): DynamicPluginLoadSummary {
       runtime: createPluginRuntimeHealth({ plugin, toolCount, toolNames }, runtimeHealthByToolName),
     })),
   };
+}
+
+/**
+ * Returns an allowlisted aggregate diagnostics snapshot for dynamic plugins.
+ * This is an in-process API and does not register an MCP tool or HTTP route.
+ */
+export function getDynamicPluginDiagnostics(): DynamicPluginDiagnostics {
+  return createDynamicPluginDiagnostics(dynamicPluginLoadSummary);
 }
 
 export async function startMcpServer(options: StartMcpServerOptions): Promise<Server> {
