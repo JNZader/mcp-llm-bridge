@@ -1,5 +1,13 @@
-import type { Vault } from "../../vault/vault.js";
 import { resolveProviderApiKey } from "../../core/provider-runtime-config.js";
+
+export interface ProviderStreamAccessToken {
+	readonly accessToken?: string;
+}
+
+export interface ProviderStreamVaultPort {
+	getClaudeOAuthToken(project?: string): Promise<ProviderStreamAccessToken | null>;
+	getDecrypted(provider: string, keyName?: string, project?: string): string;
+}
 
 /** Provider-specific base URLs for OpenAI-compatible streaming. */
 const PROVIDER_STREAM_BASE_URLS: Record<string, string> = {
@@ -20,7 +28,7 @@ const PROVIDER_STREAM_BASE_URLS: Record<string, string> = {
  */
 export function buildProviderStreamCall(
 	providerId: string,
-	vault?: Vault,
+	vault?: ProviderStreamVaultPort,
 	project?: string,
 	abortSignal?: AbortSignal,
 ): (request: unknown) => AsyncIterable<unknown> {
