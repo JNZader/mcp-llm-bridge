@@ -6,7 +6,7 @@ import type { GenerateResponse } from "../../core/types.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
-import type { Vault } from "../../vault/vault.js";
+import type { ProviderStreamVaultPort } from "./provider-stream-client.js";
 import {
 	buildChatGenerateRequest,
 	buildChatInternalRequestFromMessages,
@@ -32,7 +32,7 @@ export interface CreateStreamExecutorInput {
 	canonical: CanonicalRequest;
 	router: Router;
 	costTracker?: CostTracker;
-	vault?: Vault;
+	vault?: ProviderStreamVaultPort;
 	requestLogger?: RequestLogger;
 	scope: RequestScope;
 	abortSignal?: AbortSignal;

@@ -9,7 +9,7 @@ import {
 	createOpenAIUsage,
 } from "../../protocol-converter/index.js";
 import type { CanonicalRequest } from "../../protocol-converter/types.js";
-import type { Vault } from "../../vault/vault.js";
+import type { ProviderStreamVaultPort } from "../streaming/provider-stream-client.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import {
 	getValidationIssue,
@@ -34,7 +34,7 @@ import { buildSSEChunkEvent } from "../../transformers/streaming.js";
 
 export interface ExecutionRouteDeps {
 	router: Router;
-	vault: Vault;
+	vault: ProviderStreamVaultPort;
 	costTracker?: CostTracker;
 	requestLogger?: RequestLogger;
 }
@@ -79,7 +79,7 @@ function handleStreamingRequest(
 	scope: RequestScope,
 	router: Router,
 	costTracker?: CostTracker,
-	vault?: Vault,
+	vault?: ProviderStreamVaultPort,
 	requestLogger?: RequestLogger,
 ): Response {
 	const chatId = `chatcmpl-${randomUUID()}`;
