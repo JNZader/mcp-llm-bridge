@@ -13,31 +13,29 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import Database from 'better-sqlite3';
-import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
-import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 import { MultiKeyManager } from '../../src/vault/multi-key-manager.js';
 import { Vault } from '../../src/vault/vault.js';
 import { initializeDb } from '../../src/vault/schema.js';
 import { decrypt } from '../../src/vault/crypto.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEST_DB_DIR = join(__dirname, '..', '.test-db');
-const TEST_DB_PATH = join(TEST_DB_DIR, 'multi-key-test.db');
-
 // Test master key (32 bytes for AES-256)
 const TEST_MASTER_KEY = Buffer.from('a'.repeat(32));
 
 describe('MultiKeyManager', () => {
-  let db: Database.Database;
-  let vault: Vault;
+  let db!: Database.Database;
+  let vault!: Vault;
   let manager: MultiKeyManager;
+  let testDbDir!: string;
+  let testDbPath!: string;
 
   // Helper to create a mock GatewayConfig
   const createConfig = () => ({
     masterKey: TEST_MASTER_KEY,
-    dbPath: TEST_DB_PATH,
+    dbPath: testDbPath,
     httpPort: 0,
   });
 
@@ -50,18 +48,11 @@ describe('MultiKeyManager', () => {
   };
 
   beforeEach(() => {
-    // Ensure test directory exists
-    mkdirSync(TEST_DB_DIR, { recursive: true });
-
-    // Clean up any existing test database
-    try {
-      rmSync(TEST_DB_PATH);
-    } catch {
-      // File may not exist
-    }
+    testDbDir = mkdtempSync(join(tmpdir(), 'multi-key-test-'));
+    testDbPath = join(testDbDir, 'multi-key-test.db');
 
     // Create fresh database with schema
-    db = new Database(TEST_DB_PATH);
+    db = new Database(testDbPath);
     db.pragma('journal_mode = WAL');
     initializeDb(db);
 
@@ -82,15 +73,36 @@ describe('MultiKeyManager', () => {
     manager = new MultiKeyManager(db);
   });
 
-  afterEach(() => {
-    vault.close();
-    db.close();
+  afterEach((testContext) => {
+    let cleanupError: unknown;
 
-    // Clean up test database
     try {
-      rmSync(TEST_DB_PATH);
-    } catch {
-      // File may not exist
+      vault?.close();
+    } catch (error) {
+      cleanupError = error;
+    }
+
+    try {
+      db?.close();
+    } catch (error) {
+      cleanupError ??= error;
+    }
+
+    try {
+      if (testDbDir) {
+        rmSync(testDbDir, { recursive: true, force: true });
+      }
+    } catch (error) {
+      cleanupError ??= error;
+    }
+
+    if (cleanupError) {
+      const message = `Cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+      if ('diagnostic' in testContext) {
+        testContext.diagnostic(message);
+      } else {
+        console.error(message);
+      }
     }
   });
 
