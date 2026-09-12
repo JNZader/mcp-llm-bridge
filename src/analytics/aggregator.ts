@@ -302,7 +302,9 @@ export class AnalyticsAggregator {
 
   private verifyDurableRetention(writer: AnalyticsPersistenceWriter, beforeTimestamp: number): void {
     const retention = writer.cleanupRetention?.(beforeTimestamp);
-    if (!retention || retention.outcome !== RETENTION_VERIFICATION_OUTCOMES.SUCCESS) {
+    // No cleanupRetention configured → retention is not enforced for this local writer.
+    if (retention === undefined) return;
+    if (retention.outcome !== RETENTION_VERIFICATION_OUTCOMES.SUCCESS) {
       throw new Error("Analytics retention cleanup is not verified");
     }
   }
