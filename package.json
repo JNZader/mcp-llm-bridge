@@ -13,7 +13,7 @@
     "dev": "tsx watch src/index.ts",
     "serve": "tsx src/index.ts serve",
     "test:wp00:devcontainer": "node --import tsx test/wp00/run-devcontainer-mcp-http-proof.ts --run",
-    "test": "node --test-concurrency=1 --import tsx --import ./test/setup/inject-require.mjs --test \"test/**/*.test.ts\"",
+    "test": "node --import tsx --import ./test/setup/inject-require.mjs --test \"test/**/*.test.ts\"",
     "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
