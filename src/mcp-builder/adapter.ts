@@ -5,6 +5,7 @@ interface RegisteredDynamicTool {
   plugin: string;
   pattern: ToolPattern;
   runtime: DynamicToolRuntimeState;
+  workerProxy: boolean;
 }
 
 const DYNAMIC_TOOL_ERROR = {
@@ -72,6 +73,15 @@ export class McpDefinitionAdapter {
   private dynamicTools: Map<string, RegisteredDynamicTool> = new Map();
 
   register(server: unknown, definition: McpServerDefinition, pluginName: string = definition.name): void {
+    this.registerDefinition(server, definition, pluginName, false);
+  }
+
+  /** Worker hosts own their timeout/error lifecycle; do not wrap or quarantine them here. */
+  registerWorkerProxy(server: unknown, definition: McpServerDefinition, pluginName: string = definition.name): void {
+    this.registerDefinition(server, definition, pluginName, true);
+  }
+
+  private registerDefinition(server: unknown, definition: McpServerDefinition, pluginName: string, workerProxy: boolean): void {
     for (const tool of definition.tools) {
       // Register on SDK Server if it has the tool() method (McpServer)
       const s = server as Record<string, unknown>;
@@ -88,6 +98,7 @@ export class McpDefinitionAdapter {
           consecutiveFailures: 0,
           quarantined: false,
         },
+        workerProxy,
       });
     }
   }
@@ -98,6 +109,10 @@ export class McpDefinitionAdapter {
 
     if (entry.runtime.quarantined) {
       return this.createQuarantinedResult();
+    }
+
+    if (entry.workerProxy) {
+      return entry.pattern.handler(args);
     }
 
     const timeoutMs = dynamicPluginToolTimeoutMs();

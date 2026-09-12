@@ -19,7 +19,15 @@ function copyMigrations(): void {
 }
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: {
+    index: 'src/index.ts',
+    'plugin-runtime-worker': 'src/mcp-builder/plugin-runtime-worker.ts',
+    loader: 'src/mcp-builder/loader.ts',
+    'plugin-runtime-host': 'src/mcp-builder/plugin-runtime-host.ts',
+    'plugin-runtime-registry': 'src/mcp-builder/plugin-runtime-registry.ts',
+  },
+  // Keep the worker's internal implementation within its independently hashed entry.
+  splitting: false,
   format: ['esm'],
   dts: true,
   onSuccess: async () => {

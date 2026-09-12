@@ -14,13 +14,15 @@ import type { CodeSearchService } from '../code-search/index.js';
 import type { StateManager } from '../crdt/index.js';
 import type { TrustLevel } from '../core/types.js';
 import { VERSION } from '../core/constants.js';
-import { dynamicMcpServersEnabled, mcpServersDir } from '../core/mcp-runtime-config.js';
+import { assertProviderRegistryFrozen } from '../core/provider-registry.js';
+import { dynamicMcpServersEnabled, mcpServersDir, pluginRuntimeConfig } from '../core/mcp-runtime-config.js';
 import { logger } from '../core/logger.js';
 import { ProfileEnforcer } from '../security/enforcer.js';
 import type { ApprovalStore } from '../approval/index.js';
 import { McpDefinitionAdapter, type DynamicToolRuntimeHealth } from '../mcp-builder/adapter.js';
-import { loadPlugins, type LoadedPlugin, type PluginLoadIssue } from '../mcp-builder/loader.js';
+import { loadPlugins, loadWorkerPlugins, type LoadedPlugin, type PluginLoadIssue } from '../mcp-builder/loader.js';
 import { PageIndexTools } from '../pageindex/tools.js';
+import { createPluginRuntimeRegistry, type PluginRuntimeRegistry } from '../mcp-builder/plugin-runtime-registry.js';
 import { TOOLS, getRuntimeMcpTools as getRuntimeMcpToolsFromRegistry } from './mcp-tool-registry.js';
 import { createDynamicPluginDiagnostics, type DynamicPluginDiagnostics } from './plugin-diagnostics.js';
 
@@ -62,6 +64,7 @@ export interface StartMcpServerOptions {
   securityProfile?: TrustLevel;
   approvalStore?: ApprovalStore;
   pageIndexTools?: PageIndexTools;
+  pluginRuntimeRegistry?: PluginRuntimeRegistry;
   handleToolCall: (
     toolName: string,
     args: Record<string, unknown>,
@@ -178,6 +181,7 @@ function admitDynamicPlugins(
   plugins: LoadedPlugin[],
   adapter: McpDefinitionAdapter,
   enforcer?: ProfileEnforcer,
+  workerProxy: boolean = false,
 ): { loaded: AdmittedDynamicPluginLoadedServer[]; collisions: DynamicPluginCollision[] } {
   const builtInToolNames = new Set<string>(TOOLS.map((tool) => tool.name));
   const admittedToolOwners = new Map<string, string>();
@@ -224,7 +228,11 @@ function admitDynamicPlugins(
       continue;
     }
 
-    adapter.register(server, plugin.definition, plugin.name);
+    if (workerProxy) {
+      adapter.registerWorkerProxy(server, plugin.definition, plugin.name);
+    } else {
+      adapter.register(server, plugin.definition, plugin.name);
+    }
     for (const tool of plugin.definition.tools) {
       const toolName = tool.name;
       admittedToolOwners.set(toolName, plugin.name);
@@ -271,6 +279,8 @@ export function getDynamicPluginDiagnostics(): DynamicPluginDiagnostics {
 }
 
 export async function startMcpServer(options: StartMcpServerOptions): Promise<Server> {
+  assertProviderRegistryFrozen(options.router);
+
   const {
     router,
     vault,
@@ -282,6 +292,7 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
     securityProfile,
     approvalStore,
     pageIndexTools,
+    pluginRuntimeRegistry,
     handleToolCall,
   } = options;
 
@@ -365,50 +376,83 @@ export async function startMcpServer(options: StartMcpServerOptions): Promise<Se
   const dynamicServersEnabled = dynamicMcpServersEnabled();
   const pluginsDir = mcpServersDir();
   dynamicPluginLoadSummary = createEmptyDynamicPluginLoadSummary(dynamicServersEnabled, pluginsDir);
+  const runtimeRegistry = pluginRuntimeRegistry ?? createPluginRuntimeRegistry();
 
-  if (dynamicServersEnabled) {
-    dynamicToolAdapter = new McpDefinitionAdapter();
-    const pluginLoadSummary = await loadPlugins(pluginsDir);
-    const admissionSummary = admitDynamicPlugins(server, pluginLoadSummary.loaded, dynamicToolAdapter, enforcer);
+  try {
+    if (dynamicServersEnabled) {
+      // Worker compatibility needs byte observations, which loadWorkerPlugins
+      // obtains before it asks the config reader to validate external evidence.
+      const workerMode = process.env['MCP_PLUGIN_RUNTIME_MODE'] === 'worker';
+      if (!workerMode) pluginRuntimeConfig();
+      dynamicToolAdapter = new McpDefinitionAdapter();
+      const workerLoadSummary = workerMode
+        ? await loadWorkerPlugins(pluginsDir, runtimeRegistry)
+        : undefined;
+      const legacyLoadSummary = workerMode
+        ? undefined
+        : await loadPlugins(pluginsDir);
+      const pluginLoadSummary = workerLoadSummary ?? legacyLoadSummary!;
+      const admissionSummary = admitDynamicPlugins(
+        server,
+        pluginLoadSummary.loaded,
+        dynamicToolAdapter,
+        enforcer,
+        workerMode,
+      );
 
-    dynamicPluginLoadSummary = {
-      enabled: true,
-      directory: pluginsDir,
-      loaded: admissionSummary.loaded.map(({ plugin, toolCount, toolNames }) => ({
-        plugin,
-        toolCount,
-        toolNames,
-        runtime: createPluginRuntimeHealth(
-          { plugin, toolCount, toolNames },
-          new Map<string, DynamicToolRuntimeHealth>(),
-        ),
-      })),
-      skipped: pluginLoadSummary.skipped,
-      errors: pluginLoadSummary.errors,
-      collisions: admissionSummary.collisions,
+      dynamicPluginLoadSummary = {
+        enabled: true,
+        directory: pluginsDir,
+        loaded: admissionSummary.loaded.map(({ plugin, toolCount, toolNames }) => ({
+          plugin,
+          toolCount,
+          toolNames,
+          runtime: createPluginRuntimeHealth(
+            { plugin, toolCount, toolNames },
+            new Map<string, DynamicToolRuntimeHealth>(),
+          ),
+        })),
+        skipped: legacyLoadSummary?.skipped ?? [],
+        errors: pluginLoadSummary.errors,
+        collisions: admissionSummary.collisions,
+      };
+
+      if (enforcer && dynamicToolAdapter) {
+        server.setRequestHandler(ListToolsRequestSchema, async () => ({
+          tools: enforcer.filterTools(getRuntimeMcpTools()),
+        }));
+      }
+
+      if (
+        dynamicPluginLoadSummary.skipped.length > 0
+        || dynamicPluginLoadSummary.errors.length > 0
+        || dynamicPluginLoadSummary.collisions.length > 0
+      ) {
+        logger.warn({ dynamicPluginOperation: dynamicPluginOperationEvent(dynamicPluginLoadSummary) }, 'Dynamic MCP plugin admission completed with quarantined entries');
+      } else {
+        logger.info({ dynamicPluginOperation: dynamicPluginOperationEvent(dynamicPluginLoadSummary) }, 'Dynamic MCP plugin admission completed');
+      }
+    }
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+
+    const originalClose = server.close.bind(server);
+    let closePromise: Promise<void> | undefined;
+    server.close = async () => {
+      if (!closePromise) {
+        closePromise = (async () => {
+          await runtimeRegistry.closeAll();
+          await originalClose();
+        })();
+      }
+      return closePromise;
     };
 
-    if (enforcer && dynamicToolAdapter) {
-      server.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: enforcer.filterTools(getRuntimeMcpTools()),
-      }));
-    }
+    logger.info({ securityProfile: profileName }, 'MCP server started on stdio');
 
-    if (
-      dynamicPluginLoadSummary.skipped.length > 0
-      || dynamicPluginLoadSummary.errors.length > 0
-      || dynamicPluginLoadSummary.collisions.length > 0
-    ) {
-      logger.warn({ dynamicPluginOperation: dynamicPluginOperationEvent(dynamicPluginLoadSummary) }, 'Dynamic MCP plugin admission completed with quarantined entries');
-    } else {
-      logger.info({ dynamicPluginOperation: dynamicPluginOperationEvent(dynamicPluginLoadSummary) }, 'Dynamic MCP plugin admission completed');
-    }
+    return server;
+  } catch (error) {
+    await runtimeRegistry.closeAll().catch(() => undefined);
+    throw error;
   }
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-
-  logger.info({ securityProfile: profileName }, 'MCP server started on stdio');
-
-  return server;
 }
