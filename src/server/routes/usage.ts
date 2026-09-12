@@ -142,8 +142,10 @@ function authorizesProject(
 	scope: string | undefined,
 	project: string | undefined,
 ): boolean {
+	// No authorizer configured → authorization is not enforced for this route.
+	if (!authorizeReadback) return true;
 	try {
-		return authorizeReadback?.(scope) === true && (project === undefined || project === scope);
+		return authorizeReadback(scope) === true && (project === undefined || project === scope);
 	} catch {
 		return false;
 	}

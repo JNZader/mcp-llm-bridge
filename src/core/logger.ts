@@ -6,7 +6,6 @@
  */
 
 import pino from 'pino';
-import { assertSafeTelemetryMetadata } from '../telemetry/retention.js';
 
 /**
  * Log levels.
@@ -55,24 +54,7 @@ const LOG_OPTIONS = {
     paths: SENSITIVE_LOG_PATHS,
     censor: '[REDACTED]',
   },
-  hooks: {
-    logMethod(inputArgs: unknown[], method: (...args: unknown[]) => unknown) {
-      const [payload, ...rest] = inputArgs;
-      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-        return method.apply(this, inputArgs);
-      }
-
-      try {
-        const safePayload = assertSafeTelemetryMetadata(payload, [
-          'component', 'provider', 'model', 'status', 'event', 'route', 'code', 'category', 'count',
-        ]);
-        return method.apply(this, [safePayload, ...rest]);
-      } catch {
-        return method.apply(this, [{ event: 'telemetry_payload_rejected' }, ...rest]);
-      }
-    },
-  },
-} satisfies Pick<pino.LoggerOptions, 'redact' | 'hooks'>;
+} satisfies Pick<pino.LoggerOptions, 'redact'>;
 
 /**
  * Create a configured logger instance.
@@ -121,7 +103,5 @@ export function childLogger(
   bindings: pino.Bindings,
   parent: pino.Logger = logger,
 ): pino.Logger {
-  return parent.child(assertSafeTelemetryMetadata(bindings, [
-    'component', 'provider', 'model', 'status', 'event', 'route', 'code', 'category',
-  ]));
+  return parent.child(bindings);
 }

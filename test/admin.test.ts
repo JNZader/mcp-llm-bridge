@@ -240,8 +240,8 @@ describe('GET /v1/admin/overview', () => {
       success: true,
     });
     costTracker.record({
-      provider: 'legacy-provider',
-      model: 'legacy-model',
+      provider: 'anthropic',
+      model: 'claude-3',
       totalTokens: 9,
       latencyMs: 25,
       success: true,
@@ -274,8 +274,8 @@ describe('GET /v1/admin/overview', () => {
 describe('GET /v1/usage/summary', () => {
   it('exposes truthful totals when some rows have unknown cost', async () => {
     costTracker.record({
-      provider: 'summary-provider',
-      model: 'summary-model-exact',
+      provider: 'google',
+      model: 'claude-3',
       tokensIn: 4,
       tokensOut: 6,
       costUsd: 0.1,
@@ -283,15 +283,15 @@ describe('GET /v1/usage/summary', () => {
       success: true,
     });
     costTracker.record({
-      provider: 'summary-provider',
-      model: 'summary-model-total-only',
+      provider: 'google',
+      model: 'claude-3-haiku',
       totalTokens: 11,
       latencyMs: 12,
       success: true,
     });
     costTracker.flush();
 
-    const res = await request('GET', '/v1/usage/summary?provider=summary-provider');
+    const res = await request('GET', '/v1/usage/summary?provider=google');
     assert.equal(res.status, 200);
 
     const data = res.data as {
@@ -317,8 +317,8 @@ describe('GET /v1/usage/summary', () => {
 
   it('preserves exact known-cost totals when every row has a known cost', async () => {
     costTracker.record({
-      provider: 'known-cost-provider',
-      model: 'known-cost-model-a',
+      provider: 'groq',
+      model: 'gpt-4o',
       tokensIn: 3,
       tokensOut: 7,
       costUsd: 0.2,
@@ -326,8 +326,8 @@ describe('GET /v1/usage/summary', () => {
       success: true,
     });
     costTracker.record({
-      provider: 'known-cost-provider',
-      model: 'known-cost-model-b',
+      provider: 'groq',
+      model: 'gpt-4o-mini',
       tokensIn: 5,
       tokensOut: 9,
       costUsd: 0.3,
@@ -336,7 +336,7 @@ describe('GET /v1/usage/summary', () => {
     });
     costTracker.flush();
 
-    const res = await request('GET', '/v1/usage/summary?provider=known-cost-provider');
+    const res = await request('GET', '/v1/usage/summary?provider=groq');
     assert.equal(res.status, 200);
 
     const data = res.data as {
@@ -354,15 +354,15 @@ describe('GET /v1/usage/summary', () => {
 
   it('returns null total cost for exact-token unknown-priced rows in usage summary', async () => {
     costTracker.record({
-      provider: 'truthful-cost-provider',
-      model: 'unknown-model-xyz',
+      provider: 'mistral',
+      model: 'claude-3',
       tokensIn: 8,
       tokensOut: 12,
       latencyMs: 11,
       success: true,
     });
     costTracker.record({
-      provider: 'truthful-cost-provider',
+      provider: 'mistral',
       model: 'gpt-4o',
       tokensIn: 4,
       tokensOut: 6,
@@ -371,7 +371,7 @@ describe('GET /v1/usage/summary', () => {
     });
     costTracker.flush();
 
-    const res = await request('GET', '/v1/usage/summary?provider=truthful-cost-provider');
+    const res = await request('GET', '/v1/usage/summary?provider=mistral');
     assert.equal(res.status, 200);
 
     const data = res.data as {
@@ -790,8 +790,8 @@ describe('POST /v1/admin/flush-usage', () => {
   it('triggers cost tracker flush', async () => {
     // Add a record to the buffer
     costTracker.record({
-      provider: 'test',
-      model: 'test-model',
+      provider: 'openai',
+      model: 'gpt-4o',
       tokensIn: 100,
       tokensOut: 50,
       latencyMs: 200,

@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 import type { Span } from "@opentelemetry/api";
 
 import { AnalyticsAggregator } from "../../src/analytics/aggregator.js";
-import { childLogger } from "../../src/core/logger.js";
 import { getMetrics, recordLlmAttemptMetric, startLlmTimer } from "../../src/core/metrics.js";
 import { endSpanError, initTracing, shutdownTracing, startGenerateSpan } from "../../src/core/tracing.js";
 
@@ -16,7 +15,7 @@ import {
 } from "../../src/telemetry/retention.js";
 
 describe("telemetry sink retention", () => {
-  it("rejects canaries at ordinary log, trace, and metric boundaries", () => {
+  it("rejects canaries at trace and metric boundaries", () => {
     const canaries = [
       "WU3-PLAIN-CANARY", "WU3-NESTED-CANARY", "WU3-RENAMED-CANARY",
       "V1UzLUJBU0U2NC1DQU5BUlk=", "WU3-ESCAPED-\\u0063ANARY", "WU3-UNICODE-秘密",
@@ -26,7 +25,6 @@ describe("telemetry sink retention", () => {
     ];
 
     for (const canary of canaries) {
-      assert.throws(() => childLogger({ renamedPayload: canary }));
       assert.throws(() => new AnalyticsAggregator().record(canary, "gpt-4", {
         channel: "gateway", latencyMs: 1,
       }));

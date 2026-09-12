@@ -19,8 +19,8 @@ import { StubAdapter } from './helpers/stub-adapter.js';
 // ── Test-only discovery seams ─────────────────────────────
 
 const LOCAL_LLM_URLS = {
-  ollamaUrl: 'http://127.0.0.1:11434',
-  lmStudioUrl: 'http://127.0.0.1:1234',
+  ollamaUrl: 'http://localhost:11434',
+  lmStudioUrl: 'http://localhost:1234',
 };
 const FIXED_TIMESTAMP = '2026-09-10T00:00:00.000Z';
 
@@ -89,6 +89,7 @@ let port = 0;
 const discovery = createDiscoveryServices([undefined, 'fake-token']);
 
 before(async () => {
+  delete process.env['HF_TOKEN'];
   server = startHttpServer({
     router: freezeRouterForStartup(router), vault, config,
     adminDiscoveryServices: discovery.services,
