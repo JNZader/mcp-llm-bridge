@@ -1,4 +1,3 @@
-import { isRegisteredTelemetryModel, isRegisteredTelemetryProvider } from '../core/provider-registry.js';
 
 export const RETENTION_SINKS = {
   REQUEST_LOGS: "request_logs",
@@ -203,19 +202,12 @@ export function assertSafeTelemetryMetadata(
   const metadata: Record<string, string | number | boolean> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (entry === undefined) continue;
-    if (!allowed.has(key) || !isSafeTelemetryValue(entry) || !isRegistryBoundTelemetryIdentifier(key, entry)) {
+    if (!allowed.has(key) || !isSafeTelemetryValue(entry)) {
       throw new Error("Telemetry sink input rejected");
     }
     metadata[key] = entry;
   }
   return metadata;
-}
-
-function isRegistryBoundTelemetryIdentifier(key: string, value: string | number | boolean): boolean {
-  if (typeof value !== 'string') return true;
-  if (key === 'provider') return isRegisteredTelemetryProvider(value);
-  if (key === 'model') return isRegisteredTelemetryModel(value);
-  return true;
 }
 
 function isSafeTelemetryValue(value: unknown): value is string | number | boolean {

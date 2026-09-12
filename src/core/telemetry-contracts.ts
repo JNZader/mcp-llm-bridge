@@ -1,20 +1,16 @@
 import { z } from 'zod';
 
-import {
-  isRegisteredTelemetryModel,
-  isRegisteredTelemetryProvider,
-} from './provider-registry.js';
-
 const tokenCount = z.number().int().nonnegative();
 const opaqueIdentifier = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
-const registeredProvider = z.string().refine(isRegisteredTelemetryProvider, 'Unknown telemetry provider');
-const registeredModel = z.string().refine(isRegisteredTelemetryModel, 'Unknown telemetry model');
+// Bounded metadata: rejects canaries (uppercase/unicode/oversized) without
+// requiring registry membership — runtime providers/models are dynamic.
+const boundedMetadata = z.string().regex(/^[a-z0-9_][a-z0-9_.:/-]{0,199}$/);
 const safeFailureCode = z.enum(['rate_limited', 'timed_out', 'unavailable', 'failed']);
 
 export const UsageTelemetrySchema = z.object({
-  provider: registeredProvider,
+  provider: boundedMetadata,
   keyName: opaqueIdentifier.optional(),
-  model: registeredModel,
+  model: boundedMetadata,
   project: opaqueIdentifier.optional(),
   apiKeyId: opaqueIdentifier.optional(),
   userId: opaqueIdentifier.optional(),
@@ -30,8 +26,8 @@ export const UsageTelemetrySchema = z.object({
 }).strict();
 
 export const RequestLogTelemetrySchema = z.object({
-  provider: registeredProvider,
-  model: registeredModel,
+  provider: boundedMetadata,
+  model: boundedMetadata,
   correlationId: opaqueIdentifier.optional(),
   totalTokens: tokenCount.optional(),
   inputTokens: tokenCount.optional(),
