@@ -81,6 +81,7 @@ describe("createRuntimeContext", () => {
 			);
 		} finally {
 			if (runtime) {
+				await runtime.pluginRuntimeRegistry.closeAll();
 				runtime.compressor.destroy();
 				runtime.latencyMeasurer.stopBackgroundTask();
 				runtime.freeModelRouter.destroy();

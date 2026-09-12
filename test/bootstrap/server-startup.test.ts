@@ -37,6 +37,7 @@ function createRuntimeStub(): ServerStartupRuntime {
 		codeSearch: { name: "codeSearch" } as unknown as ServerStartupRuntime["codeSearch"],
 		stateManager: { name: "stateManager" } as unknown as ServerStartupRuntime["stateManager"],
 		pageIndexTools: { name: "pageIndexTools" } as unknown as ServerStartupRuntime["pageIndexTools"],
+		pluginRuntimeRegistry: { closeAll: async () => undefined } as ServerStartupRuntime["pluginRuntimeRegistry"],
 	};
 }
 
@@ -75,6 +76,7 @@ describe("server startup bootstrap", () => {
 			securityProfile: runtime.config.securityProfile,
 			approvalStore: runtime.approvalStore,
 			pageIndexTools: runtime.pageIndexTools,
+			pluginRuntimeRegistry: runtime.pluginRuntimeRegistry,
 		});
 	});
 

@@ -16,6 +16,7 @@ import type { ComparisonService } from "../comparison/service.js";
 import type { CostTracker } from "../core/cost-tracker.js";
 import type { GroupStore } from "../core/groups.js";
 import { logger } from "../core/logger.js";
+import { assertProviderRegistryFrozen } from "../core/provider-registry.js";
 import type { Router } from "../core/router.js";
 import type { GatewayConfig, TrustLevel } from "../core/types.js";
 import type { FreeModelRouter } from "../free-models/router.js";
@@ -25,6 +26,7 @@ import type { SessionManager } from "../session/index.js";
 import type { Vault } from "../vault/vault.js";
 import type { CreateHttpAppDeps } from "./http-app.js";
 import { createHttpApp } from "./http-app.js";
+import { startHttpListener } from "./http-listener.js";
 
 export { CORRELATION_ID_HEADER } from "./http-app.js";
 
@@ -54,6 +56,8 @@ let serverStartTime: number = Date.now();
  * @returns The HTTP server instance
  */
 export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
+	assertProviderRegistryFrozen(deps.router);
+
 	const { config } = deps;
 
 	// Reset start time on server creation
@@ -66,15 +70,14 @@ export function startHttpServerWithDeps(deps: StartHttpServerDeps): ServerType {
 
 	// ── Start ──────────────────────────────────────────────
 
-	const server = serve(
-		{
-			fetch: app.fetch,
-			port: config.httpPort,
-		},
-		(info) => {
+	const server = startHttpListener({
+		config,
+		fetch: app.fetch,
+		serve,
+		onListening: (info) => {
 			logger.info({ port: info.port }, "HTTP server started");
 		},
-	);
+	});
 
 	return server;
 }

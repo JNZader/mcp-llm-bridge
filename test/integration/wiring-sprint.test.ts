@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "../helpers/frozen-router.js";
 /**
  * Cross-sprint integration test — exercises ALL wired features in sequence.
  *
@@ -17,12 +18,81 @@ import { Vault } from '../../src/vault/vault.js';
 import { Router } from '../../src/core/router.js';
 import type { GatewayConfig } from '../../src/core/types.js';
 import { startHttpServer } from '../../src/server/http.js';
-import { createAllAdapters } from '../../src/adapters/index.js';
+import type { AdminDiscoveryServices } from '../../src/server/routes/admin/discovery.js';
+import type { ToolingRouteDeps } from '../../src/server/routes/tooling.js';
+import { StubAdapter } from '../helpers/stub-adapter.js';
 import { ApprovalStore } from '../../src/approval/index.js';
 import { optimizeMessages } from '../../src/transformers/three-part-prompt.js';
 import { compressOutput, compressionStats } from '../../src/context-compression/output-compression.js';
 import { handleToolCall } from '../../src/server/mcp.js';
 import { optimizeMessagesEnabled } from '../../src/core/router.js';
+
+// ── Test-only discovery seams ─────────────────────────────
+
+const LOCAL_LLM_URLS = {
+  ollamaUrl: 'http://127.0.0.1:11434',
+  lmStudioUrl: 'http://127.0.0.1:1234',
+};
+const FIXED_TIMESTAMP = '2026-09-10T00:00:00.000Z';
+
+function createDiscoveryServices(expectedHfTokens: Array<string | undefined>) {
+  const calls = { loadCatalog: 0, importCatalog: 0, slimStatus: 0, discoverModels: 0 };
+  const services: AdminDiscoveryServices = {
+    loadCatalog: () => { calls.loadCatalog++; throw new Error('loadCatalog must not run in discovery tests'); },
+    importCatalog: () => { calls.importCatalog++; throw new Error('importCatalog must not run in discovery tests'); },
+    async getSlimLocalLLMStatus(localConfig, options) {
+      assert.deepEqual(localConfig, { enabled: false, ...LOCAL_LLM_URLS });
+      assert.deepEqual(options, { skipDetectionWhenDisabled: true });
+      calls.slimStatus++;
+      return {
+        enabled: false, ready: false, readyReason: 'Local LLM is disabled by runtime flag',
+        checkedAt: FIXED_TIMESTAMP, source: 'disabled', cacheHit: false,
+        backendCount: 2, connectedBackendCount: 0, disconnectedBackendCount: 2, errorBackendCount: 0, modelCount: 0,
+        backends: [
+          { backend: 'ollama', status: 'disconnected', baseUrl: LOCAL_LLM_URLS.ollamaUrl, modelCount: 0, models: [] },
+          { backend: 'lm-studio', status: 'disconnected', baseUrl: LOCAL_LLM_URLS.lmStudioUrl, modelCount: 0, models: [] },
+        ],
+      };
+    },
+    async discoverModels(discoveryConfig, localConfig, db, options) {
+      assert.ok(calls.discoverModels < expectedHfTokens.length);
+      assert.equal(discoveryConfig?.hfToken, expectedHfTokens[calls.discoverModels]);
+      assert.equal(discoveryConfig?.enabled, true);
+      assert.deepEqual(localConfig, LOCAL_LLM_URLS);
+      assert.equal(db, undefined);
+      assert.deepEqual(options, { forceRefreshLocalDetection: true });
+      calls.discoverModels++;
+      return {
+        models: [], backendsScanned: ['ollama', 'lm-studio'], enrichedCount: 0, unenrichedCount: 0,
+        timestamp: FIXED_TIMESTAMP, errors: [], partial: false, snapshotUsed: false,
+      };
+    },
+  };
+  return { services, calls };
+}
+
+function createToolingRouteDeps() {
+  const calls = { localStatus: 0, catalog: 0, strategies: 0 };
+  const deps: ToolingRouteDeps = {
+    async getLocalLLMStatus(localConfig, options) {
+      assert.deepEqual(localConfig, { enabled: false, ...LOCAL_LLM_URLS });
+      assert.deepEqual(options, { skipDetectionWhenDisabled: true });
+      calls.localStatus++;
+      return {
+        enabled: false, ready: false, readyReason: 'Local LLM is disabled by runtime flag',
+        checkedAt: FIXED_TIMESTAMP, source: 'disabled', cacheHit: false,
+        backendCount: 2, connectedBackendCount: 0, disconnectedBackendCount: 2, errorBackendCount: 0, modelCount: 0,
+        backends: [
+          { backend: 'ollama', status: 'disconnected', baseUrl: LOCAL_LLM_URLS.ollamaUrl, modelCount: 0, models: [] },
+          { backend: 'lm-studio', status: 'disconnected', baseUrl: LOCAL_LLM_URLS.lmStudioUrl, modelCount: 0, models: [] },
+        ],
+      };
+    },
+    getToolCatalog: () => { calls.catalog++; throw new Error('getToolCatalog must not run in discovery tests'); },
+    getStrategies: async () => { calls.strategies++; throw new Error('getStrategies must not run in discovery tests'); },
+  };
+  return { deps, calls };
+}
 
 // ── Test infrastructure ──────────────────────────────────
 
@@ -40,23 +110,25 @@ const config: GatewayConfig = {
 const vault = new Vault(config);
 const router = new Router();
 
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
+router.register(new StubAdapter());
 
 // Wire sprint modules
 const approvalStore = new ApprovalStore();
+const discovery = createDiscoveryServices([undefined]);
+const tooling = createToolingRouteDeps();
 
 let server: http.Server;
 let port = 0;
 
 before(async () => {
 	server = startHttpServer({
-		router,
+		router: freezeRouterForStartup(router),
 		vault,
 		config,
 		securityProfile: config.securityProfile,
 		approvalStore,
+		toolingRouteDeps: tooling.deps,
+		adminDiscoveryServices: discovery.services,
 	}) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
@@ -92,7 +164,7 @@ async function request(
   body?: object,
 ): Promise<{ status: number; body: unknown }> {
   const options: http.RequestOptions = {
-    hostname: 'localhost',
+    hostname: '127.0.0.1',
     port,
     path,
     method,
@@ -233,10 +305,10 @@ describe('Wiring Sprint — Cross-sprint integration', () => {
 
   describe('Sprint 3: Local LLM + HF Discovery', () => {
     it('local LLM routing endpoint returns models list', async () => {
-      // /v1/local/models exists and returns a structured response
+      // The injected status service makes this route deterministic without probes.
       const res = await request('GET', '/v1/local/models');
-      // With no local LLM enabled, it may return 200 with empty list or 503
-      assert.ok(res.status === 200 || res.status === 503);
+      assert.equal(res.status, 200);
+      assert.deepEqual(tooling.calls, { localStatus: 1, catalog: 0, strategies: 0 });
     });
 
     it('admin discovery endpoint scans backends', async () => {
@@ -248,6 +320,7 @@ describe('Wiring Sprint — Cross-sprint integration', () => {
       };
       assert.equal(body.ok, true);
       assert.ok(Array.isArray(body.backendsScanned));
+      assert.deepEqual(discovery.calls, { loadCatalog: 0, importCatalog: 0, slimStatus: 1, discoverModels: 1 });
     });
 
     it('MCP discover_models tool is registered', async () => {

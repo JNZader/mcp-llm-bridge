@@ -45,7 +45,9 @@ WP-00 explicitly supports one process: CSRF, revocation, and provider registry a
 
 ## B. Provider universe and health state machine
 
-Proposed order in `createRuntimeContext`: `createAllAdapters` registration; optional `bootstrapLocalLLM` registration; normalize aliases; reject duplicate IDs; validate required IDs; `router.freezeProviderRegistry()`; construct health service; return context. Listen requires `router.providerRegistryFrozen===true`. After freeze, register/unregister throws a safe `PROVIDER_REGISTRY_FROZEN` operational failure and does not mutate the set.
+Selected provider-universe decision (2026-09-10): required registration means exactly the built-in canonical IDs `anthropic`, `openai`, `google`, `groq`, `openrouter`, `cerebras`, `zai`, `nvidia`, `mistral`, `sambanova`, `hyperbolic`, `opencode-cli`, `claude-cli`, `antigravity-cli`, `codex-cli`, `qwen-cli`, and `copilot-cli`. Optional local registration remains allowed. Required membership is registration identity only; it does not require credentials or availability.
+
+Normative order in `createRuntimeContext`: `createAllAdapters` registration; optional `bootstrapLocalLLM` registration; normalize aliases; reject duplicate IDs; validate required IDs; `router.freezeProviderRegistry()`; construct health service; return context. Listen requires `router.providerRegistryFrozen===true`. After freeze, register/unregister throws a safe `PROVIDER_REGISTRY_FROZEN` operational failure and does not mutate the set. The core/post-local sequence and first-operation HTTP/MCP startup assertions are implemented; compatible fixtures use the real Router/freeze lifecycle. Two explicitly authorized HTTP fixtures have qualified temporary SQLite/TestVault and ephemeral loopback-listener behavior under an isolated environment; MCP stdio/full integration remains unmeasured. Qualification of remaining fixtures is separate evidence and requires newly scoped authorization.
 
 ```ts
 const ATTEMPT_STATE=["queued","running","timed_out","available","unavailable","failed","cancel_confirmed"] as const;
@@ -130,6 +132,8 @@ Exact legacy error fixtures:
 - plugin issues: exact codes `invalid-top-level-shape,invalid-tool-security,load-failed,load-timeout` with messages respectively `Plugin definition is invalid.`, `Plugin tool security metadata is invalid.`, `Plugin loading failed.`, `Plugin loading timed out.`; only opaque scanner-issued plugin/tool IDs, never raw file/error.
 - ACP fixtures use id 1: `{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"Task was not found."}}`; -32002 `"Task is already completed."`; -32003 `"Task was cancelled."`; -32004 `"Task state is invalid."`; -32005 `"Server is not initialized."`; -32700 `"Parse error."`; -32600 `"Invalid request."`; -32601 `"Method was not found."`; -32602 `"Invalid parameters."`; -32603 `"An unexpected internal error occurred."`. ACP -32001 is never UNAUTHORIZED.
 
+`AcpServer.handleRawRequest(rawJson)` is a single-request JSON boundary, not a JSON-RPC transport: it has no batch, notification, framing, serialization, stdin, or port behavior. It preserves the ten ACP code/message fixtures above exactly. Parse errors return id `null`; invalid requests echo only a safely recoverable string or safe-integer id, otherwise `null`. The raw adapter does not claim transport compliance; its error conventions are informed by the [JSON-RPC specification](https://www.jsonrpc.org/specification).
+
 ## E. Scanner contract
 
 `paths.bin`: bytes `WP00PTH\0`; BE u16 version=1,u16 flags=0,u32 count; each sorted record BE u32 UTF-8 path length, path bytes, u32 normalized Git mode, u64 byte length, 32 raw SHA-256 bytes. Reject invalid UTF-8/NUL/absolute/dot/traversal/backslash/duplicate; no Unicode normalization. Modes: tracked 100644/100755/120000 only; untracked regular 100644/100755, symlink 120000; special files fail. Hash symlink target bytes; absolute/escaping link fails; in-root target must be inventoried.
@@ -145,6 +149,24 @@ Parser registry:
 - `github-actions-yaml-v1`: indentation subset for jobs/steps/uses/run/shell/working-directory/env; aliases/tags/merge keys/custom types fail;
 - `dockerfile-v1`: escape directives, FROM/RUN/CMD/ENTRYPOINT/COPY/ADD/WORKDIR/USER/ENV in shell/JSON forms; ONBUILD/heredoc/dynamic stage/path unresolved=>fail;
 - `compose-yaml-v1`: services image/build/command/entrypoint/volumes/network_mode/user/working_dir/environment; unsupported alias/tag/extension affecting execution fails.
+
+Root parsing is split by grammar behind one closed, deterministic contract; it is not a claim to implement full POSIX shell or general YAML. The planned modules are `test/contracts/scanner/root-api.mjs`, `root-inventory.mjs`, `package-json.mjs`, `posix-shell.mjs`, `github-actions-yaml.mjs`, `dockerfile.mjs`, `compose-yaml.mjs`, and `root-integration.mjs`. `test/contracts/outward-scanner.mjs` remains the CLI plus the admitted SCAN-BIN codec/hash owner and imports these modules directly; the scanner directory is not a barrel.
+
+```ts
+type RootKind = "package_json"|"posix_shell"|"github_actions"|"dockerfile"|"compose"|"generated_config"|"executable_file";
+type RootInput = {schema:"wp00-root-input/v1";rootKind:RootKind;path:string;mode:33188|33261|40960;length:bigint;sha256:string;bytes:Uint8Array};
+type TrustedRootAuthority = {schema:"wp00-root-authority/v1";bindingHash:string;wp00ArtifactHash:string;record:{path:string;mode:33188|33261|40960;length:bigint;sha256:string};inventoryPaths:readonly string[]};
+function parseExecutionRoot(input:RootInput, expected:TrustedRootAuthority):RootResult;
+type RootEdge = {kind:"entry"|"command"|"working_directory"|"mount"|"environment"|"image"|"generated_output";field:string;target:string};
+type RootDiagnostic = {code:string;path:string;line:number|null;column:number|null;field:string|null};
+type RootResult =
+ | {status:"parsed";rootKind:RootKind;path:string;parserId:string;parserVersion:1;inputSha256:string;edges:readonly RootEdge[];diagnostics:readonly []}
+ | {status:"rejected";rootKind:RootKind;path:string;parserId:string;parserVersion:1;inputSha256:string;edges:readonly [];diagnostics:readonly RootDiagnostic[]};
+```
+
+The caller passes `expected` separately from parser-controlled input; it is constructed only after SCAN-BIN validates the authoritative paths.bin/artifact/provider binding and is never derived from `input`. Before parsing, path, mode, length, and SHA-256 of `input.bytes` must exactly match `expected.record`, the record path must occur exactly once in `expected.inventoryPaths`, and binding/artifact identities must already be admitted; any mismatch rejects. Outputs sort edges by JCS byte order and diagnostics by `(path,line,column,field,code)`; diagnostics expose stable codes and locations, never source fragments, commands, environment values, or credentials. Unsupported execution-affecting syntax, ambiguous or duplicate structures, and unresolved or dynamically constructed execution semantics can only produce `rejected`; supported commands in every listed grammar produce `parsed`, and partial success is forbidden. Each bounded internal parser implements only the registry subset above and rejects everything outside it. Adding a parser dependency requires a separate primary-documentation and integrity review; no new dependency is selected by this design. Every listed registry construct remains required: an implementation packet that cannot support its entire normative subset within its ceiling must stop at a parser-selection research gate, not silently narrow the grammar or relabel required syntax as unsupported.
+
+`SCAN-ROOT` becomes an aggregate integration gate over seven bounded prerequisites: `SCAN-ROOT-API`, `SCAN-ROOT-INVENTORY`, `SCAN-ROOT-PACKAGE`, `SCAN-ROOT-SHELL`, `SCAN-ROOT-ACTIONS`, `SCAN-ROOT-DOCKER`, and `SCAN-ROOT-COMPOSE`. Integration owns generated/root/devcontainer classification, registry dispatch, manifest assembly, and zero-unparsed-root proof. The 16 existing scenarios remain unchanged and are allocated in pairs in that order: API 01-02, inventory 03-04, package 05-06, shell 07-08, Actions 09-10, Dockerfile 11-12, Compose 13-14, integration 15-16.
 
 Every AST sink record is `{path,startLine,endLine,module,exportName,callee,arity,signatureId,ownerUnit,disposition}`. Parse or unresolved controlled flow fails. Suppression is `{id,path,startLine,endLine,astSha256,ruleId,reason,ownerUnit,expiresRevision,positiveFixture,negativeFixture}`; all fields required, exact range/hash match, duplicate ID fails.
 

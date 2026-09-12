@@ -4,13 +4,12 @@ import { Hono } from 'hono';
 import type { Router } from '../../src/core/router.js';
 import type { Vault } from '../../src/vault/vault.js';
 import { TransformError } from '../../src/core/transformer.js';
-import { safeError, toSafeHttpError } from '../../src/core/safe-error.js';
 import { anthropicInbound } from '../../src/transformers/inbound/anthropic.js';
 import { registerMessagesRoutes } from '../../src/server/routes/messages.js';
 
 const CANARY = 'private-validation-canary';
-const INVALID = toSafeHttpError(safeError('INVALID_REQUEST')).body.error;
-const INTERNAL = toSafeHttpError(safeError('INTERNAL_ERROR')).body.error;
+const INVALID = 'The request is invalid.';
+const INTERNAL = 'An unexpected internal error occurred.';
 const valid = { max_tokens: 10, messages: [{ role: 'user', content: 'hello' }] };
 const invalidRequests = [
   ['role', { messages: [{ role: CANARY, content: 'hello' }] }],

@@ -3,14 +3,13 @@ import { describe, it } from 'node:test';
 import { Hono } from 'hono';
 import type { Router } from '../../src/core/router.js';
 import type { Vault } from '../../src/vault/vault.js';
-import { safeError, toSafeHttpError } from '../../src/core/safe-error.js';
 import { registerExecutionRoutes } from '../../src/server/routes/execution.js';
 import { registerMessagesRoutes } from '../../src/server/routes/messages.js';
 import { CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED } from '../../src/server/http-helpers/chat-request.js';
 
 const CANARY = 'private-provider-failure-canary';
-const INTERNAL = toSafeHttpError(safeError('INTERNAL_ERROR')).body.error;
-const INVALID = toSafeHttpError(safeError('INVALID_REQUEST')).body.error;
+const INTERNAL = 'An unexpected internal error occurred.';
+const INVALID = 'The request is invalid.';
 const generateResult = { text: 'answer', provider: 'fixture', model: 'model',
   resolvedProvider: 'fixture', resolvedModel: 'model', fallbackUsed: false, tokensUsed: 3 };
 const requests = [

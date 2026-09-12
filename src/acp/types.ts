@@ -27,6 +27,13 @@ export interface JsonRpcResponse extends JsonRpcMessage {
   error?: JsonRpcError;
 }
 
+export interface JsonRpcInputErrorResponse extends JsonRpcMessage {
+  id: string | number | null;
+  error: JsonRpcError;
+}
+
+export type JsonRpcRawResponse = JsonRpcResponse | JsonRpcInputErrorResponse;
+
 export interface JsonRpcNotification extends JsonRpcMessage {
   method: string;
   params?: Record<string, unknown>;

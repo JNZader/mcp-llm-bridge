@@ -15,6 +15,8 @@
 import type {
   JsonRpcRequest,
   JsonRpcResponse,
+  JsonRpcInputErrorResponse,
+  JsonRpcRawResponse,
   AcpInitializeParams,
   AcpInitializeResult,
   AcpStartTaskParams,
@@ -57,6 +59,73 @@ const RPC_ERROR_MESSAGES: Readonly<Record<AcpErrorCode, string>> = Object.freeze
   [ACP_ERROR_CODES.INVALID_PARAMS]: 'Invalid parameters.',
   [ACP_ERROR_CODES.INTERNAL_ERROR]: safeError('INTERNAL_ERROR').message,
 });
+
+const RAW_REQUEST_DECODE_KIND = {
+  REQUEST: 'request',
+  ERROR: 'error',
+} as const;
+
+type RawRequestDecodeResult =
+  | { kind: typeof RAW_REQUEST_DECODE_KIND.REQUEST; request: JsonRpcRequest }
+  | { kind: typeof RAW_REQUEST_DECODE_KIND.ERROR; response: JsonRpcInputErrorResponse };
+
+function isRawRequestObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRawJsonRpcRequest(value: unknown): value is JsonRpcRequest {
+  if (!isRawRequestObject(value) || !Object.hasOwn(value, 'id')) {
+    return false;
+  }
+
+  const id = value.id;
+  return (
+    (typeof id === 'string' || (typeof id === 'number' && Number.isSafeInteger(id))) &&
+    value.jsonrpc === '2.0' &&
+    typeof value.method === 'string' &&
+    (value.params === undefined || isRawRequestObject(value.params))
+  );
+}
+
+function rawInputError(
+  id: string | number | null,
+  code: typeof ACP_ERROR_CODES.PARSE_ERROR | typeof ACP_ERROR_CODES.INVALID_REQUEST | typeof ACP_ERROR_CODES.INVALID_PARAMS,
+): JsonRpcInputErrorResponse {
+  return { jsonrpc: '2.0', id, error: { code, message: RPC_ERROR_MESSAGES[code] } };
+}
+
+function decodeRawRequest(rawJson: string): RawRequestDecodeResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(null, ACP_ERROR_CODES.PARSE_ERROR) };
+  }
+
+  if (!isRawRequestObject(parsed)) {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(null, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  const id = parsed.id;
+  if (!Object.hasOwn(parsed, 'id') || (typeof id !== 'string' && !(typeof id === 'number' && Number.isSafeInteger(id)))) {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(null, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  if (parsed.jsonrpc !== '2.0' || typeof parsed.method !== 'string') {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(id, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  if (parsed.params !== undefined && !isRawRequestObject(parsed.params)) {
+    const code = Array.isArray(parsed.params) ? ACP_ERROR_CODES.INVALID_PARAMS : ACP_ERROR_CODES.INVALID_REQUEST;
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(id, code) };
+  }
+
+  if (!isRawJsonRpcRequest(parsed)) {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(id, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  return { kind: RAW_REQUEST_DECODE_KIND.REQUEST, request: parsed };
+}
 
 const rpcErrorIdentities = new WeakMap<object, PublicRpcError>();
 
@@ -190,6 +259,20 @@ export class AcpServer {
         error: publicError,
       };
     }
+  }
+
+  /**
+   * Handle one raw JSON-RPC request string at the ACP typed-request boundary.
+   * This is a single-request API, not a full JSON-RPC transport: batches,
+   * notification-shaped inputs, framing, serialization, stdin and ports are unsupported.
+   * String identifiers are recommended for large values; JSON duplicate keys retain native
+   * JSON.parse last-key-wins behavior.
+   */
+  async handleRawRequest(rawJson: string): Promise<JsonRpcRawResponse> {
+    const decoded = decodeRawRequest(rawJson);
+    return decoded.kind === RAW_REQUEST_DECODE_KIND.ERROR
+      ? decoded.response
+      : this.handleRequest(decoded.request);
   }
 
   // ─── Method Dispatch ─────────────────────────────────────────

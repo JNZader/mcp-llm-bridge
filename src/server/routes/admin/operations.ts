@@ -5,7 +5,7 @@ import type { CostTracker } from '../../../core/cost-tracker.js';
 import { safeError } from '../../../core/safe-error.js';
 
 export interface AdminOperationsRouteDeps {
-  costTracker?: CostTracker;
+  costTracker?: Pick<CostTracker, 'bufferSize' | 'flush'>;
 }
 
 export function registerAdminOperationsRoutes(

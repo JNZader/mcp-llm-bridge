@@ -2,23 +2,65 @@
  * Non-sensitive HTTP runtime config readers backed by process.env.
  */
 
-/**
- * Extract allowed CORS origins from environment variable.
- *
- * Format: comma-separated list of origins, or '*' for allow all.
- * Example: 'https://example.com,https://app.example.com'
- */
-export function getCorsOrigins(): string | string[] {
+const DEFAULT_CORS_ORIGIN = "https://gateway.javierzader.com";
+const DEFAULT_HTTP_BIND_HOST = "127.0.0.1";
+
+function hasOriginOnlySyntax(origin: string): boolean {
+	return /^https?:\/\/[^/?#\\]+$/i.test(origin) && !/[\t\n\v\f\r ]/.test(origin);
+}
+
+function parseCorsOrigin(value: string): string {
+	const origin = value.trim();
+	if (!origin || origin === "*" || origin === "null") {
+		throw new Error("LLM_GATEWAY_CORS_ORIGINS must contain explicit HTTP(S) origins.");
+	}
+	if (!hasOriginOnlySyntax(origin)) {
+		throw new Error("LLM_GATEWAY_CORS_ORIGINS must contain origin-only HTTP(S) URLs.");
+	}
+
+	let parsed: URL;
+	try {
+		parsed = new URL(origin);
+	} catch {
+		throw new Error("LLM_GATEWAY_CORS_ORIGINS contains an invalid origin.");
+	}
+
+	if (
+		(parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+		!parsed.hostname ||
+		parsed.username ||
+		parsed.password ||
+		parsed.pathname !== "/" ||
+		parsed.search ||
+		parsed.hash
+	) {
+		throw new Error("LLM_GATEWAY_CORS_ORIGINS must contain origin-only HTTP(S) URLs.");
+	}
+
+	return parsed.origin;
+}
+
+/** Extract explicit HTTP(S) CORS origins from the environment. */
+export function getCorsOrigins(): string[] {
 	const envOrigins = process.env["LLM_GATEWAY_CORS_ORIGINS"];
-	if (!envOrigins) {
-		// Default: allow only Cloudflare hosted dashboard
-		return ["https://gateway.javierzader.com"];
+	if (envOrigins === undefined) {
+		return [DEFAULT_CORS_ORIGIN];
 	}
-	if (envOrigins === "*") {
-		// CORS '*' is allowed but we return it as-is
-		return "*";
+	return envOrigins.split(",").map(parseCorsOrigin);
+}
+
+/** Read the HTTP bind host without widening the gateway configuration type. */
+export function getHttpBindHost(): string {
+	const configuredHost = process.env["LLM_GATEWAY_BIND_HOST"];
+	if (configuredHost === undefined) {
+		return DEFAULT_HTTP_BIND_HOST;
 	}
-	return envOrigins.split(",").map((origin) => origin.trim());
+
+	const host = configuredHost.trim();
+	if (!host) {
+		throw new Error("LLM_GATEWAY_BIND_HOST must not be blank when configured.");
+	}
+	return host;
 }
 
 /**

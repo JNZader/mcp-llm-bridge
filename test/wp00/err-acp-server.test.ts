@@ -125,3 +125,63 @@ describe('ACP server error containment', () => {
     assert.equal(server.getTask('acp-task-1')?.result, undefined);
   });
 });
+
+describe('ACP raw JSON request boundary', () => {
+  function rawError(id: string | number | null, code: number, message: string) {
+    return { jsonrpc: '2.0', id, error: { code, message } };
+  }
+
+  class RecordingServer extends AcpServer {
+    readonly requests: Parameters<AcpServer['handleRequest']>[0][] = [];
+
+    override async handleRequest(request: Parameters<AcpServer['handleRequest']>[0]) {
+      this.requests.push(request);
+      return super.handleRequest(request);
+    }
+  }
+
+  it('rejects malformed JSON without recovering attacker-shaped identifiers or dispatching', async () => {
+    let generateCalls = 0;
+    const server = new RecordingServer(async () => { generateCalls++; return OUTPUT; });
+    const response = await server.handleRawRequest('{"id":"' + CANARY + '"');
+    assert.deepEqual(response, rawError(null, -32700, 'Parse error.'));
+    assert.equal(server.taskCount, 0);
+    assert.equal(generateCalls, 0);
+    assert.equal(server.requests.length, 0);
+    assert.equal(JSON.stringify(response).includes(CANARY), false);
+  });
+
+  it('contains raw structural errors without dispatching', async () => {
+    const cases: ReadonlyArray<{ raw: string; id: string | number | null; code: number }> = [
+      { raw: 'null', id: null, code: -32600 },
+      { raw: 'true', id: null, code: -32600 },
+      { raw: '[]', id: null, code: -32600 },
+      { raw: '{"jsonrpc":"1.0","id":"safe","method":"x"}', id: 'safe', code: -32600 },
+      { raw: '{"jsonrpc":"2.0","id":7,"method":false}', id: 7, code: -32600 },
+      { raw: '{"jsonrpc":"2.0","method":"x"}', id: null, code: -32600 },
+      { raw: '{"jsonrpc":"2.0","id":null,"method":"x"}', id: null, code: -32600 },
+      { raw: '{"jsonrpc":"2.0","id":true,"method":"x"}', id: null, code: -32600 },
+      { raw: '{"jsonrpc":"2.0","id":1.5,"method":"x"}', id: null, code: -32600 },
+      { raw: '{"jsonrpc":"2.0","id":9007199254740992,"method":"x"}', id: null, code: -32600 },
+      { raw: '{"jsonrpc":"2.0","id":"safe","method":"x","params":null}', id: 'safe', code: -32600 },
+      { raw: '{"jsonrpc":"2.0","id":"safe","method":"x","params":[]}', id: 'safe', code: -32602 },
+    ];
+    for (const entry of cases) {
+      const server = new RecordingServer(async () => { assert.fail('Unexpected generation'); });
+      assert.deepEqual(await server.handleRawRequest(entry.raw), rawError(entry.id, entry.code, entry.code === -32602 ? 'Invalid parameters.' : 'Invalid request.'));
+      assert.equal(server.taskCount, 0);
+      assert.equal(server.requests.length, 0);
+    }
+  });
+
+  it('forwards valid raw requests unchanged exactly once', async () => {
+    const server = new RecordingServer(async () => { assert.fail('Unexpected generation'); });
+    const raw = '{"jsonrpc":"2.0","id":"client-1","method":"acp/initialize","params":{"clientCapabilities":{"clientName":"fixture","clientVersion":"1","nested":[1]}},"extra":"' + CANARY + '"}';
+    const response = await server.handleRawRequest(raw);
+    assert.equal('result' in response, true);
+    assert.equal(server.requests.length, 1);
+    assert.deepEqual(server.requests[0], JSON.parse(raw));
+    assert.equal(JSON.stringify(response).includes(CANARY), false);
+    assert.deepEqual(await server.handleRawRequest('{"jsonrpc":"2.0","id":7,"method":"unknown","params":{}}'), rawError(7, -32601, 'Method was not found.'));
+  });
+});

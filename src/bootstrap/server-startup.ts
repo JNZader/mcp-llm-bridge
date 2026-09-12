@@ -32,6 +32,7 @@ export type ServerStartupRuntime = Pick<
 	| "codeSearch"
 	| "stateManager"
 	| "pageIndexTools"
+	| "pluginRuntimeRegistry"
 >;
 
 const DEFAULT_SERVER_STARTUP_DEPS: ServerStartupDeps = {
@@ -73,6 +74,7 @@ export function buildMcpServerDeps(
 		securityProfile: runtime.config.securityProfile,
 		approvalStore: runtime.approvalStore,
 		pageIndexTools: runtime.pageIndexTools,
+		pluginRuntimeRegistry: runtime.pluginRuntimeRegistry,
 	};
 }
 
@@ -94,7 +96,12 @@ export async function startDefaultMcpMode(
 	runtime: ServerStartupRuntime,
 	deps: ServerStartupDeps = DEFAULT_SERVER_STARTUP_DEPS,
 ): Promise<void> {
-	await deps.startMcpServer(buildMcpServerDeps(runtime));
+	try {
+		await deps.startMcpServer(buildMcpServerDeps(runtime));
+	} catch (error) {
+		await runtime.pluginRuntimeRegistry.closeAll();
+		throw error;
+	}
 }
 
 export async function startConfiguredMode(

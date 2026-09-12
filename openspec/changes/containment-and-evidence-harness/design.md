@@ -23,6 +23,7 @@ This document and all four companions are normative and MUST be read together be
 | Provider liveness | Freeze providers before listen; retain one raw fence per provider and emit bounded immutable snapshots. | Fixed-four concurrency starves later providers when calls hang. |
 | Evidence | Exhaustive const-derived schemas include `failed`; catalog/cost/circuit/health wires are additive. | Scalar values and casts permit contradictions. |
 | Reproducibility | Versioned paths.bin, RFC-8785 manifest, TypeScript 5.9.3 scanner, 660-record ledger, and separate source/provider/WP-00 hashes. | Grep or unproven hash equality. |
+| Root scanner boundary | One discriminated, fail-closed parser API with separate inventory, package JSON, shell, Actions YAML, Dockerfile, Compose, and aggregate integration units. | One 330-line monolith cannot honestly preserve six grammars, symlink containment, generated/devcontainer inventory, and 16 RED scenarios; a new parser dependency is deferred until primary-doc/integrity review. |
 | Distribution | Delete `dist-old/**`; verify temporary dist/package output, SVG provenance, and Buildx config digest/IID. | Quarantine leaves executable roots ambiguous. |
 
 ## Data Flow
@@ -45,7 +46,7 @@ dashboard source → temporary build → manifest/readback → tracked docs
 
 ## Interfaces / Contracts
 
-The [contracts companion](design/contracts.md) owns types, transitions, Origin/CORS, cookie/CSRF/logout, wire fixtures, parser versions, manifest encoding, and hash domains. The [baseline ledger](design/baseline-ledger.md) is the normalized baseline. Required-provider validation occurs after registration and before listen.
+The [contracts companion](design/contracts.md) owns types, transitions, Origin/CORS, cookie/CSRF/logout, wire fixtures, parser versions, manifest encoding, and hash domains. The [baseline ledger](design/baseline-ledger.md) is the normalized baseline. Required-provider validation occurs after registration and before listen. Root parsers receive observed input and a separate SCAN-BIN-admitted authority record/binding, match path/mode/length/hash before parsing, accept every supported normative grammar construct, and reject only unsupported or unresolved execution semantics.
 
 ## Testing Strategy
 
@@ -76,13 +77,13 @@ Land contracts/scanner dark; migrate auth, evidence, and sinks; enable hermetic 
 
 ## Open Questions
 
-None.
+- [ ] Native attempt authority still names unfinished objective `SCAN-ROOT / implement-and-admit-execution-root-parsers / max 5 / 330`. Planning approval does not reset, rename, settle, or evade it. Implementation is blocked until the orchestrator obtains a provider-supported continuation that explicitly binds the existing aggregate objective to the decomposed units; no lifecycle command is authorized by this design phase.
 
 ## Source-Authority Refresh
 
 All 88 ledger paths are byte-identical across the superseded and current commits. Regeneration retained 660 records, 660 unique fixtures, 107 additions, and `sourceEvidenceDigest=sha256:698539835b87ce43208444d994a11ce6670d638ba4f655bd6e61261676072c75`. The immutable tree has 521 records, Git tree `a0c1f03dba152e48458c70a485a0c85f67d26b81`, paths.bin SHA-256 `1684691f152267c73277d56967cf8c9e6f524d26abdd8340b8b0100e684314a6`, and source-authority binding `37f46434e9adf8a30699bb9c86acf190e2f8fb97874cc8bb4df1bf0fc05c05e0`. Provider `subject_hash`, candidate `wp00ArtifactHash`, and `bindingHash` remain unset until candidate freeze.
 
-The 11 changed blobs map as follows: CI timeout environment → CI-ROOT; CLI timeout resolution, Fable 5/5.1, and provider tests → DIST-CLI; 512,000-character prompt assertions → ERR-HTTP-API-A; StubAdapter isolation/suite roots → HERM-FS-T3. HEALTH-REGISTRY validates production IDs only; EVID-MODEL-CORE treats Fable declarations as legacy catalog values until qualified. Recomputed ownership retains 61 units, 127 unique acyclic edges, and 16 exact topological waves, including `HEALTH-REGISTRY → EVID-MODEL-CORE → LOG-ROUTER` and `HEALTH-REGISTRY → DIST-CLI`.
+The 11 changed blobs map as follows: CI timeout environment → CI-ROOT; CLI timeout resolution, Fable 5/5.1, and provider tests → DIST-CLI; 512,000-character prompt assertions → ERR-HTTP-API-A; StubAdapter isolation/suite roots → HERM-FS-T3. HEALTH-REGISTRY validates production IDs only; EVID-MODEL-CORE treats Fable declarations as legacy catalog values until qualified. Recomputed ownership preserves 8 completed units and expands the plan to 68 units, 139 unique acyclic edges, and 16 exact topological waves, including `HEALTH-REGISTRY → EVID-MODEL-CORE → LOG-ROUTER` and `HEALTH-REGISTRY → DIST-CLI`.
 
 ## Audit Result and Risks
 
@@ -92,6 +93,6 @@ Full readback proved all joins, all 107 UTF-16 source slices/Base64/SHA-256 valu
 
 REQ-TEST-01 is unchanged: the exact root command remains a mandatory WP-00 proof. Its owner is **CI-ROOT**, after HERM-RUNNER has made the runner live, bounded, signal-safe, and diagnosable. It is not an AUTH-RUNTIME per-unit prerequisite. AUTH-RUNTIME's scoped completion gate is its normative focused behavior test (test/wp00/auth-runtime.test.ts), applicable scanner/hygiene evidence, and proportional root typecheck; this clarification neither checks AUTH-RUNTIME nor accepts any global-suite result.
 
-The planned developer container is a separate development environment, not a production image and not a substitute for the hermetic evidence image. The planned paths and sole owners are: SCAN-ROOT parses .devcontainer/devcontainer.json execution-bearing fields and .devcontainer/Dockerfile; HERM-IMAGE implements .devcontainer/** while retaining Dockerfile.test as the hermetic evidence image; CI-ROOT owns .node-version, root package.json Node/pnpm declarations, and exact CI pins; CI-DASH owns matching dashboard manifest declarations; CLAIMS-FINAL owns README setup, frozen-install, ABI-volume-reset, and no-default-credentials guidance; DIST-CLI remains responsible only for production Docker/Compose remediation. No planned .devcontainer/** file is asserted to exist yet.
+The planned developer container is a separate development environment, not a production image and not a substitute for the hermetic evidence image. SCAN-ROOT-INVENTORY discovers planned and generated roots; format units parse their execution-bearing fields; aggregate SCAN-ROOT proves complete registry dispatch for planned .devcontainer/devcontainer.json and .devcontainer/Dockerfile. HERM-IMAGE alone implements .devcontainer/** and retains Dockerfile.test; CI-ROOT owns .node-version, root package.json runtime declarations, exact pins, and consumes the aggregate scan; CI-DASH owns dashboard declarations; CLAIMS-FINAL owns developer guidance; DIST-CLI remains production Docker/Compose remediation. SCAN-AST depends only on aggregate SCAN-ROOT. No planned .devcontainer/** path is asserted to exist.
 
-The target developer environment is credential-free, non-root, Node 22.23.2, and pnpm 9.15.9; dependency volumes must be isolated by ABI and reset when the runtime ABI changes. These planned changes preserve the 61-unit, 127-edge, 16-wave graph and the existing unchained size:exception delivery decision.
+The target developer environment is credential-free, non-root, Node 22.23.2, and pnpm 9.15.9; dependency volumes must be isolated by ABI and reset when the runtime ABI changes. The bounded scanner decomposition produces a 68-unit, 139-edge, 16-wave graph and preserves the existing unchained size:exception delivery decision.

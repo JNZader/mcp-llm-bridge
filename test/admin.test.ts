@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * Admin API endpoint tests — verify /v1/admin/* routes.
  *
@@ -21,7 +22,7 @@ import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
-import { createAllAdapters } from '../src/adapters/index.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
 import { GroupStore } from '../src/core/groups.js';
 import { CostTracker } from '../src/core/cost-tracker.js';
 import { SessionManager } from '../src/session/index.js';
@@ -52,9 +53,7 @@ const config: GatewayConfig = {
 const vault = new Vault(config);
 const router = new Router();
 
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
+router.register(new StubAdapter());
 
 const groupStore = new GroupStore(dbPath);
 const costTracker = new CostTracker({ dbPath });
@@ -72,7 +71,7 @@ before(async () => {
   await migrate({ dbPath });
 
   server = startHttpServer({
-    router,
+    router: freezeRouterForStartup(router),
     vault,
     config,
     groupStore,

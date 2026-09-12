@@ -1,0 +1,35 @@
+{
+  "name": "mcp-llm-bridge-wp00",
+  "image": "ghcr.io/jnzader/mcp-llm-bridge-dev@sha256:855cac4d86039b612e453d2b4a64f789aaff17a5c04b39444afc4ae121444bfa",
+  "overrideCommand": true,
+  "runArgs": ["--network=none"],
+  "remoteUser": "node",
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "mounts": [
+    "source=mcp-llm-bridge-wp00-node-modules,target=${containerWorkspaceFolder}/node_modules,type=volume"
+  ],
+  "containerEnv": {
+    "NODE_ENV": "production",
+    "MCP_DYNAMIC_SERVERS": "false",
+    "MCP_PLUGIN_RUNTIME_MODE": "disabled",
+    "MCP_SERVERS_DIR": "/dev/null",
+    "MODEL_ROUTING_ENABLED": "false",
+    "LATENCY_ROUTING": "false",
+    "FREE_MODEL_CATALOG": "false",
+    "AUTO_DISCOVER_MODELS": "false",
+    "LOCAL_LLM_ENABLED": "false",
+    "USE_TRANSFORMERS": "false",
+    "LLM_GATEWAY_ENV": "local-dev",
+    "LLM_GATEWAY_BIND_HOST": "127.0.0.1",
+    "LLM_GATEWAY_AUTH_REQUIRED": "true",
+    "LLM_GATEWAY_MASTER_KEY": "",
+    "LLM_GATEWAY_AUTH_TOKEN": "",
+    "ADMIN_TOKEN": "",
+    "OPENAI_API_KEY": "",
+    "ANTHROPIC_API_KEY": "",
+    "GEMINI_API_KEY": "",
+    "HF_TOKEN": ""
+  },
+  "postCreateCommand": "/usr/local/bin/seed-workspace-dependencies.sh && node /opt/mcp-llm-bridge-native/verify-native-binding.mjs --receipt /opt/mcp-llm-bridge-native/native-binding-receipt.json"
+}

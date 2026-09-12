@@ -65,7 +65,7 @@ The before/after OpenSpec write boundary is unchanged: six staged code additions
 
 ## Required next action
 
-AUTH-RUNTIME is admitted and checked. Continue only with other DAG-ready canonical apply units through the validated 61-unit/127-edge/16-wave graph; the whole-root evidence remains owned by HERM-RUNNER/CI-ROOT.
+AUTH-RUNTIME is admitted and checked. Continue only with the reconciled 68-unit/139-edge/16-wave graph; the whole-root evidence remains owned by HERM-RUNNER/CI-ROOT. The existing native SCAN-ROOT objective (`implement-and-admit-execution-root-parsers`, max 5 attempts / 330 changed lines) remains unfinished and must not be renamed, reset, or evaded; implementation continuation is blocked until native support explicitly rebinds it to the aggregate decomposition.
 
 ## Non-normative provenance
 
@@ -141,3 +141,8 @@ The independent validator admitted the candidate at sha256:919c0d3062ea4bc26f23f
 - Evidence revision: `sha256:d2081456df45ebe7d9cf23a3ed1a9e0346a025710b1d89c35317caed86626a14`, remediating `sha256:db5467274bb50320ceef1fab041179a18a42171b73ba368c92eeb4e7e47abbe2`.
 - Rollback boundary: revert only the four AUTH-RUNTIME paths; retain independently admitted SAFE-CORE and SCAN-BIN paths.
 - The whole-root suite was not run here. Its evidence remains unresolved and is exclusively owned by HERM-RUNNER/CI-ROOT.
+## Approved SCAN-ROOT decomposition reconciliation — 2026-09-04
+
+The current plan expands the historical 61-unit/127-edge snapshot to **68 units, 139 unique acyclic edges, and 16 topological waves**, preserving all eight checked units and the approved unchained `size:exception` delivery decision. The seven new prerequisite units are `SCAN-ROOT-API`, `SCAN-ROOT-INVENTORY`, `SCAN-ROOT-PACKAGE`, `SCAN-ROOT-SHELL`, `SCAN-ROOT-ACTIONS`, `SCAN-ROOT-DOCKER`, and `SCAN-ROOT-COMPOSE`; the aggregate `SCAN-ROOT` row is retained. `SCAN-ROOT-API` is the first new ready unit (W02), followed by the six grammar/inventory parser units (W03), then aggregate `SCAN-ROOT` (W04).
+
+The task checklist is authoritative at 68 rows: 8 checked and 60 pending. Existing 61-unit counts in earlier handoff entries are historical snapshots and remain preserved. Scenario IDs and normative design/contracts/manifest text are unchanged. No source/runtime/test/native lifecycle/review/commit operation was performed by this reconciliation.

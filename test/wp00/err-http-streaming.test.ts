@@ -4,12 +4,11 @@ import { Hono } from 'hono';
 import type { Router } from '../../src/core/router.js';
 import type { Vault } from '../../src/vault/vault.js';
 import type { InternalLLMChunk } from '../../src/transformers/streaming.js';
-import { safeError, toSafeHttpError } from '../../src/core/safe-error.js';
 import { registerExecutionRoutes } from '../../src/server/routes/execution.js';
 import { registerMessagesRoutes } from '../../src/server/routes/messages.js';
 
 const CANARY = 'private-stream-provider-canary';
-const INTERNAL = toSafeHttpError(safeError('INTERNAL_ERROR')).body.error;
+const INTERNAL = 'An unexpected internal error occurred.';
 const protocols = ['openai', 'anthropic'] as const;
 type Protocol = typeof protocols[number];
 interface SSEEvent { event: string; data: unknown }

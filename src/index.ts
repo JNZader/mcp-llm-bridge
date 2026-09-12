@@ -55,6 +55,7 @@ const runtime = await createRuntimeContext();
 
 // Setup graceful shutdown
 await setupGracefulShutdown({
+	pluginRuntimeRegistry: runtime.pluginRuntimeRegistry,
 	compressor: runtime.compressor,
 	latencyMeasurer: runtime.latencyMeasurer,
 	freeModelRouter: runtime.freeModelRouter,
