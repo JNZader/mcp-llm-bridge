@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -153,7 +154,7 @@ async function requestText(
 
 describe('Prometheus LLM metrics', () => {
   before(async () => {
-    server = startHttpServer({ router, vault, config }) as unknown as http.Server;
+    server = startHttpServer({ router: freezeRouterForStartup(router), vault, config }) as unknown as http.Server;
     await new Promise<void>((resolve) => {
       server.on('listening', () => {
         const address = server.address();

@@ -11,6 +11,8 @@ import {
 } from './router-candidate-planner.js';
 import { logger } from './logger.js';
 import { recordLlmAttemptMetric } from './metrics.js';
+import { parseUsageTelemetryInput } from './telemetry-contracts.js';
+import { normalizeTelemetryFailure } from './telemetry-failure.js';
 
 export interface RouterTelemetryContext {
   analyticsAggregator: AnalyticsAggregator | null;
@@ -127,41 +129,47 @@ export function recordUsage(
   telemetry: RouterTelemetryContext,
   input: RouterUsageRecordInput,
 ): void {
+  const failure = input.errorMessage ? normalizeTelemetryFailure(input.errorMessage) : undefined;
+  const { errorMessage: _errorMessage, ...metadata } = input;
+  const safeInput = parseUsageTelemetryInput({
+    ...metadata,
+    ...(failure ? { errorCode: failure.code } : {}),
+  });
   const hasExactSplit =
-    typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number';
-  const totalTokens = input.totalTokens ?? (
-    typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
-      ? input.tokensIn + input.tokensOut
+    typeof safeInput.tokensIn === 'number' && typeof safeInput.tokensOut === 'number';
+  const totalTokens = safeInput.totalTokens ?? (
+    typeof safeInput.tokensIn === 'number' && typeof safeInput.tokensOut === 'number'
+      ? safeInput.tokensIn + safeInput.tokensOut
       : undefined
   );
-  const tokensIn = hasExactSplit ? input.tokensIn : undefined;
-  const tokensOut = hasExactSplit ? input.tokensOut : undefined;
+  const tokensIn = hasExactSplit ? safeInput.tokensIn : undefined;
+  const tokensOut = hasExactSplit ? safeInput.tokensOut : undefined;
 
   recordLlmAttemptMetric({
-    provider: input.provider,
-    model: input.model,
-    success: input.success,
-    latencyMs: input.latencyMs,
+    provider: safeInput.provider,
+    model: safeInput.model,
+    success: safeInput.success,
+    latencyMs: safeInput.latencyMs,
     totalTokens,
   });
 
   if (telemetry.analyticsAggregator) {
     try {
-      const cost = input.costUsd ?? (
-        typeof input.tokensIn === 'number' && typeof input.tokensOut === 'number'
-          ? calculateCost(input.model, input.tokensIn, input.tokensOut) ?? undefined
+      const cost = safeInput.costUsd ?? (
+        typeof safeInput.tokensIn === 'number' && typeof safeInput.tokensOut === 'number'
+          ? calculateCost(safeInput.model, safeInput.tokensIn, safeInput.tokensOut) ?? undefined
           : undefined
       );
 
-      telemetry.analyticsAggregator.record(input.provider, input.model, {
+      telemetry.analyticsAggregator.record(safeInput.provider, safeInput.model, {
         totalTokens,
         inputTokens: tokensIn,
         outputTokens: tokensOut,
         cost,
-        latencyMs: input.latencyMs,
-        success: input.success,
+        latencyMs: safeInput.latencyMs,
+        success: safeInput.success,
         attempt: input.attempt,
-        channel: input.project ?? 'default',
+        channel: safeInput.project ?? 'default',
       });
     } catch (error) {
       logger.warn({ error }, 'Failed to record analytics');
@@ -176,18 +184,18 @@ export function recordUsage(
 
   try {
     telemetry.costTracker.record({
-      provider: input.provider,
-      keyName: input.apiKeyId,
-      model: input.model,
-      userId: input.userId,
+      provider: safeInput.provider,
+      keyName: safeInput.apiKeyId,
+      model: safeInput.model,
+      userId: safeInput.userId,
       tokensIn,
       tokensOut,
       totalTokens,
-      costUsd: input.costUsd,
-      latencyMs: input.latencyMs,
-      success: input.success,
-      project: input.project,
-      errorMessage: input.errorMessage,
+      costUsd: safeInput.costUsd,
+      latencyMs: safeInput.latencyMs,
+      success: safeInput.success,
+      project: safeInput.project,
+      ...(failure ? { errorCode: failure.code, errorCategory: failure.category } : {}),
     });
   } catch (error) {
     logger.warn({ error }, 'Failed to record usage');
@@ -231,7 +239,8 @@ export function recordLocalFallbackMetric(
       latencyMs: Date.now() - input.startTime,
       success: false,
       project: input.project,
-      errorMessage: `local-llm-fallback: ${input.message}`,
+      errorCode: normalizeTelemetryFailure(input.message).code,
+      errorCategory: normalizeTelemetryFailure(input.message).category,
     });
   } catch {
     // Non-blocking metric emission

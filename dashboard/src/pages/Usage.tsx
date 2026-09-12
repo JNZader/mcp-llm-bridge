@@ -111,7 +111,7 @@ export function Usage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KpiCard
             title="Total Cost"
-            value={`$${summary.totalCostUsd.toFixed(2)}`}
+            value={summary.totalCostUsd === null ? "Unknown" : `$${summary.totalCostUsd.toFixed(2)}`}
             icon={DollarSign}
           />
           <KpiCard

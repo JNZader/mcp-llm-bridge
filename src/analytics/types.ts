@@ -1,3 +1,5 @@
+import type { RetentionVerification } from '../telemetry/retention.js';
+
 /**
  * TypeScript interfaces for Analytics Aggregator
  *
@@ -178,6 +180,7 @@ export interface AnalyticsPersistenceData {
  */
 export interface AnalyticsPersistenceWriter {
   upsert(data: AnalyticsPersistenceData): Promise<void> | void;
+  cleanupRetention?: (beforeTimestamp: number) => RetentionVerification;
 }
 
 export const DURABLE_ANALYTICS_DIMENSIONS = {
@@ -196,6 +199,7 @@ export interface DurableAnalyticsQuery {
 
 export interface AnalyticsPersistenceReader {
   query(query: DurableAnalyticsQuery): Promise<AggregatedDataPoint[]> | AggregatedDataPoint[];
+  queryRetained?(query: DurableAnalyticsQuery): Promise<AggregatedDataPoint[]> | AggregatedDataPoint[];
 }
 
 /**

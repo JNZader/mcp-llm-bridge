@@ -14,29 +14,44 @@ import { resourceFromAttributes } from '@opentelemetry/resources';
 import { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
-import { trace, context, SpanStatusCode, Span } from '@opentelemetry/api';
+import { trace, context, SpanStatusCode, type Span } from '@opentelemetry/api';
 import { VERSION } from './constants.js';
 import { calculateCost } from './pricing.js';
 import { getTracingOtlpEndpoint, isTracingEnabled } from './tracing-config.js';
+import { assertSafeTelemetryMetadata } from '../telemetry/retention.js';
+import { normalizeTelemetryFailure } from './telemetry-failure.js';
+import {
+  RETENTION_SINKS,
+  RETENTION_VERIFICATION_OUTCOMES,
+  enforceExternalRetention,
+  type ExternalRetentionBackend,
+} from '../telemetry/retention.js';
 
 let sdk: NodeSDK | null = null;
+
+export interface TracingOptions {
+  retentionBackend?: ExternalRetentionBackend;
+  createTraceExporter?: (endpoint: string) => OTLPTraceExporter;
+}
 
 /**
  * Initialize OpenTelemetry tracing.
  * Safe to call multiple times - only initializes once.
  */
-export function initTracing(): void {
-  if (sdk) return;
+export async function initTracing(options: TracingOptions = {}): Promise<boolean> {
+  if (sdk) return true;
 
   if (!isTracingEnabled()) {
-    return;
+    return false;
   }
 
   const endpoint = getTracingOtlpEndpoint();
+  const verification = await enforceExternalRetention(RETENTION_SINKS.TRACES, options.retentionBackend);
+  if (verification.outcome !== RETENTION_VERIFICATION_OUTCOMES.SUCCESS) {
+    return false;
+  }
 
-  const traceExporter = new OTLPTraceExporter({
-    url: endpoint,
-  });
+  const traceExporter = options.createTraceExporter?.(endpoint) ?? new OTLPTraceExporter({ url: endpoint });
 
   sdk = new NodeSDK({
     resource: resourceFromAttributes({
@@ -56,6 +71,8 @@ export function initTracing(): void {
   process.on('SIGTERM', async () => {
     await sdk?.shutdown();
   });
+
+  return true;
 }
 
 /**
@@ -71,14 +88,14 @@ export function getTracer() {
 export function startGenerateSpan(
   provider: string,
   model: string,
-  project?: string,
+  _project?: string,
 ): Span {
+  assertSafeTelemetryMetadata({ provider, model }, ['provider', 'model']);
   const tracer = getTracer();
   return tracer.startSpan('llm.generate', {
     attributes: {
       'llm.provider': provider,
       'llm.model': model,
-      'project': project ?? '_global',
     },
   });
 }
@@ -98,8 +115,10 @@ export function endSpanSuccess(span: Span, tokensUsed?: number): void {
  * End a span with error.
  */
 export function endSpanError(span: Span, error: Error): void {
-  span.recordException(error);
-  span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+  const failure = normalizeTelemetryFailure(error);
+  span.setAttribute('telemetry.failure_code', failure.code);
+  span.setAttribute('telemetry.failure_category', failure.category);
+  span.setStatus({ code: SpanStatusCode.ERROR });
   span.end();
 }
 
@@ -111,6 +130,7 @@ export async function withSpan<T>(
   attributes: Record<string, string>,
   fn: (span: Span) => Promise<T>,
 ): Promise<T> {
+  assertSafeTelemetryMetadata(attributes, ['provider', 'model', 'status', 'code', 'category', 'route']);
   const tracer = getTracer();
   const span = tracer.startSpan(name, { attributes });
 
@@ -155,14 +175,22 @@ export interface GenAISpanAttributes {
  * @param attrs - GenAI attributes to set
  */
 export function enrichGenerateSpan(span: Span, attrs: GenAISpanAttributes): void {
-  span.setAttribute('gen_ai.system', attrs['gen_ai.system']);
-  span.setAttribute('gen_ai.request.model', attrs['gen_ai.request.model']);
-  span.setAttribute('gen_ai.usage.input_tokens', attrs['gen_ai.usage.input_tokens']);
-  span.setAttribute('gen_ai.usage.output_tokens', attrs['gen_ai.usage.output_tokens']);
-  if (typeof attrs['gen_ai.usage.cost'] === 'number') {
-    span.setAttribute('gen_ai.usage.cost', attrs['gen_ai.usage.cost']);
+  const safe = assertSafeTelemetryMetadata({
+    provider: attrs['gen_ai.system'],
+    model: attrs['gen_ai.request.model'],
+    inputTokens: attrs['gen_ai.usage.input_tokens'],
+    outputTokens: attrs['gen_ai.usage.output_tokens'],
+    cost: attrs['gen_ai.usage.cost'],
+    finishReason: attrs['gen_ai.response.finish_reason'],
+  }, ['provider', 'model', 'inputTokens', 'outputTokens', 'cost', 'finishReason']);
+  span.setAttribute('gen_ai.system', safe.provider as string);
+  span.setAttribute('gen_ai.request.model', safe.model as string);
+  span.setAttribute('gen_ai.usage.input_tokens', safe.inputTokens as number);
+  span.setAttribute('gen_ai.usage.output_tokens', safe.outputTokens as number);
+  if (typeof safe.cost === 'number') {
+    span.setAttribute('gen_ai.usage.cost', safe.cost);
   }
-  span.setAttribute('gen_ai.response.finish_reason', attrs['gen_ai.response.finish_reason']);
+  span.setAttribute('gen_ai.response.finish_reason', safe.finishReason as string);
 }
 
 /**

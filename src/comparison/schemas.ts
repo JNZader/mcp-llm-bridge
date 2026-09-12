@@ -41,6 +41,11 @@ export const CompareRequestSchema = z.object({
 
 export type CompareRequestInput = z.input<typeof CompareRequestSchema>;
 
+export const ComparisonPurgeStatusSchema = z.enum([
+	"success", "FAILED", "INDETERMINATE", "NOT_VERIFIED",
+]);
+export type ComparisonPurgeStatus = z.infer<typeof ComparisonPurgeStatusSchema>;
+
 // ── Model Result Schema ───────────────────────────────────────
 
 export const ModelResultSchema = z.object({

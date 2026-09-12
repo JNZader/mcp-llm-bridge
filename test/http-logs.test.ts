@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 import { safeError } from "../src/core/safe-error.js";
 
 /**
@@ -19,7 +20,6 @@ import { getCircuitBreakerV2, resetCircuitBreakerV2, Router } from '../src/core/
 import { createRouterExecutionContract } from '../src/core/router-execution-contract.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
-import { createAllAdapters } from '../src/adapters/index.js';
 import { RequestLogger } from '../src/logging/request-logger.js';
 import { StubAdapter } from './helpers/stub-adapter.js';
 
@@ -48,9 +48,6 @@ const logsDbPath = `/tmp/test-http-logs-logger-${Date.now()}.db`;
 const vault = new Vault(config);
 const router = new Router();
 
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
 router.register(new StubAdapter());
 
 let server: http.Server;
@@ -224,7 +221,7 @@ describe('GET /v1/logs', () => {
     requestLogger = new RequestLogger(logsDb);
 
     server = startHttpServer({
-      router,
+      router: freezeRouterForStartup(router),
       vault,
       config,
       requestLogger,

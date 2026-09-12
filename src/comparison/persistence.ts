@@ -7,6 +7,8 @@
 
 import type Database from "better-sqlite3";
 import { GLOBAL_PROJECT } from "../core/constants.js";
+import type { ComparisonCapability } from "../security/enforcer.js";
+import type { ComparisonPurgeStatus } from "./schemas.js";
 import type { CompareResponse } from "./types.js";
 
 /** Row shape returned from comparison_results table. */
@@ -28,6 +30,11 @@ export interface ComparisonQueryFilters {
 	offset?: number;
 }
 
+export interface ComparisonPurgeEvidence {
+	status: ComparisonPurgeStatus;
+	deletedIds: string[];
+}
+
 /**
  * ComparisonStore — read/write for the comparison_results table.
  *
@@ -36,33 +43,32 @@ export interface ComparisonQueryFilters {
  */
 export class ComparisonStore {
 	private readonly insertStmt: Database.Statement;
+	private readonly insertContentStmt: Database.Statement;
 	private readonly getByIdStmt: Database.Statement;
 
-	constructor(private readonly db: Database.Database) {
+	constructor(private readonly db: Database.Database, private readonly capability?: ComparisonCapability) {
 		// Ensure table exists (idempotent — matches migration 007)
 		this.db.exec(`
       CREATE TABLE IF NOT EXISTS comparison_results (
         id TEXT PRIMARY KEY,
-        prompt TEXT NOT NULL,
-        system_prompt TEXT,
-        models TEXT NOT NULL,
-        results TEXT NOT NULL,
-        summary TEXT NOT NULL,
-        project TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
+         models TEXT NOT NULL,
+         project TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
       CREATE INDEX IF NOT EXISTS idx_comparison_project ON comparison_results(project);
-      CREATE INDEX IF NOT EXISTS idx_comparison_created ON comparison_results(created_at);
+       CREATE INDEX IF NOT EXISTS idx_comparison_created ON comparison_results(created_at);
+       CREATE TABLE IF NOT EXISTS authorized_comparison_results (
+         id TEXT PRIMARY KEY REFERENCES comparison_results(id), prompt TEXT NOT NULL,
+         system_prompt TEXT, results TEXT NOT NULL, summary TEXT NOT NULL
+       );
     `);
 
-		this.insertStmt = this.db.prepare(`
-      INSERT INTO comparison_results (id, prompt, system_prompt, models, results, summary, project, created_at)
-      VALUES (@id, @prompt, @systemPrompt, @models, @results, @summary, @project, @createdAt)
-    `);
+		this.insertStmt = this.db.prepare("INSERT INTO comparison_results (id, models, project, created_at) VALUES (@id, @models, @project, @createdAt)");
+		this.insertContentStmt = this.db.prepare("INSERT INTO authorized_comparison_results (id, prompt, system_prompt, results, summary) VALUES (@id, @prompt, @systemPrompt, @results, @summary)");
 
 		this.getByIdStmt = this.db.prepare(
-			"SELECT * FROM comparison_results WHERE id = ?",
+			"SELECT c.*, a.prompt, a.system_prompt, a.results, a.summary FROM comparison_results c JOIN authorized_comparison_results a USING(id) WHERE c.id = ?",
 		);
 	}
 
@@ -74,38 +80,43 @@ export class ComparisonStore {
 		systemPrompt?: string,
 		models?: string[],
 		project?: string,
+		capability = this.capability,
 	): void {
-		this.insertStmt.run({
+		const scopedProject = this.authorize(capability, "persist", project);
+		const values = {
 			id: result.id,
 			prompt: result.prompt,
 			systemPrompt: systemPrompt ?? null,
 			models: JSON.stringify(models ?? result.results.map((r) => r.model)),
 			results: JSON.stringify(result.results),
 			summary: JSON.stringify(result.summary),
-			project: project ?? GLOBAL_PROJECT,
+			project: scopedProject,
 			createdAt: result.createdAt,
-		});
+		};
+		this.db.transaction(() => { this.insertStmt.run(values); this.insertContentStmt.run(values); })();
 	}
 
 	/**
 	 * Retrieve a single comparison by ID.
 	 */
-	getById(id: string): CompareResponse | null {
+	getById(id: string, capability = this.capability): CompareResponse | null {
+		const project = this.authorize(capability, "read");
 		const row = this.getByIdStmt.get(id) as ComparisonRow | undefined;
-		if (!row) return null;
+		if (!row || (project !== "*" && row.project !== project)) return null;
 		return this.mapRow(row);
 	}
 
 	/**
 	 * List comparisons with optional project filter and pagination.
 	 */
-	query(filters: ComparisonQueryFilters = {}): CompareResponse[] {
+	query(filters: ComparisonQueryFilters = {}, capability = this.capability): CompareResponse[] {
+		const project = this.authorize(capability, "read", filters.project);
 		const conditions: string[] = [];
 		const params: Record<string, unknown> = {};
 
-		if (filters.project) {
+		if (project !== "*") {
 			conditions.push("project = @project");
-			params["project"] = filters.project;
+			params["project"] = project;
 		}
 
 		const where =
@@ -114,7 +125,8 @@ export class ComparisonStore {
 		const offset = filters.offset ?? 0;
 
 		const sql = `
-      SELECT * FROM comparison_results
+		SELECT c.*, a.prompt, a.system_prompt, a.results, a.summary FROM comparison_results c
+		JOIN authorized_comparison_results a USING(id)
       ${where}
       ORDER BY created_at DESC
       LIMIT @limit OFFSET @offset
@@ -124,6 +136,44 @@ export class ComparisonStore {
 			.prepare(sql)
 			.all({ ...params, limit, offset }) as ComparisonRow[];
 		return rows.map((row) => this.mapRow(row));
+	}
+
+	export(filters: ComparisonQueryFilters = {}, capability = this.capability): CompareResponse[] {
+		this.authorize(capability, "export", filters.project);
+		return this.query(filters, capability);
+	}
+
+	purgeExpired(now = new Date(), capability = this.capability): ComparisonPurgeEvidence {
+		if (Number.isNaN(now.getTime())) return { status: "INDETERMINATE", deletedIds: [] };
+		const project = this.authorize(capability, "purge");
+		const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+		const ids = this.db.prepare(`SELECT id FROM comparison_results WHERE created_at < ?${project === "*" ? "" : " AND project = ?"}`).all(...(project === "*" ? [cutoff] : [cutoff, project])) as Array<{ id: string }>;
+		try {
+			const remove = this.db.transaction(() => ids.forEach(({ id }) => {
+				this.db.prepare("DELETE FROM authorized_comparison_results WHERE id = ?").run(id);
+				this.db.prepare("DELETE FROM comparison_results WHERE id = ?").run(id);
+			}));
+			remove();
+			const deletedIds = ids.map(({ id }) => id);
+			const remaining = deletedIds.some((id) => this.db.prepare("SELECT 1 FROM comparison_results WHERE id = ?").get(id));
+			return { status: remaining ? "FAILED" : "success", deletedIds };
+		} catch { return { status: "FAILED", deletedIds: [] }; }
+	}
+
+	deleteById(id: string, capability = this.capability): ComparisonPurgeEvidence {
+		const project = this.authorize(capability, "purge");
+		const row = this.db.prepare(`SELECT id FROM comparison_results WHERE id = ?${project === "*" ? "" : " AND project = ?"}`).get(...(project === "*" ? [id] : [id, project]));
+		if (!row) return { status: "NOT_VERIFIED", deletedIds: [] };
+		try {
+			this.db.transaction(() => { this.db.prepare("DELETE FROM authorized_comparison_results WHERE id = ?").run(id); this.db.prepare("DELETE FROM comparison_results WHERE id = ?").run(id); })();
+			return { status: this.db.prepare("SELECT 1 FROM comparison_results WHERE id = ?").get(id) ? "FAILED" : "success", deletedIds: [id] };
+		} catch { return { status: "FAILED", deletedIds: [] }; }
+	}
+
+	private authorize(capability: ComparisonCapability | undefined, operation: "persist" | "read" | "export" | "purge", project?: string): string {
+		const scope = capability?.authorize(operation, project);
+		if (!scope) throw new Error("Comparison capability denied");
+		return scope;
 	}
 
 	/**

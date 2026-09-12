@@ -42,11 +42,11 @@ function createTestDatabase(): Database.Database {
       output_tokens INTEGER,
       cost REAL,
       latency_ms INTEGER NOT NULL,
-      error TEXT,
+      error TEXT CHECK (error IS NULL OR error IN ('rate_limited', 'timed_out', 'unavailable', 'failed')),
+      error_code TEXT,
+      error_category TEXT,
       attempts INTEGER NOT NULL DEFAULT 1,
       correlation_id TEXT,
-      request_data TEXT,
-      response_data TEXT,
       created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
     );
     
@@ -73,6 +73,14 @@ function mockRandomUUID(): string {
 function mockDateNow(): number {
   mockTimeCounter += 1000; // Advance 1 second per call
   return mockTimeCounter;
+}
+
+function assertSafeTelemetryFailure(error: unknown, canaries: readonly string[]): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  for (const canary of canaries) {
+    assert.ok(!message.includes(canary), 'The rejection must not forward protected content');
+  }
+  return true;
 }
 
 describe('RequestLogger', () => {
@@ -121,8 +129,6 @@ describe('RequestLogger', () => {
         outputTokens: 50,
         cost: 0.0025,
         latencyMs: 1200,
-        requestData: '{"prompt":"hello"}',
-        responseData: '{"text":"world"}',
       };
 
       // ACT
@@ -140,8 +146,8 @@ describe('RequestLogger', () => {
       assert.strictEqual(row.cost, 0.0025, 'Cost should match');
       assert.strictEqual(row.latency_ms, 1200, 'Latency should match');
       assert.strictEqual(row.attempts, 1, 'Attempts should default to 1');
-      assert.strictEqual(row.request_data, '{"prompt":"hello"}', 'Request data should match');
-      assert.strictEqual(row.response_data, '{"text":"world"}', 'Response data should match');
+      assert.equal("request_data" in row, false, 'Request data must not be in the safe schema');
+      assert.equal("response_data" in row, false, 'Response data must not be in the safe schema');
     });
 
     it('should log a failed request with error', async () => {
@@ -166,7 +172,9 @@ describe('RequestLogger', () => {
       const row = db.prepare('SELECT * FROM request_logs WHERE error IS NOT NULL').get() as Record<string, unknown>;
       
       assert.ok(row, 'Failed request should be logged');
-      assert.strictEqual(row.error, 'Rate limit exceeded', 'Error message should be stored');
+      assert.strictEqual(row.error, 'rate_limited', 'Only the normalized error code should be stored');
+      assert.strictEqual(row.error_code, 'rate_limited', 'The normalized error code should be stored');
+      assert.strictEqual(row.error_category, 'provider', 'The normalized error category should be stored');
       assert.strictEqual(row.status || 'error', 'error', 'Status should indicate error');
     });
 
@@ -233,22 +241,22 @@ describe('RequestLogger', () => {
 
     it('should allow completion-time provider and model overrides', async () => {
       const context = logger.captureStart({
-        provider: 'unknown',
-        model: 'requested-model',
+        provider: 'openai',
+        model: 'gpt-4',
         startTime: mockTimeCounter,
       });
 
       await logger.captureEnd(context, {
-        provider: 'resolved-provider',
-        model: 'resolved-model',
+        provider: 'groq',
+        model: 'llama3-70b',
         outputTokens: 12,
       });
 
-      const row = db.prepare('SELECT * FROM request_logs WHERE provider = ?').get('resolved-provider') as Record<string, unknown>;
+      const row = db.prepare('SELECT * FROM request_logs WHERE provider = ?').get('groq') as Record<string, unknown>;
 
       assert.ok(row, 'Log entry should use the resolved provider');
-      assert.strictEqual(row.provider, 'resolved-provider');
-      assert.strictEqual(row.model, 'resolved-model');
+      assert.strictEqual(row.provider, 'groq');
+      assert.strictEqual(row.model, 'llama3-70b');
       assert.strictEqual(row.total_tokens, null);
       assert.strictEqual(row.output_tokens, 12);
     });
@@ -464,7 +472,7 @@ describe('RequestLogger', () => {
         VALUES (?, ?, ?, ?, ?, ?)
       `);
 
-      stmt.run(now, 'openai', 'failed-model', 100, 'upstream failure', 2);
+      stmt.run(now, 'openai', 'failed-model', 100, 'failed', 2);
       stmt.run(now + 1, 'openai', 'retried-model', 200, null, 3);
       stmt.run(now + 2, 'openai', 'successful-model', 300, null, 1);
 
@@ -497,33 +505,52 @@ describe('RequestLogger', () => {
 		it('should filter logs by correlation ID', async () => {
 			await logger.capture({
 				provider: 'openai',
-				model: 'corr-match-model',
+				model: 'gpt-4o',
 				correlationId: 'corr-match',
 				latencyMs: 120,
 			});
 			await logger.capture({
 				provider: 'openai',
-				model: 'corr-other-model',
+				model: 'gpt-4o-mini',
 				correlationId: 'corr-other',
 				latencyMs: 180,
 			});
 
 			const result = await logger.getLogs({ correlationId: 'corr-match' });
 
-			assert.deepStrictEqual(result.logs.map((log: any) => log.model), ['corr-match-model']);
+			assert.deepStrictEqual(result.logs.map((log: any) => log.model), ['gpt-4o']);
 			assert.strictEqual(result.logs[0]?.correlationId, 'corr-match');
 			assert.strictEqual(result.total, 1);
 		});
   });
 
   describe('Data handling', () => {
-    it('should handle large payloads by truncating', async () => {
+    it('rejects protected-content canaries before request-log persistence', async () => {
+      const canaries = [
+        'WU1-PLAIN-CANARY', 'WU1-NESTED-CANARY', 'WU1-RENAMED-CANARY',
+        'V1UxLUJBU0U2NC1DQU5BUlk=', 'WU1-ESCAPED-\\u0063ANARY', 'WU1-UNICODE-秘密',
+        `${'x'.repeat(9_990)}WU1-TRUNCATION-CANARY`,
+      ];
+      const payload = JSON.stringify({
+        prompt: canaries[0], nested: { context: canaries[1] }, prompt_alias: canaries[2],
+        encoded: canaries[3], escaped: canaries[4], unicode: canaries[5], boundary: canaries[6],
+      });
+
+      await assert.rejects(
+        logger.capture({
+          provider: 'openai', model: 'gpt-4', latencyMs: 1,
+          requestData: payload, responseData: payload, error: `provider failure: ${canaries[0]}`,
+        }),
+        (error: unknown) => assertSafeTelemetryFailure(error, canaries),
+      );
+      const count = db.prepare('SELECT COUNT(*) AS count FROM request_logs').get() as { count: number };
+      assert.equal(count.count, 0, 'Rejected input must not create a request-log row');
+    });
+
+    it('should omit legacy payload columns from the safe projection', async () => {
       // ARRANGE
       assert.ok(RequestLogger, 'RequestLogger class should exist');
-      
-      // Create a payload larger than 10KB
-      const largePayload = 'x'.repeat(15000);
-      
+
       const requestData = {
         provider: 'openai',
         model: 'gpt-4',
@@ -531,8 +558,6 @@ describe('RequestLogger', () => {
         outputTokens: 2000,
         cost: 0.025,
         latencyMs: 5000,
-        requestData: largePayload,
-        responseData: largePayload,
       };
 
       // ACT
@@ -542,15 +567,20 @@ describe('RequestLogger', () => {
       const row = db.prepare('SELECT * FROM request_logs WHERE provider = ?').get('openai') as Record<string, unknown>;
       
       assert.ok(row, 'Log entry should exist');
-      const requestDataLength = (row.request_data as string)?.length || 0;
-      const responseDataLength = (row.response_data as string)?.length || 0;
-      
-      assert.ok(requestDataLength <= 10000, `Request data should be truncated to <= 10000 chars, got ${requestDataLength}`);
-      assert.ok(responseDataLength <= 10000, `Response data should be truncated to <= 10000 chars, got ${responseDataLength}`);
+      assert.equal("request_data" in row, false, 'Request data must not be in the safe schema');
+      assert.equal("response_data" in row, false, 'Response data must not be in the safe schema');
     });
   });
 
   describe('Maintenance', () => {
+		it('verifies request-log retention only after expired rows are absent', async () => {
+			const result = await logger.enforceRetention(1704067200000);
+
+			assert.equal(result.outcome, 'success');
+			assert.equal(result.policy.retentionDays, 30);
+			assert.equal(result.policy.deletionOwner, 'request-log-storage');
+		});
+
     it('should delete old logs (>30 days)', async () => {
       // ARRANGE
       assert.ok(RequestLogger, 'RequestLogger class should exist');

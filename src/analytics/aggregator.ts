@@ -28,6 +28,10 @@ import type {
   AnalyticsPersistenceData,
   AnalyticsPersistenceWriter,
 } from './types.js';
+import {
+  assertSafeTelemetryMetadata,
+  RETENTION_VERIFICATION_OUTCOMES,
+} from '../telemetry/retention.js';
 
 const DEFAULT_FLUSH_INTERVAL_MS = 5000;
 
@@ -86,6 +90,8 @@ export class AnalyticsAggregator {
     model: string,
     metrics: RecordInput
   ): void {
+    assertSafeTelemetryMetadata({ provider, model, channel: metrics.channel }, ['provider', 'model', 'channel']);
+    this.pruneRetention();
     this.revision += 1;
     const timestamp = metrics.timestamp ?? Date.now();
 
@@ -125,6 +131,7 @@ export class AnalyticsAggregator {
    * @returns Array of aggregated data points
    */
   query(query: AnalyticsQuery): AggregatedDataPoint[] {
+    this.pruneRetention();
     const { dimension, from, to, channelId, provider: providerFilter, model: modelFilter } = query;
 
     switch (dimension) {
@@ -211,6 +218,10 @@ export class AnalyticsAggregator {
       return;
     }
 
+    const now = Date.now();
+    this.pruneRetention(now);
+    this.verifyDurableRetention(writer, now);
+
     if (this.lastFlushedRevision === this.revision) {
       return;
     }
@@ -277,6 +288,23 @@ export class AnalyticsAggregator {
     this.dimensions.model.clear();
     this.revision += 1;
     this.lastFlushedRevision = this.revision;
+  }
+
+  pruneRetention(now = Date.now()): void {
+    const cutoff = now - 30 * 24 * 60 * 60 * 1000;
+    for (const timestamp of this.dimensions.hourly.keys()) {
+      if (timestamp <= cutoff) this.dimensions.hourly.delete(timestamp);
+    }
+    for (const timestamp of this.dimensions.daily.keys()) {
+      if (timestamp <= cutoff) this.dimensions.daily.delete(timestamp);
+    }
+  }
+
+  private verifyDurableRetention(writer: AnalyticsPersistenceWriter, beforeTimestamp: number): void {
+    const retention = writer.cleanupRetention?.(beforeTimestamp);
+    if (!retention || retention.outcome !== RETENTION_VERIFICATION_OUTCOMES.SUCCESS) {
+      throw new Error("Analytics retention cleanup is not verified");
+    }
   }
 
   // Private helper methods

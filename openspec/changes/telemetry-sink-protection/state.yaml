@@ -1,0 +1,52 @@
+{
+  "schema": "gentle-ai.sdd-preproposal/v1",
+  "revision": 3,
+  "change": "telemetry-sink-protection",
+  "artifact_store": "openspec",
+  "exploration": {
+    "outcome": "done",
+    "reference": "exploration.md"
+  },
+  "research": {
+    "requested": true,
+    "selection": "selected",
+    "classes": [
+      "documentation"
+    ],
+    "capability_schema": "gentle-ai.sdd-research-capability/v1",
+    "observed_grants": {
+      "documentation": [],
+      "open-web": []
+    },
+    "used_grants": [],
+    "admission": "denied",
+    "outcome": "blocked",
+    "revision": 2,
+    "openspec_reference": "research.md",
+    "engram_reference": null,
+    "revocation": {
+      "status": "revoked_by_maintainer",
+      "reason": "External research was explicitly declined after two admissions reported empty documentation and open-web grants.",
+      "audit_fact": "The selected research remained blocked before source access; no external evidence was admitted or used.",
+      "recorded_by_phase": "sdd-propose",
+      "recorded_at": "2026-09-11"
+    },
+    "recovery": {
+      "retained_intent": true,
+      "canonical_desired_content": "Source-backed implementation guidance and an evidence-backed, per-sink/exporter retention matrix for telemetry sink protection.",
+      "required_action": "This selected research phase was re-entered once but remains denied because the exact runtime documentation and open-web grants are empty. Supply a non-empty admitted documentation grant, then rerun research in a new explicit phase entry."
+    }
+  },
+  "product_decisions": {
+    "status": "confirmed",
+    "selections": {
+      "comparison_prompts_and_responses": "explicitly_authorized_capability_only",
+      "existing_sensitive_rows": "legacy_isolation_no_new_writes_no_routine_readback",
+      "telemetry_and_readback": "opaque_ids_only",
+      "usage_error_projection": "compatibility_safe_error_message_plus_safe_code_or_category",
+      "retention": "per_sink_or_exporter"
+    }
+  },
+  "proposal_ready": true,
+  "continuation": "Proposal completed from existing exploration evidence and confirmed maintainer decisions. External research remains revoked; do not claim external evidence. Next: specs or design."
+}

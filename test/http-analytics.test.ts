@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 import { safeError } from "../src/core/safe-error.js";
 
 /**
@@ -208,7 +209,7 @@ describe('GET /v1/analytics', () => {
     seedTestAnalytics();
 
     server = startHttpServer({
-      router,
+      router: freezeRouterForStartup(router),
       vault,
       config,
       analyticsAggregator,
@@ -563,7 +564,7 @@ describe('GET /v1/analytics', () => {
       });
 
       const testServer = startHttpServer({
-        router: freshRouter,
+        router: freezeRouterForStartup(freshRouter),
         vault,
         config: { ...config, httpPort: 0 },
         analyticsAggregator: freshAggregator,
@@ -627,7 +628,7 @@ describe('GET /v1/analytics', () => {
       });
 
       const testServer = startHttpServer({
-        router: freshRouter,
+        router: freezeRouterForStartup(freshRouter),
         vault,
         config: { ...config, httpPort: 0 },
         analyticsAggregator: freshAggregator,
@@ -814,7 +815,7 @@ describe('GET /v1/analytics', () => {
 			});
 
 			const testServer = startHttpServer({
-				router,
+				router: freezeRouterForStartup(router),
 				vault,
 				config: { ...config, httpPort: 0 },
 				analyticsAggregator: freshAggregator,
@@ -856,7 +857,7 @@ describe('GET /v1/analytics', () => {
       const freshAggregator = new AnalyticsAggregator();
 
       const testServer = startHttpServer({
-        router,
+        router: freezeRouterForStartup(router),
         vault,
         config: { ...config, httpPort: 0 },
         analyticsAggregator: freshAggregator,

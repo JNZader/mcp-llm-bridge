@@ -154,7 +154,7 @@ export class ApiClient {
     if (params?.groupBy) searchParams.set("groupBy", params.groupBy);
 
     const qs = searchParams.toString();
-    return this.request(`/v1/usage/summary${qs ? `?${qs}` : ""}`);
+    return this.request(`/v2/usage/summary${qs ? `?${qs}` : ""}`);
   }
 
   getUsageRecords(params?: UsageQueryParams): Promise<UsageQueryResponse> {
@@ -167,7 +167,7 @@ export class ApiClient {
     if (params?.limit) searchParams.set("limit", String(params.limit));
 
     const qs = searchParams.toString();
-    return this.request(`/v1/usage${qs ? `?${qs}` : ""}`);
+    return this.request(`/v2/usage${qs ? `?${qs}` : ""}`);
   }
 
   // ── Wiring Sprint ─────────────────────────────────

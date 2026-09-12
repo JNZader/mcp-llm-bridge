@@ -5,6 +5,7 @@ export type McpToolDefinition = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  deprecation?: { deprecated: true; successor: string };
 };
 
 /** Tool definitions exposed via MCP. */
@@ -276,9 +277,12 @@ export const TOOLS = [
   {
     name: 'usage_summary',
     description:
-      'Get cost/usage summary. Returns total requests, tokens, cost, with optional breakdown by provider, model, project, hour, or day.',
+      'Deprecated compatibility schema. Get a safe v2 cost/usage summary with opaque identifiers and normalized failures.',
+    deprecation: { deprecated: true, successor: '/v2/usage/summary' },
     inputSchema: {
       type: 'object' as const,
+      deprecated: true,
+      'x-telemetry-projection-version': 'v2',
       properties: {
         provider: {
           type: 'string',
@@ -302,7 +306,11 @@ export const TOOLS = [
         },
         groupBy: {
           type: 'string',
-          description: 'Group breakdown by: "provider", "model", "project", "hour", "day"',
+          description: 'Group breakdown by: "provider", "model", "hour", or "day"',
+        },
+        scope: {
+          type: 'string',
+          description: 'Authorization-bound telemetry readback scope.',
         },
       },
     },
@@ -310,9 +318,12 @@ export const TOOLS = [
   {
     name: 'usage_query',
     description:
-      'Query individual usage records with filters. Returns raw usage log entries.',
+      'Deprecated compatibility schema. Query safe v2 usage records with opaque IDs and normalized failures.',
+    deprecation: { deprecated: true, successor: '/v2/usage' },
     inputSchema: {
       type: 'object' as const,
+      deprecated: true,
+      'x-telemetry-projection-version': 'v2',
       properties: {
         provider: {
           type: 'string',
@@ -337,6 +348,10 @@ export const TOOLS = [
         limit: {
           type: 'number',
           description: 'Maximum records to return (default: 100)',
+        },
+        scope: {
+          type: 'string',
+          description: 'Authorization-bound telemetry readback scope.',
         },
       },
     },

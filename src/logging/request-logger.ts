@@ -9,6 +9,9 @@
 
 import type Database from 'better-sqlite3';
 import { LOG_QUERY_STATUS, type LogContext, type LogQuery, type LogsResponse, type LogEntryPublic } from './types.js';
+import { parseRequestLogTelemetryInput } from '../core/telemetry-contracts.js';
+import { normalizeTelemetryFailure } from '../core/telemetry-failure.js';
+import { RETENTION_SINKS, assertSafeTelemetryMetadata, verifyRetention, type RetentionVerification } from '../telemetry/retention.js';
 
 /**
  * Input for capture method (direct logging)
@@ -97,38 +100,12 @@ export class RequestLogger {
   }
 
   /**
-   * Truncate string to max length
-   * @param str - String to truncate
-   * @param maxLength - Maximum length (default 10000)
-   * @returns Truncated string
-   */
-  private truncate(str: string | undefined, maxLength = 10000): string | undefined {
-    if (!str) return undefined;
-    if (str.length <= maxLength) return str;
-    return str.substring(0, maxLength);
-  }
-
-  /**
-   * Serialize unknown data to JSON string with truncation
-   * @param data - Data to serialize
-   * @returns JSON string or undefined
-   */
-  private serializeData(data: unknown): string | undefined {
-    if (data === undefined || data === null) return undefined;
-    if (typeof data === 'string') return this.truncate(data);
-    try {
-      return this.truncate(JSON.stringify(data));
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
    * Start request tracking
    * @param input - Provider and model information, optionally with startTime
    * @returns LogContext with timing and request ID
    */
   captureStart(input: CaptureStartInput): LogContext {
+    assertSafeTelemetryMetadata(input, ['provider', 'model', 'correlationId', 'startTime']);
     return {
       startTime: input.startTime ?? Date.now(),
       provider: input.provider,
@@ -145,12 +122,23 @@ export class RequestLogger {
    * @returns Promise with created log entry data
    */
   async captureEnd(context: LogContext, input: CaptureEndInput): Promise<LogEntryPublic> {
+    if (input.requestData !== undefined || input.responseData !== undefined) {
+      throw new Error('Telemetry sink input rejected');
+    }
     const latencyMs = Date.now() - context.startTime;
     const attempts = input.attempts ?? 1;
     const provider = input.provider ?? context.provider;
     const model = input.model ?? context.model;
 
     const totalTokens = this.resolveTotalTokens(input);
+    const failure = input.error ? normalizeTelemetryFailure(input.error) : undefined;
+    const safeInput = parseRequestLogTelemetryInput({
+      provider, model, totalTokens, inputTokens: input.inputTokens, outputTokens: input.outputTokens,
+      cost: input.cost, latencyMs, ...(failure ? { errorCode: failure.code } : {}), attempts,
+    });
+    assertSafeTelemetryMetadata({ provider: safeInput.provider, model: safeInput.model,
+      correlationId: context.correlationId, latencyMs: safeInput.latencyMs, attempts: safeInput.attempts },
+    ['provider', 'model', 'correlationId', 'latencyMs', 'attempts']);
     const logEntry = {
       timestamp: context.startTime,
       provider,
@@ -161,11 +149,13 @@ export class RequestLogger {
       output_tokens: input.outputTokens ?? null,
       cost: input.cost ?? null,
       latency_ms: latencyMs,
-      error: input.error?.message || null,
-      attempts,
-      request_data: this.serializeData(input.requestData),
-      response_data: this.serializeData(input.responseData),
+      error: failure?.code ?? null,
+      error_code: failure?.code ?? null,
+      error_category: failure?.category ?? null,
+      attempts: safeInput.attempts ?? 1,
     };
+
+    await this.enforceRetention();
 
     // Run database operation in a Promise for async behavior
     return new Promise((resolve, reject) => {
@@ -173,7 +163,7 @@ export class RequestLogger {
         const stmt = this.db.prepare(`
           INSERT INTO request_logs (
             timestamp, provider, model, total_tokens, input_tokens, output_tokens,
-            cost, latency_ms, error, attempts, correlation_id, request_data, response_data
+            cost, latency_ms, error, error_code, error_category, attempts, correlation_id
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
@@ -187,10 +177,10 @@ export class RequestLogger {
           logEntry.cost,
           logEntry.latency_ms,
           logEntry.error,
+          logEntry.error_code,
+          logEntry.error_category,
           logEntry.attempts,
-          logEntry.correlation_id,
-          logEntry.request_data ?? null,
-          logEntry.response_data ?? null
+          logEntry.correlation_id
         );
 
         resolve({
@@ -219,29 +209,45 @@ export class RequestLogger {
    * @returns Promise with created log entry data
    */
   async capture(input: DirectCaptureInput): Promise<LogEntryPublic> {
-    const totalTokens = this.resolveTotalTokens(input);
+    if (input.requestData !== undefined || input.responseData !== undefined) {
+      throw new Error('Telemetry sink input rejected');
+    }
+    const failure = input.error ? normalizeTelemetryFailure(input.error) : undefined;
+    const { error: _error, requestData: _requestData, responseData: _responseData, ...metadata } = input;
+    const safeInput = parseRequestLogTelemetryInput({
+      ...metadata,
+      ...(failure ? { errorCode: failure.code } : {}),
+    });
+    assertSafeTelemetryMetadata({
+      provider: safeInput.provider, model: safeInput.model, correlationId: safeInput.correlationId,
+      totalTokens: safeInput.totalTokens, inputTokens: safeInput.inputTokens, outputTokens: safeInput.outputTokens,
+      cost: safeInput.cost ?? undefined, latencyMs: safeInput.latencyMs, attempts: safeInput.attempts,
+    }, ['provider', 'model', 'correlationId', 'totalTokens', 'inputTokens', 'outputTokens', 'cost', 'latencyMs', 'attempts']);
+    const totalTokens = this.resolveTotalTokens(safeInput);
     const logEntry = {
       timestamp: Date.now(),
-      provider: input.provider,
-      model: input.model,
-      correlation_id: input.correlationId ?? null,
+      provider: safeInput.provider,
+      model: safeInput.model,
+      correlation_id: safeInput.correlationId ?? null,
       total_tokens: totalTokens ?? null,
-      input_tokens: input.inputTokens ?? null,
-      output_tokens: input.outputTokens ?? null,
-      cost: input.cost ?? null,
-      latency_ms: input.latencyMs,
-      error: input.error || null,
-      attempts: input.attempts || 1,
-      request_data: this.truncate(input.requestData) ?? null,
-      response_data: this.truncate(input.responseData) ?? null,
+      input_tokens: safeInput.inputTokens ?? null,
+      output_tokens: safeInput.outputTokens ?? null,
+      cost: safeInput.cost ?? null,
+      latency_ms: safeInput.latencyMs,
+      error: failure?.code ?? null,
+      error_code: failure?.code ?? null,
+      error_category: failure?.category ?? null,
+      attempts: safeInput.attempts ?? 1,
     };
+
+    await this.enforceRetention();
 
     return new Promise((resolve, reject) => {
       try {
         const stmt = this.db.prepare(`
           INSERT INTO request_logs (
             timestamp, provider, model, total_tokens, input_tokens, output_tokens,
-            cost, latency_ms, error, attempts, correlation_id, request_data, response_data
+            cost, latency_ms, error, error_code, error_category, attempts, correlation_id
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
@@ -255,10 +261,10 @@ export class RequestLogger {
           logEntry.cost,
           logEntry.latency_ms,
           logEntry.error,
+          logEntry.error_code,
+          logEntry.error_category,
           logEntry.attempts,
-          logEntry.correlation_id,
-          logEntry.request_data,
-          logEntry.response_data
+          logEntry.correlation_id
         );
 
         resolve({
@@ -417,6 +423,14 @@ export class RequestLogger {
         reject(error);
       }
     });
+  }
+
+  async enforceRetention(beforeTimestamp = Date.now()): Promise<RetentionVerification> {
+    await this.cleanup({ olderThanDays: 30, beforeTimestamp });
+    const cutoff = beforeTimestamp - 30 * 24 * 60 * 60 * 1000;
+    const remaining = this.db.prepare('SELECT COUNT(*) AS count FROM request_logs WHERE timestamp <= ?')
+      .get(cutoff) as { count: number };
+    return verifyRetention(RETENTION_SINKS.REQUEST_LOGS, { expiredRecordsAbsent: remaining.count === 0 });
   }
 }
 

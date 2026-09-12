@@ -5,9 +5,11 @@ import { safeError } from "../../core/safe-error.js";
 import { CompareRequestSchema } from "../../comparison/schemas.js";
 import type { ComparisonService } from "../../comparison/service.js";
 import { getCostExceededDetails } from "../../comparison/service.js";
+import type { ComparisonCapability } from "../../security/enforcer.js";
 
 export interface ComparisonRouteDeps {
 	comparisonService?: ComparisonService;
+	capability?: ComparisonCapability;
 }
 
 function projectComparisonResponse(response: CompareResponse) {
@@ -51,7 +53,7 @@ export function registerComparisonRoutes(
 	app: Hono,
 	deps: ComparisonRouteDeps,
 ): void {
-	const { comparisonService } = deps;
+	const { comparisonService, capability } = deps;
 
 	if (!comparisonService) {
 		return;
@@ -59,6 +61,7 @@ export function registerComparisonRoutes(
 
 	app.post("/v1/compare", async (c) => {
 		try {
+			if (!capability) return c.json({ error: safeError("ACCESS_DENIED").message }, 403);
 			const body = await c.req.json();
 
 			const validated = CompareRequestSchema.safeParse(body);
@@ -76,7 +79,7 @@ export function registerComparisonRoutes(
 				);
 			}
 
-			const result = await comparisonService.compare(validated.data);
+			const result = await comparisonService.compare(validated.data, capability);
 			return c.json(projectComparisonResponse(result));
 		} catch (error) {
 			const budget = getCostExceededDetails(error);
@@ -98,6 +101,7 @@ export function registerComparisonRoutes(
 
 	app.get("/v1/compare/history", (c) => {
 		try {
+			if (!capability) return c.json({ error: safeError("ACCESS_DENIED").message }, 403);
 			const project = c.req.query("project") ?? undefined;
 			const limitStr = c.req.query("limit");
 			const offsetStr = c.req.query("offset");
@@ -111,7 +115,7 @@ export function registerComparisonRoutes(
 				project,
 				limit,
 				offset,
-			});
+			}, capability);
 			return c.json({ results: results.map(projectComparisonResponse), count: results.length });
 		} catch {
 			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);

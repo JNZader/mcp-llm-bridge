@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * HTTP integration tests for comparison endpoints.
  *
@@ -18,7 +19,7 @@ import type {
 	InternalLLMRequest,
 	InternalLLMResponse,
 } from "../src/core/internal-model.js";
-import type { Router } from "../src/core/router.js";
+import { Router } from "../src/core/router.js";
 import type { GatewayConfig } from "../src/core/types.js";
 import { startHttpServer } from "../src/server/http.js";
 import { Vault } from "../src/vault/vault.js";
@@ -38,19 +39,17 @@ const config: GatewayConfig = {
 // ── Mock router that doesn't need real providers ─────────────
 
 function makeMockRouter(): Router {
-	return {
-		generateFromInternal: async (
-			req: InternalLLMRequest,
-		): Promise<InternalLLMResponse> => {
-			return {
-				content: `Mock response for ${req.model ?? "unknown"}`,
-				usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-				model: req.model ?? "mock-model",
-				finishReason: "stop",
-				metadata: { provider: "mock-provider", latencyMs: 50 },
-			};
-		},
-	} as unknown as Router;
+	const router = new Router();
+	router.generateFromInternal = async (
+		req: InternalLLMRequest,
+	): Promise<InternalLLMResponse> => ({
+		content: `Mock response for ${req.model ?? "unknown"}`,
+		usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+		model: req.model ?? "mock-model",
+		finishReason: "stop",
+		metadata: { provider: "mock-provider", latencyMs: 50 },
+	});
+	return router;
 }
 
 // ── Setup ─────────────────────────────────────────────────────
@@ -72,7 +71,7 @@ let port = 0;
 
 before(async () => {
 	server = startHttpServer({
-		router,
+		router: freezeRouterForStartup(router),
 		vault,
 		config,
 		db,

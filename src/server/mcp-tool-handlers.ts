@@ -13,6 +13,13 @@ import {
   updateCircuitBreakerAdminConfig,
 } from '../circuit-breaker/admin-compat.js';
 import { PageIndexTools } from '../pageindex/tools.js';
+import { safeError } from '../core/safe-error.js';
+import {
+  getSafeUsageQuery,
+  projectUsageRecord,
+  projectUsageSummary,
+  type ReadbackScopeAuthorizer,
+} from './routes/usage.js';
 
 export interface McpToolTextContent {
   type: 'text';
@@ -170,41 +177,40 @@ export function handleUsageTool(
   toolName: string,
   args: Record<string, unknown>,
   costTracker?: CostTracker,
+  authorizeReadback?: ReadbackScopeAuthorizer,
 ): McpToolResult | null {
   switch (toolName) {
     case 'usage_summary': {
+      if (!authorizeReadback?.(typeof args['scope'] === 'string' ? args['scope'] : undefined)) {
+        return safeMcpError('ACCESS_DENIED');
+      }
       if (!costTracker) {
         return jsonResult({ error: 'Cost tracker not configured' }, true);
       }
-      const summary = costTracker.summary({
-        provider: args['provider'] as string | undefined,
-        model: args['model'] as string | undefined,
-        project: args['project'] as string | undefined,
-        from: args['from'] as string | undefined,
-        to: args['to'] as string | undefined,
-        groupBy: args['groupBy'] as 'provider' | 'model' | 'project' | 'hour' | 'day' | undefined,
-      });
-      return jsonResult(summary);
+      return jsonResult(projectUsageSummary(costTracker.summary(getSafeUsageQuery(args))));
     }
 
     case 'usage_query': {
+      if (!authorizeReadback?.(typeof args['scope'] === 'string' ? args['scope'] : undefined)) {
+        return safeMcpError('ACCESS_DENIED');
+      }
       if (!costTracker) {
         return jsonResult({ error: 'Cost tracker not configured' }, true);
       }
-      const records = costTracker.query({
-        provider: args['provider'] as string | undefined,
-        model: args['model'] as string | undefined,
-        project: args['project'] as string | undefined,
-        from: args['from'] as string | undefined,
-        to: args['to'] as string | undefined,
-        limit: (args['limit'] as number | undefined) ?? 100,
-      });
-      return jsonResult({ records, count: records.length });
+      const records = costTracker.query(getSafeUsageQuery(args));
+      return jsonResult({ records: records.map(projectUsageRecord), count: records.length });
     }
 
     default:
       return null;
   }
+}
+
+function safeMcpError(code: 'ACCESS_DENIED'): McpToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ error: safeError(code).message, code }) }],
+    isError: true,
+  };
 }
 
 export async function handleCodeSearchTool(

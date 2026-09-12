@@ -28,6 +28,23 @@ import {
 } from './profiles.js';
 import { ROUTE_CATEGORIES, isAdminRoute } from './http-categories.js';
 
+const COMPARISON_OPERATIONS = {
+  persist: 'persist', read: 'read', export: 'export', purge: 'purge',
+} as const;
+type ComparisonOperation = keyof typeof COMPARISON_OPERATIONS;
+export interface ComparisonAuditEvent { operation: ComparisonOperation; outcome: 'allowed' | 'denied'; }
+export type ComparisonAudit = (event: ComparisonAuditEvent) => void;
+
+/** An opaque, admin-issued grant for one comparison scope. */
+export class ComparisonCapability {
+  constructor(private readonly scope: string, private readonly audit?: ComparisonAudit) {}
+  authorize(operation: ComparisonOperation, requestedScope?: string): string | undefined {
+    const allowed = requestedScope === undefined || this.scope === '*' || requestedScope === this.scope;
+    this.audit?.({ operation, outcome: allowed ? 'allowed' : 'denied' });
+    return allowed ? (requestedScope ?? this.scope) : undefined;
+  }
+}
+
 const LOG_HTTP_METHODS = new Set([
   'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE',
 ]);
@@ -195,6 +212,16 @@ export class ProfileEnforcer {
     }
 
     return true;
+  }
+
+  /** Issue a comparison-only grant; ordinary telemetry access cannot create one. */
+  issueComparisonCapability(scope: string, audit?: ComparisonAudit): ComparisonCapability | undefined {
+    if (!scope || !this.allowedCategories.has('admin')) {
+      audit?.({ operation: 'read', outcome: 'denied' });
+      return undefined;
+    }
+    audit?.({ operation: 'read', outcome: 'allowed' });
+    return new ComparisonCapability(scope, audit);
   }
 
   /**

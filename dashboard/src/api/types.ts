@@ -91,7 +91,10 @@ interface CircuitBreakerSummary {
 
 interface UsageOverview {
   totalRequests: number;
-  totalCost: number;
+  totalCost: number | null;
+  knownCost: number;
+  unknownCostRequestCount: number;
+  hasUnknownCost: boolean;
   totalTokens: number;
 }
 
@@ -210,20 +213,23 @@ export interface UsageSummaryResponse {
   totalRequests: number;
   totalTokensIn: number;
   totalTokensOut: number;
-  totalCostUsd: number;
+  totalCostUsd: number | null;
   avgLatencyMs: number;
   breakdown: UsageBreakdown[];
 }
 
-interface UsageRecord {
+export interface UsageRecord {
   id: string;
   provider: string;
   model: string;
-  project?: string;
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
   latencyMs: number;
+  success: boolean;
+  errorMessage: string | null;
+  errorCode: string | null;
+  errorCategory: string | null;
   createdAt: string;
 }
 
