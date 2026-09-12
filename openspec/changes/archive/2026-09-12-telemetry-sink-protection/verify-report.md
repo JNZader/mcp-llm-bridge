@@ -5,7 +5,7 @@ verdict: pass
 blockers: 0
 critical_findings: 0
 requirements: 20/20
-scenarios: 25/25
+scenarios: 26/26
 test_command: "docker exec -w /workspace bold_varahamihira pnpm exec node --import tsx --import ./test/setup/inject-require.mjs --test test/logging/request-logger.test.ts test/core/router-telemetry.test.ts test/cost-tracker.test.ts test/migrations/telemetry-sink-protection.test.ts test/vault/schema.test.ts test/analytics/sqlite-writer.test.ts test/core/telemetry-sinks.test.ts test/comparison/persistence.test.ts test/comparison/service.test.ts test/comparison/retention.test.ts test/server/routes/usage.test.ts test/server/routes/observability.test.ts test/http.test.ts test/dashboard-readback.test.ts"
 test_exit_code: 0
 test_output_hash: sha256:ee0122dca45cf827ecaf24ef23b700abf18e342a9234e4a39fcaf4346784d83e
@@ -19,13 +19,13 @@ build_output_hash: sha256:f73ddd78fcfed21d4590c3f6b767041b27518dc370f6d439c0aa6b
 **Change**: `telemetry-sink-protection`  
 **Version**: N/A  
 **Mode**: Standard  
-**Parent token**: `sha256:2f2d02651cf1b62bd5f6f7c293749ce77a31d97afc267c496109ad26dba24a1f` (caller-supplied; not acquired or settled)
+**Parent token**: `sha256:9f66fa008568bd288ad316b04a03aafcf4be39e4d52489bd1020ac6dc9a8fe83` (caller-supplied; not acquired or settled)
 
 ### Completeness
 | Metric | Value |
 |---|---:|
 | Requirements fully compliant | 20/20 |
-| Scenarios compliant | 25/25 |
+| Scenarios compliant | 26/26 |
 | Tasks complete | 10/10 |
 | Tasks incomplete | 0 |
 | Source/spec/design/task writes | None |
@@ -75,7 +75,7 @@ build_output_hash: sha256:f73ddd78fcfed21d4590c3f6b767041b27518dc370f6d439c0aa6b
 | External Sink Limits | Local deletion does not overclaim | `test/core/telemetry-sinks.test.ts > reports local metrics separately from an unverified configured external backend`; exporter receipt/absence checks | ✅ COMPLIANT |
 | Policy Provenance | Retention provenance is accurate | `test/server/routes/observability.test.ts > exposes maintainer retention provenance and sink ownership only to authorized operators` | ✅ COMPLIANT |
 
-**Compliance summary**: 25/25 scenarios compliant. The matrix contains 25 actual scenarios across the five retrieved specs.
+**Compliance summary**: 26/26 scenarios compliant. The matrix contains 26 actual scenarios across the five retrieved specs.
 
 ### Correctness (Static Evidence)
 | Requirement area | Status | Notes |
@@ -105,4 +105,4 @@ build_output_hash: sha256:f73ddd78fcfed21d4590c3f6b767041b27518dc370f6d439c0aa6b
 **SUGGESTION**: Extend production lifecycle coverage to every future retention backend and routine readback adapter before adding new exporters or adapters.
 
 ### Verdict
-**PASS** — requested typecheck and all 132 focused tests pass; all 20 requirements and 25 scenarios are compliant, and all four prior blocking findings are resolved.
+**PASS** — requested typecheck and all 132 focused tests pass; all 20 requirements and 26 scenarios are compliant, and all four prior blocking findings are resolved.
