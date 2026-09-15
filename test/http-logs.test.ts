@@ -204,6 +204,8 @@ describe('GET /v1/logs', () => {
         cost REAL,
         latency_ms INTEGER NOT NULL,
         error TEXT,
+        error_code TEXT,
+        error_category TEXT,
         attempts INTEGER NOT NULL DEFAULT 1,
         correlation_id TEXT,
         request_data TEXT,
@@ -345,7 +347,7 @@ describe('GET /v1/logs', () => {
   });
 
 	describe('Filtering by correlation ID', () => {
-		it('should expose and filter logs by correlationId', async () => {
+		it('should filter logs by correlationId without exposing it in the projection', async () => {
 			const correlationId = 'corr-http-logs-filter';
 
 			const generateRes = await request('POST', '/v1/generate', {
@@ -375,7 +377,7 @@ describe('GET /v1/logs', () => {
 				};
 
 				assert.equal(data.total, 1);
-				assert.equal(data.logs[0]?.correlationId, correlationId);
+				assert.ok(!('correlationId' in data.logs[0]!));
 				assert.ok(!('requestData' in data.logs[0]!));
 				assert.ok(!('responseData' in data.logs[0]!));
 			} finally {
@@ -595,7 +597,7 @@ describe('GET /v1/logs', () => {
       assert.equal(res.status, 200);
       const data = res.data as {
         logs: Array<{
-          id: number;
+          id: string;
           timestamp: number;
           provider: string;
           model: string;
@@ -611,7 +613,7 @@ describe('GET /v1/logs', () => {
       };
 
       const log = data.logs[0]!;
-      assert.ok(typeof log.id === 'number', 'Should have id');
+      assert.ok(typeof log.id === 'string' && log.id.startsWith('log_'), 'Should have opaque log id');
       assert.ok(typeof log.timestamp === 'number', 'Should have timestamp');
       assert.ok(typeof log.provider === 'string', 'Should have provider');
       assert.ok(typeof log.model === 'string', 'Should have model');
@@ -1002,7 +1004,7 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.provider, 'last-failing-provider');
         assert.equal(data.logs[0]?.model, streamModel);
         assert.equal(data.logs[0]?.attempts, 2);
-        assert.equal(data.logs[0]?.error, safeError("INTERNAL_ERROR").message);
+        assert.equal(data.logs[0]?.error, "Provider request failed");
         assert.equal(JSON.stringify(data.logs).includes("last startup failure"), false);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
@@ -1070,7 +1072,7 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.provider, 'primary-stream-provider');
         assert.equal(data.logs[0]?.model, streamModel);
         assert.equal(data.logs[0]?.attempts, 1);
-        assert.equal(data.logs[0]?.error, safeError("INTERNAL_ERROR").message);
+        assert.equal(data.logs[0]?.error, "Provider request failed");
         assert.equal(JSON.stringify(data.logs).includes("mid-stream failure"), false);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
