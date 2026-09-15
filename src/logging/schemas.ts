@@ -22,12 +22,10 @@ export const LogEntrySchema = z.object({
   outputTokens: z.number().int().nonnegative().optional(),
   cost: z.number().nonnegative().optional(),
   latencyMs: z.number().int().nonnegative(),
-  error: z.string().optional(),
+  error: z.string().max(200).optional(),
   attempts: z.number().int().positive().default(1),
-  requestData: z.string().max(10000).optional(),
-  responseData: z.string().max(10000).optional(),
   createdAt: z.number().int().positive().optional(),
-});
+}).strict();
 
 /**
  * Schema for LogEntryPublic (API response)
@@ -109,9 +107,7 @@ export const LogCaptureInputSchema = z.object({
   cost: z.number().nonnegative().optional(),
   error: z.instanceof(Error).optional(),
   attempts: z.number().int().positive(),
-  requestData: z.unknown().optional(),
-  responseData: z.unknown().optional(),
-});
+}).strict();
 
 // Type inference from schemas
 export type LogEntryValidated = z.infer<typeof LogEntrySchema>;

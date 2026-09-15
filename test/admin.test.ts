@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * Admin API endpoint tests — verify /v1/admin/* routes.
  *
@@ -21,7 +22,7 @@ import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
-import { createAllAdapters } from '../src/adapters/index.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
 import { GroupStore } from '../src/core/groups.js';
 import { CostTracker } from '../src/core/cost-tracker.js';
 import { SessionManager } from '../src/session/index.js';
@@ -52,9 +53,7 @@ const config: GatewayConfig = {
 const vault = new Vault(config);
 const router = new Router();
 
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
+router.register(new StubAdapter());
 
 const groupStore = new GroupStore(dbPath);
 const costTracker = new CostTracker({ dbPath });
@@ -72,7 +71,7 @@ before(async () => {
   await migrate({ dbPath });
 
   server = startHttpServer({
-    router,
+    router: freezeRouterForStartup(router),
     vault,
     config,
     groupStore,
@@ -241,8 +240,8 @@ describe('GET /v1/admin/overview', () => {
       success: true,
     });
     costTracker.record({
-      provider: 'legacy-provider',
-      model: 'legacy-model',
+      provider: 'anthropic',
+      model: 'claude-3',
       totalTokens: 9,
       latencyMs: 25,
       success: true,
@@ -275,8 +274,8 @@ describe('GET /v1/admin/overview', () => {
 describe('GET /v1/usage/summary', () => {
   it('exposes truthful totals when some rows have unknown cost', async () => {
     costTracker.record({
-      provider: 'summary-provider',
-      model: 'summary-model-exact',
+      provider: 'google',
+      model: 'claude-3',
       tokensIn: 4,
       tokensOut: 6,
       costUsd: 0.1,
@@ -284,15 +283,15 @@ describe('GET /v1/usage/summary', () => {
       success: true,
     });
     costTracker.record({
-      provider: 'summary-provider',
-      model: 'summary-model-total-only',
+      provider: 'google',
+      model: 'claude-3-haiku',
       totalTokens: 11,
       latencyMs: 12,
       success: true,
     });
     costTracker.flush();
 
-    const res = await request('GET', '/v1/usage/summary?provider=summary-provider');
+    const res = await request('GET', '/v1/usage/summary?provider=google');
     assert.equal(res.status, 200);
 
     const data = res.data as {
@@ -318,8 +317,8 @@ describe('GET /v1/usage/summary', () => {
 
   it('preserves exact known-cost totals when every row has a known cost', async () => {
     costTracker.record({
-      provider: 'known-cost-provider',
-      model: 'known-cost-model-a',
+      provider: 'groq',
+      model: 'gpt-4o',
       tokensIn: 3,
       tokensOut: 7,
       costUsd: 0.2,
@@ -327,8 +326,8 @@ describe('GET /v1/usage/summary', () => {
       success: true,
     });
     costTracker.record({
-      provider: 'known-cost-provider',
-      model: 'known-cost-model-b',
+      provider: 'groq',
+      model: 'gpt-4o-mini',
       tokensIn: 5,
       tokensOut: 9,
       costUsd: 0.3,
@@ -337,7 +336,7 @@ describe('GET /v1/usage/summary', () => {
     });
     costTracker.flush();
 
-    const res = await request('GET', '/v1/usage/summary?provider=known-cost-provider');
+    const res = await request('GET', '/v1/usage/summary?provider=groq');
     assert.equal(res.status, 200);
 
     const data = res.data as {
@@ -355,15 +354,15 @@ describe('GET /v1/usage/summary', () => {
 
   it('returns null total cost for exact-token unknown-priced rows in usage summary', async () => {
     costTracker.record({
-      provider: 'truthful-cost-provider',
-      model: 'unknown-model-xyz',
+      provider: 'mistral',
+      model: 'claude-3',
       tokensIn: 8,
       tokensOut: 12,
       latencyMs: 11,
       success: true,
     });
     costTracker.record({
-      provider: 'truthful-cost-provider',
+      provider: 'mistral',
       model: 'gpt-4o',
       tokensIn: 4,
       tokensOut: 6,
@@ -372,7 +371,7 @@ describe('GET /v1/usage/summary', () => {
     });
     costTracker.flush();
 
-    const res = await request('GET', '/v1/usage/summary?provider=truthful-cost-provider');
+    const res = await request('GET', '/v1/usage/summary?provider=mistral');
     assert.equal(res.status, 200);
 
     const data = res.data as {
@@ -606,6 +605,35 @@ describe('GET /v1/admin/model-router/stats', () => {
 // ── GET /v1/admin/me ─────────────────────────────────────
 
 describe('GET /v1/admin/me', () => {
+  it('excludes signed subject and expiry claims from the identity response', async () => {
+    const previousSecret = process.env['GITHUB_OAUTH_SECRET'];
+    process.env['GITHUB_OAUTH_SECRET'] = 'fixture-shell-signing-secret';
+    try {
+      const token = createDashboardJwt({
+        id: 987654321, login: 'fixture-login', name: 'Fixture Name',
+        avatar_url: 'https://fixture.invalid/avatar.png',
+      });
+      const encoded = token.split('.')[1];
+      assert.ok(encoded);
+      const claims = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Record<string, unknown>;
+      assert.equal(claims['sub'], '987654321');
+      assert.equal(typeof claims['exp'], 'number');
+      const res = await request('GET', '/v1/admin/me', undefined, token);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data, {
+        authMethod: 'github', login: 'fixture-login', name: 'Fixture Name',
+        avatar: 'https://fixture.invalid/avatar.png',
+      });
+      const body = res.data as Record<string, unknown>;
+      assert.equal('sub' in body, false);
+      assert.equal('exp' in body, false);
+      assert.equal(JSON.stringify(body).includes(token), false);
+      assert.equal(JSON.stringify(body).includes('fixture-shell-signing-secret'), false);
+    } finally {
+      if (previousSecret === undefined) delete process.env['GITHUB_OAUTH_SECRET'];
+      else process.env['GITHUB_OAUTH_SECRET'] = previousSecret;
+    }
+  });
   it('returns token auth identity when using static admin auth', async () => {
     const res = await request('GET', '/v1/admin/me');
     assert.equal(res.status, 200);
@@ -644,6 +672,22 @@ describe('GET /v1/admin/me', () => {
 // ── GET /v1/admin/security-profile ───────────────────────
 
 describe('GET /v1/admin/security-profile', () => {
+  it('preserves the explicit restricted profile shell without claiming effective permissions', async () => {
+    const previousProfile = config.securityProfile;
+    config.securityProfile = 'restricted';
+    try {
+      const res = await request('GET', '/v1/admin/security-profile');
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.data, {
+        profile: 'restricted',
+        allowedCategories: ['destructive', 'read', 'generate', 'admin'],
+        rateLimit: null,
+      });
+    } finally {
+      if (previousProfile === undefined) delete config.securityProfile;
+      else config.securityProfile = previousProfile;
+    }
+  });
   it('returns the default local-dev security shell payload', async () => {
     const res = await request('GET', '/v1/admin/security-profile');
     assert.equal(res.status, 200);
@@ -746,8 +790,8 @@ describe('POST /v1/admin/flush-usage', () => {
   it('triggers cost tracker flush', async () => {
     // Add a record to the buffer
     costTracker.record({
-      provider: 'test',
-      model: 'test-model',
+      provider: 'openai',
+      model: 'gpt-4o',
       tokensIn: 100,
       tokensOut: 50,
       latencyMs: 200,
@@ -949,13 +993,14 @@ describe('POST /v1/admin/models/sync', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; supportedProviders: string[] };
+      details: { field: string; supportedProviders: string[] };
     };
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid provider for provider');
     assert.equal(data.details.field, 'provider');
-    assert.equal(data.details.received, 'invalid-provider');
-    assert.ok(Array.isArray(data.details.supportedProviders));
+    assert.equal('received' in data.details, false);
+    assert.deepEqual(data.details.supportedProviders, ['openai', 'groq', 'openrouter', 'anthropic', 'gemini']);
+    assert.equal(JSON.stringify(data).includes('invalid-provider'), false);
   });
 
   it('returns 400 when credentials are missing', async () => {
@@ -1058,14 +1103,17 @@ describe('GET /v1/admin/models/sync/history', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; supportedProviders: string[] };
+      details: { field: string; supportedProviders: string[] };
     };
 
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid provider for provider');
-    assert.equal(data.details.field, 'provider');
-    assert.equal(data.details.received, 'invalid-provider');
-    assert.ok(Array.isArray(data.details.supportedProviders));
+    assert.equal('received' in data.details, false);
+    assert.deepEqual(data.details, {
+      field: 'provider',
+      supportedProviders: ['openai', 'groq', 'openrouter', 'anthropic', 'gemini'],
+    });
+    assert.equal(JSON.stringify(data).includes('invalid-provider'), false);
   });
 
   it('returns 400 for invalid limit filter with clear error payload', async () => {
@@ -1075,14 +1123,14 @@ describe('GET /v1/admin/models/sync/history', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; min: number; max: number };
+      details: { field: string; min: number; max: number };
     };
 
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid numeric value for limit');
+    assert.equal('received' in data.details, false);
     assert.deepEqual(data.details, {
       field: 'limit',
-      received: '0',
       min: 1,
       max: 500,
     });
@@ -1159,14 +1207,15 @@ describe('POST /v1/admin/prices/sync', () => {
     const data = res.data as {
       error: string;
       code: string;
-      details: { field: string; received: string; supportedProviders: string[] };
+      details: { field: string; supportedProviders: string[] };
     };
 
     assert.equal(data.code, 'VALIDATION_ERROR');
     assert.equal(data.error, 'Invalid provider for provider parameter');
     assert.equal(data.details.field, 'provider');
-    assert.equal(data.details.received, 'invalid-provider');
-    assert.ok(Array.isArray(data.details.supportedProviders));
+    assert.equal('received' in data.details, false);
+    assert.deepEqual(data.details.supportedProviders, ['openai', 'groq', 'openrouter', 'anthropic', 'gemini']);
+    assert.equal(JSON.stringify(data).includes('invalid-provider'), false);
   });
 
   it('returns 409 with active run details when a price sync overlaps', async () => {

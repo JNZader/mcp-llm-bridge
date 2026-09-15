@@ -12,6 +12,8 @@ export type {
   JsonRpcMessage,
   JsonRpcRequest,
   JsonRpcResponse,
+  JsonRpcInputErrorResponse,
+  JsonRpcRawResponse,
   JsonRpcNotification,
   JsonRpcError,
   AcpServerCapabilities,

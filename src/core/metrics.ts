@@ -15,6 +15,14 @@
 
 import { Counter, Histogram, Gauge, collectDefaultMetrics, register } from 'prom-client';
 import { Router } from './router.js';
+import { assertSafeTelemetryMetadata } from '../telemetry/retention.js';
+import {
+  RETENTION_SINKS,
+  RETENTION_VERIFICATION_OUTCOMES,
+  enforceExternalRetention,
+  type ExternalRetentionBackend,
+} from '../telemetry/retention.js';
+import { normalizeMetricsPath } from '../server/http-helpers/metrics-path.js';
 
 export interface RecordLlmAttemptMetricInput {
   provider: string;
@@ -22,6 +30,12 @@ export interface RecordLlmAttemptMetricInput {
   success: boolean;
   latencyMs: number;
   totalTokens?: number;
+}
+
+export class MetricsRetentionError extends Error {
+  constructor() {
+    super("Configured metrics backend retention is not verified");
+  }
 }
 
 // HTTP metrics
@@ -86,7 +100,14 @@ export function initMetrics(): void {
 /**
  * Get metrics in Prometheus format.
  */
-export async function getMetrics(): Promise<string> {
+export async function getMetrics(retentionBackend?: ExternalRetentionBackend): Promise<string> {
+  if (retentionBackend?.configured) {
+    const verification = await enforceExternalRetention(RETENTION_SINKS.METRICS, retentionBackend);
+    if (verification.outcome !== RETENTION_VERIFICATION_OUTCOMES.SUCCESS) {
+      throw new MetricsRetentionError();
+    }
+  }
+
   return register.metrics();
 }
 
@@ -111,6 +132,7 @@ export async function updateProviderAvailability(router: Router): Promise<void> 
 export function recordLlmAttemptMetric(input: RecordLlmAttemptMetricInput): void {
   const { provider, model, success, latencyMs, totalTokens } = input;
   const status = success ? 'success' : 'error';
+  assertSafeTelemetryMetadata({ provider, model, status }, ['provider', 'model', 'status']);
 
   llmRequestsTotal.inc({ provider, model, status });
   llmRequestDuration.observe({ provider, model }, Math.max(latencyMs, 0) / 1000);
@@ -129,6 +151,7 @@ export function resetMetrics(): void {
  * Returns a function to call on completion.
  */
 export function startLlmTimer(provider: string, model: string): () => void {
+  assertSafeTelemetryMetadata({ provider, model }, ['provider', 'model']);
   const end = llmRequestDuration.startTimer({ provider, model });
   return end;
 }
@@ -138,6 +161,9 @@ export function startLlmTimer(provider: string, model: string): () => void {
  * Returns a function to call on completion with status.
  */
 export function startHttpTimer(method: string, path: string): (status: number) => void {
+  method = method.toLowerCase();
+  path = normalizeMetricsPath(path);
+  assertSafeTelemetryMetadata({ method }, ['method']);
   const end = httpRequestDuration.startTimer({ method, path });
   return (status: number) => {
     end();

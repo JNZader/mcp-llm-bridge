@@ -16,6 +16,13 @@ import { calculateCost } from './pricing.js';
 import { logger } from './logger.js';
 import { GLOBAL_PROJECT } from './constants.js';
 import { initializeDb } from '../vault/schema.js';
+import { parseUsageTelemetryInput } from './telemetry-contracts.js';
+import { normalizeTelemetryFailure, type TelemetryFailureCategory, type TelemetryFailureCode } from './telemetry-failure.js';
+import {
+  RETENTION_SINKS,
+  verifyRetention,
+  type RetentionVerification,
+} from '../telemetry/retention.js';
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -36,15 +43,20 @@ export interface UsageEntry {
   latencyMs: number;
   success: boolean;
   errorMessage?: string;
+  errorCode?: TelemetryFailureCode;
+  errorCategory?: TelemetryFailureCategory;
 }
 
 /** Row shape returned from usage_logs queries. */
 export interface UsageRecord {
   id: number;
   provider: string;
-  keyName: string;
+  /** Legacy compatibility field. New protected rows always return null. */
+  keyName: string | null;
   model: string;
-  project: string;
+  /** Legacy compatibility field. New protected rows always return null. */
+  project: string | null;
+  /** Legacy compatibility field. New protected rows always return null. */
   userId: string | null;
   tokensIn: number | null;
   tokensOut: number | null;
@@ -52,6 +64,9 @@ export interface UsageRecord {
   costUsd: number | null;
   latencyMs: number;
   success: boolean;
+  errorCode?: TelemetryFailureCode | null;
+  errorCategory?: TelemetryFailureCategory | null;
+  /** Compatibility-safe text derived from errorCode, never provider text. */
   errorMessage: string | null;
   createdAt: string;
 }
@@ -117,17 +132,15 @@ export interface UsageBreakdown {
 interface UsageRow {
   id: number;
   provider: string;
-  key_name: string;
   model: string;
-  project: string;
-  user_id: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
   total_tokens: number | null;
   cost_usd: number | null;
   latency_ms: number;
   success: number;
-  error_message: string | null;
+  error_code: TelemetryFailureCode | null;
+  error_category: TelemetryFailureCategory | null;
   created_at: string;
 }
 
@@ -224,11 +237,12 @@ export class CostTracker {
 
     // Initialize schema (creates usage_logs + price_config tables)
     initializeDb(this.db);
+    this.cleanupRetention();
 
     // Prepare the insert statement once
     this.insertStmt = this.db.prepare(`
-      INSERT INTO usage_logs (provider, key_name, model, project, user_id, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at)
-      VALUES (@provider, @keyName, @model, @project, @userId, @tokensIn, @tokensOut, @totalTokens, @costUsd, @latencyMs, @success, @errorMessage, datetime('now'))
+      INSERT INTO usage_logs (provider, model, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_code, error_category, created_at)
+      VALUES (@provider, @model, @tokensIn, @tokensOut, @totalTokens, @costUsd, @latencyMs, @success, @errorCode, @errorCategory, datetime('now'))
     `);
 
     // Periodic flush — unref so it doesn't keep the process alive
@@ -243,19 +257,26 @@ export class CostTracker {
    * Automatically calculates cost if not provided.
    */
   record(entry: UsageEntry): void {
-    const hasExactSplit = hasExactSplitUsage(entry);
+    const failure = entry.errorMessage ? normalizeTelemetryFailure(entry.errorMessage) : undefined;
+    const { errorMessage: _errorMessage, ...metadata } = entry;
+    const safeEntry = parseUsageTelemetryInput({
+      ...metadata,
+      ...(failure ? { errorCode: failure.code } : {}),
+    });
+    const hasExactSplit = hasExactSplitUsage(safeEntry);
     const totalTokens = hasExactSplit
-      ? entry.tokensIn + entry.tokensOut
-      : entry.totalTokens;
+      ? safeEntry.tokensIn + safeEntry.tokensOut
+      : safeEntry.totalTokens;
 
     // Auto-calculate cost if not provided
-    if (entry.costUsd === undefined && hasExactSplit) {
-      entry.costUsd = calculateCost(entry.model, entry.tokensIn, entry.tokensOut);
+    if (safeEntry.costUsd === undefined && hasExactSplit) {
+      safeEntry.costUsd = calculateCost(safeEntry.model, safeEntry.tokensIn, safeEntry.tokensOut);
     }
 
     this.buffer.push(this.createBufferedEntry({
-      ...entry,
+      ...safeEntry,
       totalTokens,
+      ...(failure ? { errorCode: failure.code, errorCategory: failure.category } : {}),
     }));
   }
 
@@ -271,10 +292,7 @@ export class CostTracker {
       for (const entry of items) {
         this.insertStmt.run({
           provider: entry.provider,
-          keyName: entry.keyName,
           model: entry.model,
-          project: entry.project,
-          userId: entry.userId ?? null,
           tokensIn: entry.tokensIn ?? null,
           tokensOut: entry.tokensOut ?? null,
           totalTokens: hasExactSplitUsage(entry)
@@ -283,24 +301,48 @@ export class CostTracker {
           costUsd: entry.costUsd ?? null,
           latencyMs: entry.latencyMs,
           success: entry.success ? 1 : 0,
-          errorMessage: entry.errorMessage ?? null,
+          errorCode: entry.errorCode ?? null,
+          errorCategory: entry.errorCategory ?? null,
         });
       }
     });
 
     try {
+      const retention = this.cleanupRetention();
+      if (retention.outcome !== 'success') {
+        this.buffer.unshift(...entries);
+        logger.error({ code: 'usage_retention_unverified' }, 'Usage retention cleanup is not verified');
+        return;
+      }
       insertMany(entries);
       logger.debug({ count: entries.length }, 'Flushed usage records to SQLite');
     } catch (error) {
       // Re-add entries to buffer on failure so they're not lost
       this.buffer.unshift(...entries);
-      logger.error({ error }, 'Failed to flush usage records');
+      logger.error({ code: 'usage_flush_failed' }, 'Failed to flush usage records');
     }
   }
 
   /** Get the current buffer size (for testing/monitoring). */
   get bufferSize(): number {
     return this.buffer.length;
+  }
+
+  cleanupRetention(beforeTimestamp = Date.now()): RetentionVerification {
+    const cutoff = new Date(beforeTimestamp - 30 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .replace('T', ' ')
+      .replace(/\.\d{3}Z$/, '');
+
+    try {
+      this.db.prepare('DELETE FROM usage_logs WHERE created_at <= ?').run(cutoff);
+      const remaining = this.db
+        .prepare('SELECT COUNT(*) AS count FROM usage_logs WHERE created_at <= ?')
+        .get(cutoff) as { count: number };
+      return verifyRetention(RETENTION_SINKS.USAGE, { expiredRecordsAbsent: remaining.count === 0 });
+    } catch {
+      return verifyRetention(RETENTION_SINKS.USAGE, { deletionFailed: true });
+    }
   }
 
   /**
@@ -314,21 +356,9 @@ export class CostTracker {
       conditions.push('provider = @provider');
       params['provider'] = filters.provider;
     }
-    if (filters.keyName) {
-      conditions.push('key_name = @keyName');
-      params['keyName'] = filters.keyName;
-    }
     if (filters.model) {
       conditions.push('model = @model');
       params['model'] = filters.model;
-    }
-    if (filters.project) {
-      conditions.push('project = @project');
-      params['project'] = filters.project;
-    }
-    if (filters.userId) {
-      conditions.push('user_id = @userId');
-      params['userId'] = filters.userId;
     }
     if (filters.from) {
       conditions.push('created_at >= @from');
@@ -342,7 +372,7 @@ export class CostTracker {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = filters.limit ?? DEFAULT_QUERY_LIMIT;
 
-    const sql = `SELECT id, provider, key_name, model, project, user_id, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_message, created_at FROM usage_logs ${where} ORDER BY created_at DESC LIMIT @limit`;
+    const sql = `SELECT id, provider, model, tokens_in, tokens_out, total_tokens, cost_usd, latency_ms, success, error_code, error_category, created_at FROM usage_logs ${where} ORDER BY created_at DESC LIMIT @limit`;
 
     const rows = this.db.prepare(sql).all({ ...params, limit }) as UsageRow[];
 
@@ -360,21 +390,9 @@ export class CostTracker {
       conditions.push('provider = @provider');
       params['provider'] = filters.provider;
     }
-    if (filters.keyName) {
-      conditions.push('key_name = @keyName');
-      params['keyName'] = filters.keyName;
-    }
     if (filters.model) {
       conditions.push('model = @model');
       params['model'] = filters.model;
-    }
-    if (filters.project) {
-      conditions.push('project = @project');
-      params['project'] = filters.project;
-    }
-    if (filters.userId) {
-      conditions.push('user_id = @userId');
-      params['userId'] = filters.userId;
     }
     if (filters.from) {
       conditions.push('created_at >= @from');
@@ -615,17 +633,19 @@ export class CostTracker {
     return {
       id: row.id,
       provider: row.provider,
-      keyName: row.key_name,
+      keyName: null,
       model: row.model,
-      project: row.project,
-      userId: row.user_id,
+      project: null,
+      userId: null,
       tokensIn: row.tokens_in,
       tokensOut: row.tokens_out,
       totalTokens: row.total_tokens,
       costUsd: row.cost_usd,
       latencyMs: row.latency_ms,
       success: row.success === 1,
-      errorMessage: row.error_message,
+      errorCode: row.error_code,
+      errorCategory: row.error_category,
+      errorMessage: row.error_code ? normalizeTelemetryFailure(row.error_code).compatibilityText : null,
       createdAt: row.created_at,
     };
   }
@@ -653,22 +673,6 @@ export class CostTracker {
       return filters;
     }
 
-    if (query.scope === 'rateLimit') {
-      if (identity.apiKeyId) {
-        filters.keyName = identity.apiKeyId;
-      } else if (identity.userId) {
-        filters.userId = identity.userId;
-      }
-
-      return filters;
-    }
-
-    if (identity.userId) {
-      filters.userId = identity.userId;
-    } else if (identity.apiKeyId) {
-      filters.keyName = identity.apiKeyId;
-    }
-
     return filters;
   }
 
@@ -680,21 +684,9 @@ export class CostTracker {
       conditions.push('provider = @provider');
       params['provider'] = filters.provider;
     }
-    if (filters.keyName) {
-      conditions.push('key_name = @keyName');
-      params['keyName'] = filters.keyName;
-    }
     if (filters.model) {
       conditions.push('model = @model');
       params['model'] = filters.model;
-    }
-    if (filters.project) {
-      conditions.push('project = @project');
-      params['project'] = filters.project;
-    }
-    if (filters.userId) {
-      conditions.push('user_id = @userId');
-      params['userId'] = filters.userId;
     }
     if (filters.from) {
       conditions.push('created_at >= @from');

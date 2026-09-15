@@ -14,7 +14,7 @@ jobs:
   quality:
     name: Typecheck, Test & Build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -38,9 +38,9 @@ jobs:
         run: pnpm run typecheck
 
       - name: Test
-        run: pnpm test
+        run: pnpm run test:ci
         env:
-          # Serving default is 30 min; a hung CLI in CI must not eat the 20m job.
+          # Serving default is 30 min; a hung CLI in CI must not eat the 60m job.
           OPENCODE_GENERATE_TIMEOUT_MS: "15000"
           CLI_GENERATE_TIMEOUT_MS: "15000"
 

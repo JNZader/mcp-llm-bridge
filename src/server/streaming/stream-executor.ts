@@ -175,7 +175,6 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 						model: result.resolvedModel,
 						attempts,
 						totalTokens,
-						responseData: result,
 					});
 					await output.writeFallbackResult(result);
 					await output.writeDone();

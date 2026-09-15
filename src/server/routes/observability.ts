@@ -1,16 +1,31 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 
 import type {
 	AggregatedDataPoint,
 	AnalyticsAggregator,
 	AnalyticsPersistenceReader,
 } from "../../analytics/index.js";
-import { getMetrics, getMetricsContentType, updateProviderAvailability } from "../../core/metrics.js";
+import {
+	getMetrics,
+	getMetricsContentType,
+	MetricsRetentionError,
+	updateProviderAvailability,
+} from "../../core/metrics.js";
 import type { Router } from "../../core/router.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
+import { normalizeTelemetryFailure } from "../../core/telemetry-failure.js";
 import { LogQuerySchema } from "../../logging/schemas.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
+import { getRetentionProvenance, type ExternalRetentionBackend } from "../../telemetry/retention.js";
+import type { ReadbackScopeAuthorizer } from "./usage.js";
 
 const VALID_ANALYTICS_DIMENSIONS = ["total", "hourly", "daily", "channel", "provider", "model"] as const;
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
+const VALIDATION_ERROR_MESSAGE = toSafeHttpError(safeError("INVALID_REQUEST")).body.error;
+const LOG_VALIDATION_FIELDS = [
+	"from", "to", "provider", "model", "correlationId", "status", "minLatencyMs", "limit", "offset",
+] as const;
 
 const ANALYTICS_SOURCES = {
 	LIVE: "live",
@@ -65,68 +80,105 @@ export interface ObservabilityRouteDeps {
 	analyticsAggregator?: AnalyticsAggregator;
 	analyticsReader?: AnalyticsPersistenceReader;
 	requestLogger?: RequestLogger;
+	authorizeReadback?: ReadbackScopeAuthorizer;
+	metricsRetentionBackend?: ExternalRetentionBackend;
 }
 
 export function registerObservabilityRoutes(
 	app: Hono,
 	deps: ObservabilityRouteDeps,
 ): void {
-	const { router, analyticsAggregator, analyticsReader, requestLogger } = deps;
+	const {
+		router,
+		analyticsAggregator,
+		analyticsReader,
+		requestLogger,
+		authorizeReadback,
+		metricsRetentionBackend,
+	} = deps;
 
 	app.get("/v1/logs", async (c) => {
 		try {
+			if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
 			if (!requestLogger) {
 				return c.json({ error: "Request logging not enabled" }, 503);
 			}
 
-			const query = LogQuerySchema.parse(c.req.query());
-			const logs = await requestLogger.getLogs(query);
-			return c.json(logs);
-		} catch (error) {
-			if (error && typeof error === "object" && "issues" in error) {
-				const issues = (
-					error as { issues: Array<{ message: string; path: string[] }> }
-				).issues;
-				const firstIssue = issues[0];
+			const query = LogQuerySchema.safeParse(c.req.query());
+			if (!query.success) {
+				const path = query.error.issues[0]?.path;
+				const field = path?.length === 1
+					? LOG_VALIDATION_FIELDS.find((allowed) => allowed === path[0]) ?? ""
+					: "";
 				return c.json(
-					{
-						error: firstIssue?.message ?? "Validation error",
-						code: "VALIDATION_ERROR",
-						field: firstIssue?.path?.join(".") ?? "",
-					},
+					{ error: VALIDATION_ERROR_MESSAGE, code: "VALIDATION_ERROR", field },
 					400,
 				);
 			}
 
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			const logs = await requestLogger.getLogs(query.data);
+			return c.json({
+				logs: logs.logs.map((log) => ({
+					id: `log_${log.id}`,
+					timestamp: log.timestamp,
+					provider: log.provider,
+					model: log.model,
+					totalTokens: log.totalTokens,
+					inputTokens: log.inputTokens,
+					outputTokens: log.outputTokens,
+					cost: log.cost,
+					latencyMs: log.latencyMs,
+					error: log.error ? normalizeTelemetryFailure(log.error).compatibilityText : undefined,
+					attempts: log.attempts,
+				})),
+				total: logs.total,
+				limit: logs.limit,
+				offset: logs.offset,
+			});
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
 	app.get("/metrics", async (c) => {
-		await updateProviderAvailability(router);
-		const metrics = await getMetrics();
-		return c.text(metrics, 200, { "Content-Type": getMetricsContentType() });
+		if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
+		try {
+			await updateProviderAvailability(router);
+			const metrics = await getMetrics(metricsRetentionBackend);
+			return c.text(metrics, 200, { "Content-Type": getMetricsContentType() });
+		} catch (error) {
+			if (error instanceof MetricsRetentionError) {
+				return c.json({ error: INTERNAL_ERROR_MESSAGE }, 503);
+			}
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
+		}
+	});
+
+	app.get("/v1/retention", (c) => {
+		if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
+		return c.json(getRetentionProvenance());
 	});
 
 	app.get("/v1/analytics", async (c) => {
 		try {
+			if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
 			if (!analyticsAggregator) {
 				return c.json({ error: "Analytics not enabled" }, 503);
 			}
 
-			const dimension = (c.req.query("dimension") ?? "hourly") as AnalyticsDimension;
+			const rawDimension = c.req.query("dimension") ?? "hourly";
+			const dimension = VALID_ANALYTICS_DIMENSIONS.find((allowed) => allowed === rawDimension);
 			const fromStr = c.req.query("from");
 			const toStr = c.req.query("to");
 			const channelId = c.req.query("channelId") || undefined;
 			const provider = c.req.query("provider") || undefined;
 			const model = c.req.query("model") || undefined;
 
-			if (!VALID_ANALYTICS_DIMENSIONS.includes(dimension)) {
+			if (dimension === undefined) {
 				return c.json(
 					{
 						error: "INVALID_PARAMS",
-						message: `Invalid dimension: ${dimension}`,
+						message: rawDimension === "week" ? "Invalid dimension: week" : "Invalid dimension",
 					},
 					400,
 				);
@@ -168,8 +220,8 @@ export function registerObservabilityRoutes(
 				model,
 			});
 			const persistedData =
-				(dimension === "hourly" || dimension === "daily") && analyticsReader
-					? await analyticsReader.query({ dimension, from, to })
+				(dimension === "hourly" || dimension === "daily") && analyticsReader?.queryRetained
+					? await analyticsReader.queryRetained({ dimension, from, to })
 					: [];
 			const data =
 				persistedData.length > 0 || (dimension === "hourly" || dimension === "daily")
@@ -201,10 +253,10 @@ export function registerObservabilityRoutes(
 			const retryRate = totalRequests > 0 ? roundRate(retriedRequests / totalRequests) : 0;
 
 			return c.json({
-				data,
+				data: data.map(projectAnalyticsPoint),
 				dimension,
 				source,
-				flushStatus: analyticsAggregator.getFlushStatus(),
+				flushStatus: projectFlushStatus(analyticsAggregator.getFlushStatus()),
 				summary: {
 					totalRequests,
 					successfulRequests,
@@ -217,9 +269,8 @@ export function registerObservabilityRoutes(
 					retryRate,
 				},
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -227,9 +278,46 @@ export function registerObservabilityRoutes(
 		try {
 			const { compressionStats } = await import("../../context-compression/output-compression.js");
 			return c.json(compressionStats.getSummary());
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
+}
+
+function denied(c: Context) {
+	const safe = toSafeHttpError(safeError("ACCESS_DENIED"));
+	return c.json(safe.body, 403);
+}
+
+function projectAnalyticsPoint(point: AggregatedDataPoint) {
+	return {
+		timestamp: point.timestamp,
+		...(point.provider ? { provider: point.provider } : {}),
+		...(point.model ? { model: point.model } : {}),
+		...(point.channelId ? { channelId: point.channelId } : {}),
+		requests: point.requests,
+		successfulRequests: point.successfulRequests,
+		failedRequests: point.failedRequests,
+		retriedRequests: point.retriedRequests,
+		totalTokens: point.totalTokens,
+		inputTokens: point.inputTokens,
+		outputTokens: point.outputTokens,
+		cost: point.cost,
+		avgLatency: point.avgLatency,
+		...(point.p95Latency === undefined ? {} : { p95Latency: point.p95Latency }),
+		...(point.p99Latency === undefined ? {} : { p99Latency: point.p99Latency }),
+		errorRate: point.errorRate,
+		retryRate: point.retryRate,
+	};
+}
+
+function projectFlushStatus(status: ReturnType<AnalyticsAggregator["getFlushStatus"]>) {
+	return {
+		persistenceEnabled: status.persistenceEnabled,
+		lastFlushAt: status.lastFlushAt,
+		lastFlushSucceededAt: status.lastFlushSucceededAt,
+		lastFlushError: status.lastFlushError,
+		pendingInMemoryBuckets: status.pendingInMemoryBuckets,
+		hasUnflushedData: status.hasUnflushedData,
+	};
 }

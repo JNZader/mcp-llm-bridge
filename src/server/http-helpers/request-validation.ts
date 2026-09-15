@@ -1,4 +1,18 @@
 import type { Context } from "hono";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
+
+const SAFE_VALIDATION_ERROR = toSafeHttpError(safeError("INVALID_REQUEST"));
+const SAFE_VALIDATION_FIELD = {
+	model: true,
+	prompt: true,
+	messages: true,
+	"messages.0.role": true,
+	"messages.0.content": true,
+} as const;
+
+function isSafeValidationField(field: string): boolean {
+	return Object.prototype.hasOwnProperty.call(SAFE_VALIDATION_FIELD, field);
+}
 
 interface ZodIssueLike {
 	message: string;
@@ -20,11 +34,18 @@ export function getValidationIssue(error: unknown): ValidationIssue | undefined 
 	}
 
 	const issues = (error as ZodErrorLike).issues;
+	if (!Array.isArray(issues)) {
+		return undefined;
+	}
 	const firstIssue = issues[0];
+	const path = firstIssue?.path;
+	const field = Array.isArray(path) && path.every((part) => typeof part === "string" || typeof part === "number")
+		? path.join(".")
+		: "";
 
 	return {
-		message: firstIssue?.message ?? "Validation error",
-		field: firstIssue?.path?.join(".") ?? "",
+		message: SAFE_VALIDATION_ERROR.body.error,
+		field: isSafeValidationField(field) ? field : "",
 	};
 }
 
@@ -34,9 +55,9 @@ export function jsonGenerateValidationError(
 ): Response {
 	return c.json(
 		{
-			error: issue.message,
+			error: SAFE_VALIDATION_ERROR.body.error,
 			code: "VALIDATION_ERROR",
-			field: issue.field,
+			field: isSafeValidationField(issue.field) ? issue.field : "",
 		},
 		400,
 	);
@@ -44,15 +65,15 @@ export function jsonGenerateValidationError(
 
 export function jsonChatInvalidRequestError(
 	c: Context,
-	message: string,
+	_message: string,
 	param: string | null | undefined,
 ): Response {
 	return c.json(
 		{
 			error: {
-				message,
+				message: SAFE_VALIDATION_ERROR.body.error,
 				type: "invalid_request_error",
-				param: param ?? undefined,
+				param: param && isSafeValidationField(param) ? param : undefined,
 				code: null,
 			},
 		},

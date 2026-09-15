@@ -20,6 +20,8 @@ import {
   DEFAULT_UPSTREAM_TIMEOUT_MS,
 } from './types.js';
 import { createPriceFetcher } from './fetcher.js';
+import { logger } from '../core/logger.js';
+import { safeOperation } from '../core/safe-operation.js';
 
 // === Database Interface (minimal, to be implemented by consumer) ===
 
@@ -33,6 +35,14 @@ export interface Statement {
   get(...params: unknown[]): unknown | undefined;
 }
 
+const alreadyRunningStatuses = new WeakMap<object, PriceSyncRunStatus>();
+
+// Only constructor-registered identity is recognized; no properties or prototypes are inspected.
+export function getPriceSyncAlreadyRunningStatus(value: unknown): PriceSyncRunStatus | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  return alreadyRunningStatuses.get(value);
+}
+
 export class PriceSyncAlreadyRunningError extends Error {
   readonly status: PriceSyncRunStatus;
 
@@ -40,6 +50,7 @@ export class PriceSyncAlreadyRunningError extends Error {
     super('Price sync already running');
     this.name = 'PriceSyncAlreadyRunningError';
     this.status = status;
+    alreadyRunningStatuses.set(this, status);
   }
 }
 
@@ -364,8 +375,8 @@ export class PriceManager {
         try {
           await this.syncFromUpstream();
         } catch (error) {
-          if (!(error instanceof PriceSyncAlreadyRunningError)) {
-            console.error(error);
+          if (getPriceSyncAlreadyRunningStatus(error) === undefined) {
+            logger.error(safeOperation('failed'), 'Price auto-sync failed.');
           }
         } finally {
           scheduleNext(interval);

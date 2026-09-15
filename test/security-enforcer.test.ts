@@ -288,7 +288,11 @@ describe('ProfileEnforcer.wrapHandlers', () => {
     })) as { content: Array<{ text: string }>; isError: boolean };
 
     assert.equal(blockedResult.isError, true);
-    assert.ok(blockedResult.content[0]!.text.includes('Access denied'));
+    assert.deepEqual(blockedResult, {
+      isError: true,
+      content: [{ type: 'text', text: 'Access is denied.' }],
+    });
+    assert.equal(JSON.stringify(blockedResult).includes('vault_store'), false);
   });
 
   it('allowed tool delegates to handleToolCall', async () => {

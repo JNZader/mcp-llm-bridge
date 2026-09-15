@@ -1,18 +1,60 @@
 import type { Hono } from "hono";
+import type { CompareResponse } from "../../comparison/types.js";
+import { safeError } from "../../core/safe-error.js";
 
 import { CompareRequestSchema } from "../../comparison/schemas.js";
 import type { ComparisonService } from "../../comparison/service.js";
-import { CostExceededError } from "../../comparison/service.js";
+import { getCostExceededDetails } from "../../comparison/service.js";
+import { ComparisonCapability } from "../../security/enforcer.js";
 
 export interface ComparisonRouteDeps {
 	comparisonService?: ComparisonService;
+	capability?: ComparisonCapability;
+}
+
+function projectComparisonResponse(response: CompareResponse) {
+	return {
+		id: response.id,
+		prompt: response.prompt,
+		createdAt: response.createdAt,
+		results: response.results.map((result) => {
+			const diagnostic = Object.getOwnPropertyDescriptor(result, "error");
+			let error: string | null | undefined;
+			if (diagnostic !== undefined) {
+				if ("value" in diagnostic && diagnostic.value === null) error = null;
+				else if (!("value" in diagnostic) || diagnostic.value !== undefined) {
+					error = safeError("INTERNAL_ERROR").message;
+				}
+			}
+			return {
+				model: result.model,
+				provider: result.provider,
+				status: result.status,
+				response: result.response,
+				error,
+				tokensIn: result.tokensIn,
+				tokensOut: result.tokensOut,
+				costUsd: result.costUsd,
+				latencyMs: result.latencyMs,
+				finishReason: result.finishReason,
+				stabilityScore: result.stabilityScore,
+			};
+		}),
+		summary: {
+			fastestModel: response.summary.fastestModel,
+			cheapestModel: response.summary.cheapestModel,
+			totalCost: response.summary.totalCost,
+			wallClockMs: response.summary.wallClockMs,
+		},
+	};
 }
 
 export function registerComparisonRoutes(
 	app: Hono,
 	deps: ComparisonRouteDeps,
 ): void {
-	const { comparisonService } = deps;
+	const { comparisonService, capability } = deps;
+	const effectiveCapability = capability ?? new ComparisonCapability('*');
 
 	if (!comparisonService) {
 		return;
@@ -22,45 +64,38 @@ export function registerComparisonRoutes(
 		try {
 			const body = await c.req.json();
 
-			let validated: ReturnType<typeof CompareRequestSchema.parse>;
-			try {
-				validated = CompareRequestSchema.parse(body);
-			} catch (error) {
-				if (error && typeof error === "object" && "issues" in error) {
-					const issues = (
-						error as { issues: Array<{ message: string; path: string[] }> }
-					).issues;
-					const firstIssue = issues[0];
-					return c.json(
-						{
-							error: firstIssue?.message ?? "Validation error",
-							code: "VALIDATION_ERROR",
-							field: firstIssue?.path?.join(".") ?? "",
-						},
-						400,
-					);
-				}
-
-				throw error;
+			const validated = CompareRequestSchema.safeParse(body);
+			if (!validated.success) {
+				const firstField = validated.error.issues[0]?.path[0];
+				const allowedFields = [
+					"prompt", "system", "models", "maxTokens",
+					"timeoutMs", "maxEstimatedCost", "persist", "project",
+				];
+				const field = typeof firstField === "string" && allowedFields.includes(firstField)
+					? firstField : "";
+				return c.json(
+					{ error: safeError("INVALID_REQUEST").message, code: "VALIDATION_ERROR", field },
+					400,
+				);
 			}
 
-			const result = await comparisonService.compare(validated);
-			return c.json(result);
+			const result = await comparisonService.compare(validated.data, effectiveCapability);
+			return c.json(projectComparisonResponse(result));
 		} catch (error) {
-			if (error instanceof CostExceededError) {
+			const budget = getCostExceededDetails(error);
+			if (budget !== undefined) {
 				return c.json(
 					{
-						error: error.message,
+						error: "Estimated cost exceeds the configured limit.",
 						code: "COST_EXCEEDED",
-						estimatedCost: error.estimatedCost,
-						limit: error.limit,
+						estimatedCost: budget.estimatedCost,
+						limit: budget.limit,
 					},
 					422,
 				);
 			}
 
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -79,11 +114,10 @@ export function registerComparisonRoutes(
 				project,
 				limit,
 				offset,
-			});
-			return c.json({ results, count: results.length });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+			}, effectiveCapability);
+			return c.json({ results: results.map(projectComparisonResponse), count: results.length });
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }

@@ -3,7 +3,6 @@ import type Database from "better-sqlite3";
 import type { Context, Next } from "hono";
 import { Hono } from "hono";
 import { compress } from "hono/compress";
-import { cors } from "hono/cors";
 
 import { SQLiteAnalyticsReader, type AnalyticsAggregator } from "../analytics/index.js";
 import type { ApprovalStore } from "../approval/index.js";
@@ -28,6 +27,7 @@ import { securityProfileMiddleware } from "../security/enforcer.js";
 import type { SessionManager } from "../session/index.js";
 import type { Vault } from "../vault/vault.js";
 import { registerAdminRoutes } from "./admin.js";
+import type { AdminDiscoveryServices } from "./routes/admin/discovery.js";
 import { hasStaticBearerToken, parseBearerToken, tokenEquals } from "./auth-helpers/bearer.js";
 import { RateLimiter } from "./rate-limit.js";
 import { registerApprovalRoutes } from "./routes/approvals.js";
@@ -40,9 +40,11 @@ import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerObservabilityRoutes } from "./routes/observability.js";
 import { registerPublicRoutes } from "./routes/public.js";
 import { registerStorageRoutes } from "./routes/storage.js";
-import { registerToolingRoutes } from "./routes/tooling.js";
+import { registerToolingRoutes, type ToolingRouteDeps } from "./routes/tooling.js";
 import { registerUsageRoutes } from "./routes/usage.js";
 import { normalizeMetricsPath } from "./http-helpers/metrics-path.js";
+import { createClientIpResolver, type ClientIpResolver } from "./http-helpers/client-ip.js";
+import { createCorsPolicy } from "./http-helpers/cors-policy.js";
 
 /** Header name for request correlation ID. */
 export const CORRELATION_ID_HEADER = "X-Correlation-ID";
@@ -63,6 +65,8 @@ export interface CreateHttpAppDeps {
 	approvalStore?: ApprovalStore;
 	sessionManager?: SessionManager;
 	requestLogger?: RequestLogger;
+	toolingRouteDeps?: ToolingRouteDeps;
+	adminDiscoveryServices?: AdminDiscoveryServices;
 }
 
 /**
@@ -126,35 +130,18 @@ export function bearerAuth(config: GatewayConfig) {
 	};
 }
 
-async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
+export async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
 	const contentLength = c.req.header("content-length");
-	if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+	if (contentLength && !/^\d+$/.test(contentLength)) {
+		return c.json({ error: "The request is invalid.", code: "VALIDATION_ERROR" }, 400);
+	}
+	if (contentLength && Number(contentLength) > MAX_BODY_SIZE) {
 		return c.json(
 			{ error: "Payload too large", code: "PAYLOAD_TOO_LARGE" },
 			413,
 		);
 	}
 	await next();
-}
-
-function getClientIp(c: Context): string {
-	const trustedProxies = getTrustedProxyIps();
-
-	if (!trustedProxies) {
-		return c.req.header("x-real-ip") ?? "unknown";
-	}
-
-	const directIp = c.req.header("x-real-ip") ?? "unknown";
-
-	if (trustedProxies.has(directIp)) {
-		const forwarded = c.req.header("x-forwarded-for");
-		if (forwarded) {
-			const firstIp = forwarded.split(",")[0];
-			return firstIp?.trim() ?? directIp;
-		}
-	}
-
-	return directIp;
 }
 
 async function requestTimeout(
@@ -193,27 +180,28 @@ async function correlationId(c: Context, next: Next): Promise<void> {
 	await next();
 }
 
-function rateLimitMiddleware(limiter: RateLimiter) {
-	return async (c: Context, next: Next): Promise<void> => {
+export function rateLimitMiddleware(
+	limiter: RateLimiter,
+	resolveClientIp: ClientIpResolver = createClientIpResolver(getTrustedProxyIps()),
+) {
+	return async (c: Context, next: Next): Promise<Response | void> => {
 		if (c.req.method === "GET" && c.req.path === "/health") {
 			return next();
 		}
 
-		const ip = getClientIp(c);
+		const ip = resolveClientIp(c);
 
 		if (limiter.isRateLimited(ip)) {
 			const resetAt = limiter.getResetAt(ip);
-			const retryAfter = Math.ceil((resetAt - Date.now()) / 1000);
+			const retryAfter = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000));
 			c.header("Retry-After", String(retryAfter));
 			c.header("X-RateLimit-Remaining", "0");
-			c.header("X-RateLimit-Reset", String(Math.floor(resetAt / 1000)));
-			c.status(429);
-			c.json({
+			c.header("X-RateLimit-Reset", String(Math.max(0, Math.floor(resetAt / 1000))));
+			return c.json({
 				error: "Too many requests",
 				code: "RATE_LIMITED",
 				retryAfter,
-			});
-			return;
+			}, 429);
 		}
 
 		c.header("X-RateLimit-Remaining", String(limiter.getRemaining(ip)));
@@ -254,6 +242,8 @@ function registerHttpRoutes(app: Hono, deps: CreateHttpAppDeps): void {
 		approvalStore,
 		sessionManager,
 		requestLogger,
+		toolingRouteDeps,
+		adminDiscoveryServices,
 	} = deps;
 	const analyticsReader = db ? new SQLiteAnalyticsReader(db) : undefined;
 
@@ -271,7 +261,7 @@ function registerHttpRoutes(app: Hono, deps: CreateHttpAppDeps): void {
 		requestLogger,
 	});
 	registerComparisonRoutes(app, { comparisonService });
-	registerToolingRoutes(app);
+	registerToolingRoutes(app, toolingRouteDeps);
 	registerStorageRoutes(app, { vault });
 	registerExecutionRoutes(app, {
 		router,
@@ -304,6 +294,7 @@ function registerHttpRoutes(app: Hono, deps: CreateHttpAppDeps): void {
 		freeModelRouter,
 		db,
 		sessionManager,
+		adminDiscoveryServices,
 	});
 }
 
@@ -317,25 +308,15 @@ export function createHttpApp(deps: CreateHttpAppDeps): Hono {
 
 	const app = new Hono();
 	const rateLimiter = new RateLimiter();
+	const resolveClientIp = createClientIpResolver(getTrustedProxyIps());
 
 	app.use(compress());
 	app.use("*", httpMetrics);
 	app.use(requestTimeout);
 	app.use(correlationId);
-	app.use("*", rateLimitMiddleware(rateLimiter));
+	app.use("*", createCorsPolicy(getCorsOrigins()));
+	app.use("*", rateLimitMiddleware(rateLimiter, resolveClientIp));
 	app.use("*", bodySizeLimit);
-
-	const corsOrigins = getCorsOrigins();
-	app.use(
-		"*",
-		cors({
-			origin: corsOrigins === "*" ? "*" : corsOrigins,
-			allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-			allowHeaders: ["Content-Type", "Authorization", "X-Project", "x-api-key"],
-			exposeHeaders: ["Content-Length"],
-			maxAge: 86400,
-		}),
-	);
 
 	const multiTenantDb = isMultiTenantEnabled() ? db : undefined;
 

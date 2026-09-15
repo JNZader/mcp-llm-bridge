@@ -64,6 +64,11 @@ export class SQLiteAnalyticsReader implements AnalyticsPersistenceReader {
 		return rows.map((row) => this.toDataPoint(row));
 	}
 
+	queryRetained(query: DurableAnalyticsQuery, now = Date.now()): AggregatedDataPoint[] {
+		const cutoff = now - 30 * 24 * 60 * 60 * 1000;
+    return this.query({ ...query, from: Math.max(query.from ?? cutoff + 1, cutoff + 1) });
+	}
+
 	private getTableConfig(dimension: DurableAnalyticsQuery["dimension"]): {
 		tableName: "analytics_hourly" | "analytics_daily";
 		timestampColumn: "hour" | "day";

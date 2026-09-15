@@ -1,3 +1,4 @@
+import { safeOperation, safeOperationError } from "../../core/safe-operation.js";
 import type { GenerateRequest as ValidatedGenerateRequest } from "../../core/schemas.js";
 import type { GenerateResponse } from "../../core/types.js";
 import { GENERATE_COMPLETE_STOP } from "../../core/types.js";
@@ -61,7 +62,6 @@ export async function executeGenerateRequest(
 				model: result.resolvedModel,
 				totalTokens: result.tokensUsed,
 				attempts: resolveAttemptsFromRouting(result),
-				responseData: JSON.stringify(result),
 			});
 		}
 
@@ -70,7 +70,7 @@ export async function executeGenerateRequest(
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
 				attempts: 1,
-				error: error instanceof Error ? error : new Error(String(error)),
+				error: safeOperationError(safeOperation("failed")),
 			});
 		}
 

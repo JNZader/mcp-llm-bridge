@@ -21,6 +21,7 @@ import { PageIndexTools } from '../pageindex/tools.js';
 import { TOOLS } from './mcp-tool-registry.js';
 import {
   dynamicToolAdapter,
+  getDynamicPluginDiagnostics,
   getDynamicPluginLoadSummary,
   getRuntimeMcpTools,
   type StartMcpServerOptions,
@@ -31,7 +32,8 @@ import { dispatchToolCall } from './mcp-dispatcher.js';
 /** Compression threshold in characters. Outputs exceeding this are compressed. */
 const COMPRESSION_THRESHOLD = 1000;
 
-export { TOOLS, dynamicToolAdapter, getDynamicPluginLoadSummary, getRuntimeMcpTools };
+export { TOOLS, dynamicToolAdapter, getDynamicPluginDiagnostics, getDynamicPluginLoadSummary, getRuntimeMcpTools };
+export type { DynamicPluginDiagnosticCount, DynamicPluginDiagnostics } from './plugin-diagnostics.js';
 
 export type StartMcpServerDeps = Omit<StartMcpServerOptions, 'handleToolCall'>;
 

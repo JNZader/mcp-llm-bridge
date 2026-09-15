@@ -13,16 +13,53 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { RateLimiter } from '../server/rate-limit.js';
 import { logger } from '../core/logger.js';
+import { safeError } from '../core/safe-error.js';
+import { safeOperation } from '../core/safe-operation.js';
 import type { TrustLevel } from '../core/types.js';
 import type { ToolSecurityMetadata } from '../mcp-builder/index.js';
 import {
   PROFILES,
   TOOL_CATEGORIES,
+  ToolCategorySchema,
+  TrustLevelSchema,
   type SecurityProfile,
   type ToolCategory,
   type ProfileResolver,
 } from './profiles.js';
 import { ROUTE_CATEGORIES, isAdminRoute } from './http-categories.js';
+
+const COMPARISON_OPERATIONS = {
+  persist: 'persist', read: 'read', export: 'export', purge: 'purge',
+} as const;
+type ComparisonOperation = keyof typeof COMPARISON_OPERATIONS;
+export interface ComparisonAuditEvent { operation: ComparisonOperation; outcome: 'allowed' | 'denied'; }
+export type ComparisonAudit = (event: ComparisonAuditEvent) => void;
+
+/** An opaque, admin-issued grant for one comparison scope. */
+export class ComparisonCapability {
+  constructor(private readonly scope: string, private readonly audit?: ComparisonAudit) {}
+  authorize(operation: ComparisonOperation, requestedScope?: string): string | undefined {
+    const allowed = requestedScope === undefined || this.scope === '*' || requestedScope === this.scope;
+    this.audit?.({ operation, outcome: allowed ? 'allowed' : 'denied' });
+    return allowed ? (requestedScope ?? this.scope) : undefined;
+  }
+}
+
+const LOG_HTTP_METHODS = new Set([
+  'GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'CONNECT', 'TRACE',
+]);
+
+/** Project only finite metadata; never retain a tool name or request path. */
+function deniedLogMetadata(profile: unknown, category?: unknown, method?: unknown) {
+  const knownProfile = TrustLevelSchema.options.find((value) => value === profile);
+  const knownCategory = ToolCategorySchema.options.find((value) => value === category);
+  return {
+    ...safeOperation('denied'),
+    ...(knownProfile === undefined ? {} : { profile: knownProfile }),
+    ...(knownCategory === undefined ? {} : { category: knownCategory }),
+    ...(typeof method === 'string' && LOG_HTTP_METHODS.has(method) ? { method } : {}),
+  };
+}
 
 /** Minimal tool definition shape matching the TOOLS array in mcp.ts. */
 interface ToolDef {
@@ -150,7 +187,7 @@ export class ProfileEnforcer {
       if (!category) {
         // Unknown tools are blocked by default (safe-by-default)
         logger.warn(
-          { tool: tool.name, profile: this.profile.level },
+          deniedLogMetadata(this.profile.level),
           'Tool not found in TOOL_CATEGORIES — blocked by default',
         );
         return false;
@@ -168,17 +205,23 @@ export class ProfileEnforcer {
 
     if (!category || !this.allowedCategories.has(category)) {
       logger.warn(
-        {
-          tool: toolName,
-          category: category ?? 'unknown',
-          profile: this.profile.level,
-        },
+        deniedLogMetadata(this.profile.level, category),
         'Tool call denied by security profile',
       );
       return false;
     }
 
     return true;
+  }
+
+  /** Issue a comparison-only grant; ordinary telemetry access cannot create one. */
+  issueComparisonCapability(scope: string, audit?: ComparisonAudit): ComparisonCapability | undefined {
+    if (!scope || !this.allowedCategories.has('admin')) {
+      audit?.({ operation: 'read', outcome: 'denied' });
+      return undefined;
+    }
+    audit?.({ operation: 'read', outcome: 'allowed' });
+    return new ComparisonCapability(scope, audit);
   }
 
   /**
@@ -230,7 +273,7 @@ export class ProfileEnforcer {
           content: [
             {
               type: 'text' as const,
-              text: `Access denied: tool "${name}" is not allowed under the "${this.profile.level}" security profile.`,
+              text: safeError('ACCESS_DENIED').message,
             },
           ],
           isError: true,
@@ -244,7 +287,7 @@ export class ProfileEnforcer {
           content: [
             {
               type: 'text' as const,
-              text: `Rate limit exceeded for "${this.profile.level}" profile. Try again in ${Math.ceil((rateResult.retryAfter ?? 0) / 1000)} seconds.`,
+              text: 'Rate limit exceeded.',
             },
           ],
           isError: true,
@@ -309,7 +352,7 @@ export function securityProfileMiddleware(
     if (!category) {
       // Unknown route — blocked by default (safe-by-default)
       logger.warn(
-        { path, method, profile },
+        deniedLogMetadata(profile, undefined, method),
         'Route not found in ROUTE_CATEGORIES — blocked by default',
       );
       return c.json(

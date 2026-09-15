@@ -11,6 +11,8 @@
 
 import { randomUUID } from "node:crypto";
 
+import { safeOperation, safeOperationError } from "../../core/safe-operation.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
 import type { InternalLLMResponse } from "../../core/internal-model.js";
 import type { Router } from "../../core/router.js";
@@ -150,7 +152,6 @@ export async function executeNonStreamingMessages(
 				inputTokens: result.usage.inputTokens,
 				outputTokens: result.usage.outputTokens,
 				attempts: 1,
-				responseData: JSON.stringify(result),
 			});
 		}
 
@@ -159,7 +160,7 @@ export async function executeNonStreamingMessages(
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
 				attempts: 1,
-				error: error instanceof Error ? error : new Error(String(error)),
+				error: safeOperationError(safeOperation("failed")),
 			});
 		}
 		throw error;
@@ -172,10 +173,6 @@ function readMetadataString(
 ): string | undefined {
 	const value = metadata?.[key];
 	return typeof value === "string" ? value : undefined;
-}
-
-function toError(error: unknown): Error {
-	return error instanceof Error ? error : new Error(String(error));
 }
 
 async function* toAsyncIterable<T>(items: readonly T[]): AsyncGenerator<T> {
@@ -275,7 +272,7 @@ export async function* executeStreamingMessages(
 			result = await router.generateFromInternal(prepared.internalRequest);
 		} catch (error) {
 			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, { attempts, error: toError(error) });
+				await requestLogger.captureEnd(logCtx, { attempts, error: safeOperationError(safeOperation("failed")) });
 			}
 			throw error;
 		}
@@ -347,7 +344,7 @@ export async function* executeStreamingMessages(
 					success: false,
 					attempt: attempts,
 					project: scope?.project,
-					errorMessage: toError(error).message,
+					errorMessage: safeOperationError(safeOperation("failed")).message,
 				});
 			}
 		}
@@ -355,7 +352,7 @@ export async function* executeStreamingMessages(
 		if (!opened) {
 			const error = lastError ?? new Error("No streaming providers available");
 			if (logCtx && requestLogger) {
-				await requestLogger.captureEnd(logCtx, { attempts, error: toError(error) });
+				await requestLogger.captureEnd(logCtx, { attempts, error: safeOperationError(safeOperation("failed")) });
 			}
 			throw error;
 		}
@@ -471,13 +468,13 @@ export async function* executeStreamingMessages(
 			if (chunk.done) break;
 			current = await chunkIterator.next();
 		}
-	} catch (error) {
+	} catch {
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
 				provider: resolvedProvider,
 				model: finalModel,
 				attempts,
-				error: toError(error),
+				error: safeOperationError(safeOperation("failed")),
 			});
 		}
 		yield* closeTextBlockIfNeeded();
@@ -485,7 +482,7 @@ export async function* executeStreamingMessages(
 			event: "error",
 			data: {
 				type: "error",
-				error: { type: "api_error", message: toError(error).message },
+				error: { type: "api_error", message: toSafeHttpError(safeError("INTERNAL_ERROR")).body.error },
 			},
 		};
 		return;

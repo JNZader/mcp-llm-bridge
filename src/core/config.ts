@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { GatewayConfig } from './types.js';
+import type { AdminAuthConfig, GatewayConfig } from './types.js';
 import {
   DEFAULT_DB_FILENAME,
   DEFAULT_HTTP_PORT,
@@ -149,5 +149,34 @@ export function loadConfig(): GatewayConfig {
 
   const securityProfile = rawProfile as TrustLevel;
 
-  return { masterKey, dbPath, httpPort, authToken, securityProfile };
+  const configuredAdminToken = process.env['ADMIN_TOKEN'];
+  let adminStaticToken = authToken;
+  if (configuredAdminToken !== undefined) {
+    adminStaticToken = configuredAdminToken.trim();
+    if (adminStaticToken.length < MIN_AUTH_TOKEN_LENGTH) {
+      throw new Error(
+        `ADMIN_TOKEN must be at least ${MIN_AUTH_TOKEN_LENGTH} characters when configured. Got ${adminStaticToken.length}.`,
+      );
+    }
+  }
+
+  const githubClientId = process.env['GITHUB_CLIENT_ID'];
+  const githubClientSecret = process.env['GITHUB_CLIENT_SECRET'];
+  const githubAllowedUsers = process.env['GITHUB_ALLOWED_USERS'];
+  const adminAuth: AdminAuthConfig = {
+    ...(adminStaticToken ? { staticToken: adminStaticToken } : {}),
+    ...(
+      githubClientId !== undefined || githubClientSecret !== undefined || githubAllowedUsers !== undefined
+        ? {
+            githubOAuth: {
+              clientId: githubClientId?.trim() ?? '',
+              clientSecret: githubClientSecret?.trim() ?? '',
+              allowedUsers: (githubAllowedUsers ?? '').split(',').map((user) => user.trim()).filter(Boolean),
+            },
+          }
+        : {}
+    ),
+  };
+
+  return { masterKey, dbPath, httpPort, authToken, adminAuth, securityProfile };
 }

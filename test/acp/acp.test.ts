@@ -643,7 +643,11 @@ describe('AcpServer', () => {
       const task = (getResponse.result as { task: AcpTask }).task;
       assert.equal(task.status, 'failed');
       assert.ok(task.error);
-      assert.ok(task.error!.message.includes('LLM is down'));
+      assert.deepEqual(task.error, {
+        code: 'EXECUTION_ERROR',
+        message: 'An unexpected internal error occurred.',
+      });
+      assert.equal(JSON.stringify(getResponse).includes('LLM is down'), false);
     });
   });
 

@@ -71,6 +71,11 @@ import { optimizeMessagesEnabled } from './runtime-flags.js';
 import { logger } from './logger.js';
 import { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 import { normalizeProviderId } from './provider-aliases.js';
+import {
+  PROVIDER_REGISTRY_ERROR_CODE,
+  ProviderRegistryError,
+  validateProviderRegistry,
+} from './provider-registry.js';
 
 export interface ResolvedStreamingProvider {
   provider: LLMProvider;
@@ -158,6 +163,7 @@ function normalizeInternalRequestProvider(request: InternalLLMRequest): Internal
 
 export class Router {
   private _providers: LLMProvider[] = [];
+  private _providerRegistryFrozen = false;
   private _transformerRegistry: TransformerRegistry | null = null;
   private _groupStore: GroupStore | null = null;
   private _sessionManager: SessionManager | null = null;
@@ -264,9 +270,22 @@ export class Router {
     return this._modelRouter;
   }
 
-  /** Return all registered providers. */
+  /** Return a snapshot of all registered providers. */
   get providers(): LLMProvider[] {
-    return this._providers;
+    return [...this._providers];
+  }
+
+  get providerRegistryFrozen(): boolean {
+    return this._providerRegistryFrozen;
+  }
+
+  freezeProviderRegistry(): void {
+    if (this._providerRegistryFrozen) {
+      return;
+    }
+
+    validateProviderRegistry(this._providers);
+    this._providerRegistryFrozen = true;
   }
 
   private getTelemetryContext(): RouterTelemetryContext {
@@ -279,7 +298,22 @@ export class Router {
 
   /** Register a provider adapter with the router. */
   register(provider: LLMProvider): void {
+    this.assertProviderRegistryMutable();
     this._providers.push(provider);
+  }
+
+  unregister(providerId: string): void {
+    this.assertProviderRegistryMutable();
+    const providerIndex = this._providers.findIndex((provider) => provider.id === providerId);
+    if (providerIndex >= 0) {
+      this._providers.splice(providerIndex, 1);
+    }
+  }
+
+  private assertProviderRegistryMutable(): void {
+    if (this._providerRegistryFrozen) {
+      throw new ProviderRegistryError(PROVIDER_REGISTRY_ERROR_CODE.FROZEN);
+    }
   }
 
   private canUseInternalGenerateCompatibilityPath(): boolean {

@@ -11,8 +11,15 @@ import Database from 'better-sqlite3';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { fileURLToPath } from 'url';
+import { logger } from '../core/logger.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+function migrationLogMetadata(version: unknown) {
+  return typeof version === 'number' && Number.isSafeInteger(version) && version >= 0
+    ? { version }
+    : {};
+}
 
 /**
  * Resolve the migrations directory across both runtime layouts:
@@ -181,7 +188,7 @@ export class MigrationRunner {
     }
 
     if (this.isMigrationApplied(version)) {
-      console.error(`Migration ${version} already applied, skipping`);
+      logger.error(migrationLogMetadata(version), 'Migration already applied; skipping.');
       return;
     }
 
@@ -193,14 +200,15 @@ export class MigrationRunner {
 
     try {
       transaction();
-      console.error(`Applied migration ${version}: ${migration.name}`);
+      logger.error(migrationLogMetadata(version), 'Migration applied.');
     } catch (err) {
       if (this.isAlreadyAppliedError(err)) {
         // Schema objects already exist but the ledger lost track of them.
         // Reconcile the ledger (its own committed statement) and move on.
         this.recordMigration(migration);
-        console.error(
-          `Migration ${version} objects already exist; reconciled ledger: ${migration.name}`
+        logger.error(
+          migrationLogMetadata(version),
+          'Migration objects already exist; ledger reconciled.',
         );
         return;
       }
@@ -239,7 +247,7 @@ export class MigrationRunner {
     }
 
     if (!this.isMigrationApplied(version)) {
-      console.error(`Migration ${version} not applied, skipping rollback`);
+      logger.error(migrationLogMetadata(version), 'Migration not applied; skipping rollback.');
       return;
     }
 
@@ -250,7 +258,7 @@ export class MigrationRunner {
 
     transaction();
     
-    console.error(`Rolled back migration ${version}: ${migration.name}`);
+    logger.error(migrationLogMetadata(version), 'Migration rolled back.');
   }
 
   /**

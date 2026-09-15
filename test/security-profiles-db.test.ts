@@ -379,7 +379,11 @@ describe('Admin Profile CRUD Routes', () => {
 
     assert.equal(res.status, 404);
     const body = await res.json();
-    assert.ok(body.error.includes('No profile found'));
+    assert.deepEqual(body, {
+      error: 'The requested resource was not found.',
+      code: 'NOT_FOUND',
+    });
+    assert.equal(JSON.stringify(body).includes('ghost-project'), false);
   });
 
   it('profile is immediately active after creation', async () => {

@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * HTTP middleware tests — body size limit, timeout, auth, and CORS.
  *
@@ -15,7 +16,7 @@ import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
-import { createAllAdapters } from '../src/adapters/index.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
 
 // ── Shared setup — server WITH auth token ───────────────────
 
@@ -31,15 +32,13 @@ const config: GatewayConfig = {
 const vault = new Vault(config);
 const router = new Router();
 
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
+router.register(new StubAdapter());
 
 let server: http.Server;
 let port = 0;
 
 before(async () => {
-  server = startHttpServer({ router, vault, config }) as unknown as http.Server;
+  server = startHttpServer({ router: freezeRouterForStartup(router), vault, config }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();

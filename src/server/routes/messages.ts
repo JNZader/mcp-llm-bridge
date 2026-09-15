@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import type { Router } from "../../core/router.js";
 import { TransformError } from "../../core/transformer.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
@@ -13,6 +14,8 @@ import {
 	prepareMessagesRequest,
 } from "../execution/messages-service.js";
 import { resolveRequestScope, type RequestScope } from "../http-helpers/request-scope.js";
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
 
 export interface MessagesRouteDeps {
 	router: Router;
@@ -68,13 +71,12 @@ async function handleStreamingMessages(
 	let first: IteratorResult<AnthropicSSEEvent>;
 	try {
 		first = await generator.next();
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return jsonAnthropicError(c, 500, "api_error", message);
+	} catch {
+		return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 	}
 
 	if (first.done) {
-		return jsonAnthropicError(c, 500, "api_error", "Streaming produced no events");
+		return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 	}
 
 	const firstEvent = first.value;
@@ -86,14 +88,13 @@ async function handleStreamingMessages(
 			let next: IteratorResult<AnthropicSSEEvent>;
 			try {
 				next = await generator.next();
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+			} catch {
 				try {
 					await stream.writeSSE({
 						event: "error",
 						data: JSON.stringify({
 							type: "error",
-							error: { type: "api_error", message },
+							error: { type: "api_error", message: INTERNAL_ERROR_MESSAGE },
 						}),
 					});
 				} catch {
@@ -142,11 +143,18 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesRouteDeps): void
 		try {
 			prepared = prepareMessagesRequest(bodyRecord, scope);
 		} catch (error) {
-			if (error instanceof TransformError) {
-				return jsonAnthropicError(c, 400, "invalid_request_error", error.message);
+			let invalidRequest = false;
+			try {
+				// Only local preparation failures can be classified as client validation.
+				invalidRequest = error instanceof TransformError;
+			} catch {
+				// A hostile prototype trap is an unknown operational failure.
 			}
-			const message = error instanceof Error ? error.message : String(error);
-			return jsonAnthropicError(c, 400, "invalid_request_error", message);
+			if (invalidRequest) {
+				const message = toSafeHttpError(safeError("INVALID_REQUEST")).body.error;
+				return jsonAnthropicError(c, 400, "invalid_request_error", message);
+			}
+			return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 		}
 
 		if (bodyRecord["stream"] === true) {
@@ -160,9 +168,8 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesRouteDeps): void
 				requestLogger,
 			});
 			return c.json(response);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return jsonAnthropicError(c, 500, "api_error", message);
+		} catch {
+			return jsonAnthropicError(c, 500, "api_error", INTERNAL_ERROR_MESSAGE);
 		}
 	});
 }

@@ -1,3 +1,6 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
+import { safeError } from "../src/core/safe-error.js";
+
 /**
  * HTTP Analytics API endpoint tests — GET /v1/analytics
  *
@@ -182,6 +185,19 @@ function seedTestAnalytics(): void {
   }
 }
 
+function assertSafeStreamFailure(raw: string, privateMessage: string) {
+  const data = raw.split("\n").filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim());
+  assert.deepEqual(JSON.parse(data.at(-2)!), {
+    error: { message: safeError("INTERNAL_ERROR").message, type: "server_error", code: null },
+  });
+  assert.equal(data.at(-1), "[DONE]");
+  assert.equal(data.filter((value) => value === "[DONE]").length, 1);
+  assert.equal(data.filter((value) => value !== "[DONE]" && JSON.parse(value).error).length, 1);
+  assert.equal(raw.includes(privateMessage), false);
+}
+
+
 describe('GET /v1/analytics', () => {
   before(async () => {
     // Create AnalyticsAggregator
@@ -193,7 +209,7 @@ describe('GET /v1/analytics', () => {
     seedTestAnalytics();
 
     server = startHttpServer({
-      router,
+      router: freezeRouterForStartup(router),
       vault,
       config,
       analyticsAggregator,
@@ -548,7 +564,7 @@ describe('GET /v1/analytics', () => {
       });
 
       const testServer = startHttpServer({
-        router: freshRouter,
+        router: freezeRouterForStartup(freshRouter),
         vault,
         config: { ...config, httpPort: 0 },
         analyticsAggregator: freshAggregator,
@@ -612,7 +628,7 @@ describe('GET /v1/analytics', () => {
       });
 
       const testServer = startHttpServer({
-        router: freshRouter,
+        router: freezeRouterForStartup(freshRouter),
         vault,
         config: { ...config, httpPort: 0 },
         analyticsAggregator: freshAggregator,
@@ -640,7 +656,7 @@ describe('GET /v1/analytics', () => {
         });
 
         assert.equal(res.status, 200);
-        assert.match(res.data, /stream failed/);
+        assertSafeStreamFailure(res.data, "stream failed");
         assert.match(res.data, /data: \[DONE\]/);
 
         const total = freshAggregator.query({ dimension: 'total' })[0];
@@ -799,7 +815,7 @@ describe('GET /v1/analytics', () => {
 			});
 
 			const testServer = startHttpServer({
-				router,
+				router: freezeRouterForStartup(router),
 				vault,
 				config: { ...config, httpPort: 0 },
 				analyticsAggregator: freshAggregator,
@@ -841,7 +857,7 @@ describe('GET /v1/analytics', () => {
       const freshAggregator = new AnalyticsAggregator();
 
       const testServer = startHttpServer({
-        router,
+        router: freezeRouterForStartup(router),
         vault,
         config: { ...config, httpPort: 0 },
         analyticsAggregator: freshAggregator,
@@ -932,8 +948,8 @@ describe('GET /v1/analytics', () => {
 			const writer = new SQLiteAnalyticsWriter(db);
 			const reader = new SQLiteAnalyticsReader(db);
 			const liveAggregator = new AnalyticsAggregator();
-			const persistedTimestamp = Date.UTC(2026, 0, 10, 10, 15, 0);
-			const liveTimestamp = Date.UTC(2026, 0, 11, 11, 20, 0);
+			const persistedTimestamp = Date.UTC(2026, 8, 10, 10, 15, 0);
+			const liveTimestamp = Date.UTC(2026, 8, 11, 11, 20, 0);
 
 			await writer.upsert({
 				flushedAt: Date.now(),
@@ -1057,8 +1073,8 @@ describe('GET /v1/analytics', () => {
 				persistenceWriter: new SQLiteAnalyticsWriter(firstRunner.getDatabase()),
 				flushIntervalMs: 10_000,
 			});
-			const firstTimestamp = Date.UTC(2026, 0, 10, 15, 5, 0);
-			const secondTimestamp = Date.UTC(2026, 0, 10, 15, 25, 0);
+			const firstTimestamp = Date.UTC(2026, 8, 10, 15, 5, 0);
+			const secondTimestamp = Date.UTC(2026, 8, 10, 15, 25, 0);
 
 			persistentAggregator.record('openai', 'gpt-4o', {
 				inputTokens: 120,
@@ -1161,7 +1177,7 @@ describe('GET /v1/analytics', () => {
 				const writer = new SQLiteAnalyticsWriter(db);
 				const reader = new SQLiteAnalyticsReader(db);
 				const liveAggregator = new AnalyticsAggregator();
-				const timestamp = Date.UTC(2026, 0, 10, 15, 5, 0);
+				const timestamp = Date.UTC(2026, 8, 10, 15, 5, 0);
 
 				await writer.upsert({
 					flushedAt: Date.now(),
@@ -1276,9 +1292,9 @@ describe('GET /v1/analytics', () => {
 					flushedAt: Date.now(),
 					hourly: [
 						{
-							timestamp: Date.UTC(2026, 0, 10, 15, 0, 0),
+							timestamp: Date.UTC(2026, 8, 10, 15, 0, 0),
 							data: {
-								timestamp: Date.UTC(2026, 0, 10, 15, 0, 0),
+								timestamp: Date.UTC(2026, 8, 10, 15, 0, 0),
 								requests: 4,
 								successfulRequests: 4,
 								failedRequests: 0,
@@ -1295,9 +1311,9 @@ describe('GET /v1/analytics', () => {
 					],
 					daily: [
 						{
-							timestamp: Date.UTC(2026, 0, 10, 0, 0, 0),
+							timestamp: Date.UTC(2026, 8, 10, 0, 0, 0),
 							data: {
-								timestamp: Date.UTC(2026, 0, 10, 0, 0, 0),
+								timestamp: Date.UTC(2026, 8, 10, 0, 0, 0),
 								requests: 4,
 								successfulRequests: 4,
 								failedRequests: 0,

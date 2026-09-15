@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * HTTP local LLM endpoint tests — verify /v1/local/models.
  */
@@ -18,6 +19,8 @@ import { createAllAdapters } from '../src/adapters/index.js';
 
 const AUTH_TOKEN = 'test-auth-token-' + randomBytes(16).toString('hex');
 const dbPath = `/tmp/test-http-local-llm-${Date.now()}.db`;
+const SAFE_INTERNAL_ERROR = 'An unexpected internal error occurred.';
+const RAW_DISABLED_DIAGNOSTIC = 'Detection skipped because local LLM is disabled';
 
 const config: GatewayConfig = {
   masterKey: randomBytes(32),
@@ -35,9 +38,10 @@ for (const adapter of createAllAdapters(vault)) {
 
 let server: http.Server;
 let port = 0;
+let previousLocalLlmEnabled: string | undefined;
 
 before(async () => {
-  server = startHttpServer({ router, vault, config }) as unknown as http.Server;
+  server = startHttpServer({ router: freezeRouterForStartup(router), vault, config }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();
@@ -50,11 +54,16 @@ before(async () => {
 });
 
 beforeEach(() => {
+  previousLocalLlmEnabled = process.env['LOCAL_LLM_ENABLED'];
   delete process.env['LOCAL_LLM_ENABLED'];
 });
 
 afterEach(() => {
-  delete process.env['LOCAL_LLM_ENABLED'];
+  if (previousLocalLlmEnabled === undefined) {
+    delete process.env['LOCAL_LLM_ENABLED'];
+  } else {
+    process.env['LOCAL_LLM_ENABLED'] = previousLocalLlmEnabled;
+  }
 });
 
 after(() => {
@@ -80,7 +89,7 @@ async function request(
   body?: object,
 ): Promise<{ status: number; body: unknown }> {
   const options: http.RequestOptions = {
-    hostname: 'localhost',
+    hostname: '127.0.0.1',
     port,
     path,
     method,
@@ -178,7 +187,9 @@ describe('GET /v1/local/models', () => {
     assert.equal(body.source, 'disabled');
     assert.equal(body.readyReason, 'Local LLM is disabled by runtime flag');
     assert.equal(body.modelCount, 0);
+    assert.equal(body.backends.length, 2);
     assert.ok(body.backends.every((backend) => backend.status === 'disconnected'));
-    assert.ok(body.backends.every((backend) => backend.error?.includes('disabled')));
+    assert.ok(body.backends.every((backend) => backend.error === SAFE_INTERNAL_ERROR));
+    assert.equal(JSON.stringify(body).includes(RAW_DISABLED_DIAGNOSTIC), false);
   });
 });

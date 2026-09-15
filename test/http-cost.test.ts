@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * Cost estimation endpoint tests — GET /v1/cost/estimate and GET /v1/cost/models.
  */
@@ -31,7 +32,7 @@ let server: http.Server;
 let port = 0;
 
 before(async () => {
-  server = startHttpServer({ router, vault, config }) as unknown as http.Server;
+  server = startHttpServer({ router: freezeRouterForStartup(router), vault, config }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();

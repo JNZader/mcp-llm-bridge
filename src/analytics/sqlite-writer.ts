@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 
 import type { AggregatedDataPoint, AnalyticsPersistenceData, AnalyticsPersistenceWriter } from "./types.js";
+import { RETENTION_SINKS, assertSafeTelemetryMetadata, verifyRetention, type RetentionVerification } from "../telemetry/retention.js";
 
 interface PersistedAnalyticsRow {
 	hour?: number;
@@ -110,16 +111,15 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 	}
 
 	async upsert(data: AnalyticsPersistenceData): Promise<void> {
+		const hourlyRows = data.hourly.map(({ timestamp, data: point }) => ({ hour: timestamp, ...this.toRow(point) }));
+		const dailyRows = data.daily.map(({ timestamp, data: point }) => ({ day: timestamp, ...this.toRow(point) }));
 		if (data.hourly.length > 0) {
 			this.db.transaction((rows: PersistedAnalyticsRow[]) => {
 				for (const row of rows) {
 					this.upsertHourly.run(row);
 				}
 			})(
-				data.hourly.map(({ timestamp, data: point }) => ({
-					hour: timestamp,
-					...this.toRow(point),
-				})),
+				hourlyRows,
 			);
 		}
 
@@ -129,15 +129,17 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 					this.upsertDaily.run(row);
 				}
 			})(
-				data.daily.map(({ timestamp, data: point }) => ({
-					day: timestamp,
-					...this.toRow(point),
-				})),
+				dailyRows,
 			);
 		}
+
 	}
 
 	private toRow(point: AggregatedDataPoint): Omit<PersistedAnalyticsRow, "hour" | "day"> {
+		assertSafeTelemetryMetadata(point, [
+			"timestamp", "requests", "successfulRequests", "failedRequests", "retriedRequests", "totalTokens",
+			"inputTokens", "outputTokens", "cost", "avgLatency", "p95Latency", "p99Latency", "errorRate", "retryRate",
+		]);
 		return {
 			requests: point.requests,
 			successfulRequests: point.successfulRequests,
@@ -151,5 +153,16 @@ export class SQLiteAnalyticsWriter implements AnalyticsPersistenceWriter {
 			p95LatencyMs: point.p95Latency ?? null,
 			p99LatencyMs: point.p99Latency ?? null,
 		};
+	}
+
+	cleanupRetention(beforeTimestamp = Date.now()): RetentionVerification {
+		const cutoff = beforeTimestamp - 30 * 24 * 60 * 60 * 1000;
+		this.db.transaction(() => {
+      this.db.prepare("DELETE FROM analytics_hourly WHERE hour <= ?").run(cutoff);
+      this.db.prepare("DELETE FROM analytics_daily WHERE day <= ?").run(cutoff);
+		})();
+    const hourly = this.db.prepare("SELECT COUNT(*) AS count FROM analytics_hourly WHERE hour <= ?").get(cutoff) as { count: number };
+    const daily = this.db.prepare("SELECT COUNT(*) AS count FROM analytics_daily WHERE day <= ?").get(cutoff) as { count: number };
+		return verifyRetention(RETENTION_SINKS.ANALYTICS, { expiredRecordsAbsent: hourly.count === 0 && daily.count === 0 });
 	}
 }

@@ -16,6 +16,7 @@ import {
 import { calculateCost, estimateCost } from "../core/pricing.js";
 import type { Router } from "../core/router.js";
 import type { FreeModelRegistry } from "../free-models/registry.js";
+import type { ComparisonCapability } from "../security/enforcer.js";
 import type { ComparisonQueryFilters, ComparisonStore } from "./persistence.js";
 import type {
 	CompareModelResult,
@@ -30,6 +31,8 @@ export interface ComparisonServiceOptions {
 	freeModelRegistry?: FreeModelRegistry;
 	/** ComparisonStore for optional persistence. */
 	store?: ComparisonStore;
+	/** Explicit authorization for comparison persistence and readback. */
+	capability?: ComparisonCapability;
 	/**
 	 * Server-wide maximum cost ceiling in USD.
 	 * Per-request maxEstimatedCost can be lower but never exceeds this.
@@ -38,6 +41,19 @@ export interface ComparisonServiceOptions {
 	maxCostCeiling?: number;
 	/** Default per-model timeout in ms (used when request doesn't specify). */
 	defaultTimeoutMs?: number;
+}
+
+interface CostExceededDetails {
+	readonly estimatedCost: number;
+	readonly limit: number;
+}
+
+const costExceededDetails = new WeakMap<object, CostExceededDetails>();
+
+/** Reads constructor-captured budget data without inspecting the thrown value. */
+export function getCostExceededDetails(value: unknown): CostExceededDetails | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	return costExceededDetails.get(value);
 }
 
 /** Error thrown when estimated cost exceeds the budget. */
@@ -50,6 +66,7 @@ export class CostExceededError extends Error {
 			`Estimated cost $${estimatedCost.toFixed(4)} exceeds limit $${limit.toFixed(4)}`,
 		);
 		this.name = "CostExceededError";
+		costExceededDetails.set(this, Object.freeze({ estimatedCost, limit }));
 	}
 }
 
@@ -68,6 +85,7 @@ export class ComparisonService {
 	private readonly router: Router;
 	private readonly freeModelRegistry?: FreeModelRegistry;
 	private readonly store?: ComparisonStore;
+	private readonly capability?: ComparisonCapability;
 	private readonly maxCostCeiling: number;
 	private readonly defaultTimeoutMs: number;
 
@@ -75,6 +93,7 @@ export class ComparisonService {
 		this.router = router;
 		this.freeModelRegistry = options.freeModelRegistry;
 		this.store = options.store;
+		this.capability = options.capability;
 		this.maxCostCeiling = resolveMaxCostCeiling(options);
 		this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
 	}
@@ -88,7 +107,7 @@ export class ComparisonService {
 	 * 4. Build summary
 	 * 5. Optionally persist
 	 */
-	async compare(request: CompareRequest): Promise<CompareResponse> {
+	async compare(request: CompareRequest, capability = this.capability): Promise<CompareResponse> {
 		const timeoutMs = request.timeoutMs ?? this.defaultTimeoutMs;
 		const maxTokens = request.maxTokens ?? 1024;
 
@@ -157,13 +176,14 @@ export class ComparisonService {
 		};
 
 		// ── 6. Persist if requested ───────────────────────────────
-		if (request.persist && this.store) {
+		if (request.persist && this.store && capability) {
 			try {
 				this.store.save(
 					response,
 					request.system,
 					request.models,
 					request.project,
+					capability,
 				);
 			} catch (err) {
 				logger.warn({ error: err }, "Failed to persist comparison result");
@@ -176,9 +196,9 @@ export class ComparisonService {
 	/**
 	 * Retrieve comparison history (delegates to store).
 	 */
-	getHistory(filters: ComparisonQueryFilters = {}): CompareResponse[] {
+	getHistory(filters: ComparisonQueryFilters = {}, capability = this.capability): CompareResponse[] {
 		if (!this.store) return [];
-		return this.store.query(filters);
+		return this.store.query(filters, capability);
 	}
 
 	// ── Private helpers ─────────────────────────────────────────

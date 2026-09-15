@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * HTTP three-part prompt tests — verify /v1/generate accepts
  * system/context/instruction fields and auto-optimizes flat prompts.
@@ -31,7 +32,7 @@ let server: http.Server;
 let port = 0;
 
 before(async () => {
-  server = startHttpServer({ router, vault, config }) as unknown as http.Server;
+  server = startHttpServer({ router: freezeRouterForStartup(router), vault, config }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();

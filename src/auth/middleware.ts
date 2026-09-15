@@ -20,6 +20,24 @@ import type { UserContext } from './types.js';
 import { hashApiKey, lookupByHash } from './keys.js';
 import { checkRateLimit, checkBudget } from './quotas.js';
 
+const MAX_RETRY_AFTER_SECONDS = 60 * 60;
+
+function boundedRetryAfter(milliseconds: number | undefined): number {
+  if (!Number.isFinite(milliseconds) || milliseconds === undefined) {
+    return 0;
+  }
+
+  return Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(0, Math.ceil(milliseconds / 1000)));
+}
+
+function boundedBudgetRemaining(remaining: number, budgetUsd: number): number {
+  if (!Number.isFinite(remaining)) {
+    return 0;
+  }
+
+  return Math.min(budgetUsd, Math.max(0, remaining));
+}
+
 /**
  * Create a Hono middleware that authenticates requests via API keys.
  *
@@ -78,7 +96,7 @@ export function apiKeyAuth(db: Database.Database, costTracker?: CostTracker) {
     }, { userId: apiKey.userId });
 
     if (!rateLimitResult.allowed) {
-      const retryAfterSec = Math.ceil((rateLimitResult.retryAfter ?? 0) / 1000);
+      const retryAfterSec = boundedRetryAfter(rateLimitResult.retryAfter);
       c.header('Retry-After', String(retryAfterSec));
       return c.json(
         { error: 'Too many requests', code: 'RATE_LIMITED', retryAfter: retryAfterSec },
@@ -95,15 +113,17 @@ export function apiKeyAuth(db: Database.Database, costTracker?: CostTracker) {
       );
 
       if (!budgetResult.allowed) {
+        const remaining = boundedBudgetRemaining(budgetResult.remaining, apiKey.budgetUsd);
         return c.json(
-          { error: 'Budget exceeded', code: 'BUDGET_EXCEEDED', remaining: budgetResult.remaining },
+          { error: 'Budget exceeded', code: 'BUDGET_EXCEEDED', remaining },
           403,
         );
       }
 
       // Add budget remaining header when usage is above 80%
-      if (budgetResult.remaining < apiKey.budgetUsd * 0.2) {
-        c.header('X-Budget-Remaining', budgetResult.remaining.toFixed(4));
+      const remaining = boundedBudgetRemaining(budgetResult.remaining, apiKey.budgetUsd);
+      if (remaining < apiKey.budgetUsd * 0.2) {
+        c.header('X-Budget-Remaining', remaining.toFixed(4));
       }
     }
 

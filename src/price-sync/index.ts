@@ -32,6 +32,7 @@ export { PriceFetcher, createPriceFetcher } from './fetcher.js';
 export {
   PriceManager,
   PriceSyncAlreadyRunningError,
+  getPriceSyncAlreadyRunningStatus,
   createPriceManager,
 } from './price-manager.js';
 

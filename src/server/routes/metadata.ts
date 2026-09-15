@@ -2,12 +2,19 @@ import type { Hono } from "hono";
 
 import { estimateCost, getPriceTable } from "../../core/pricing.js";
 import type { Router } from "../../core/router.js";
+import { safeError } from "../../core/safe-error.js";
 import { costEstimateQuerySchema } from "../../core/schemas.js";
 import type { LatencyMeasurer } from "../../latency/index.js";
+
+export interface MetadataPricing {
+	estimateCost: typeof estimateCost;
+	getPriceTable: typeof getPriceTable;
+}
 
 export interface MetadataRouteDeps {
 	router: Router;
 	latencyMeasurer?: LatencyMeasurer;
+	pricing?: MetadataPricing;
 }
 
 export function registerMetadataRoutes(
@@ -15,6 +22,7 @@ export function registerMetadataRoutes(
 	deps: MetadataRouteDeps,
 ): void {
 	const { router, latencyMeasurer } = deps;
+	const pricing = deps.pricing ?? { estimateCost, getPriceTable };
 
 	app.get("/v1/models", async (c) => {
 		try {
@@ -31,12 +39,11 @@ export function registerMetadataRoutes(
 					max_tokens: m.maxTokens,
 				})),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+		} catch {
 			return c.json(
 				{
 					error: {
-						message,
+						message: safeError("INTERNAL_ERROR").message,
 						type: "server_error",
 						param: null,
 						code: null,
@@ -51,9 +58,8 @@ export function registerMetadataRoutes(
 		try {
 			const providers = await router.getProviderStatuses();
 			return c.json({ providers });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -83,9 +89,8 @@ export function registerMetadataRoutes(
 				count: measurements.length,
 				timestamp: new Date().toISOString(),
 			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
@@ -99,20 +104,21 @@ export function registerMetadataRoutes(
 
 			const parsed = costEstimateQuerySchema.safeParse(query);
 			if (!parsed.success) {
-				const issues = parsed.error.issues;
-				const firstIssue = issues[0];
+				const field = parsed.error.issues[0]?.path[0];
+				const allowedField =
+					field === "model" || field === "inputTokens" || field === "outputTokens";
 				return c.json(
 					{
 						error: "Validation error",
-						details: firstIssue
-							? `${firstIssue.path.join(".")}: ${firstIssue.message}`
+						details: allowedField
+							? `${field}: Invalid value`
 							: "Invalid query parameters",
 					},
 					400,
 				);
 			}
 
-			const result = estimateCost(
+			const result = pricing.estimateCost(
 				parsed.data.model,
 				parsed.data.inputTokens,
 				parsed.data.outputTokens,
@@ -122,19 +128,17 @@ export function registerMetadataRoutes(
 			}
 
 			return c.json(result);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 
 	app.get("/v1/cost/models", (c) => {
 		try {
-			const table = getPriceTable();
+			const table = pricing.getPriceTable();
 			return c.json(table);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
 		}
 	});
 }

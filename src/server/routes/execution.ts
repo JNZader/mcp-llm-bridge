@@ -3,6 +3,7 @@ import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import type { Router } from "../../core/router.js";
 import { validateChatCompletions, validateGenerateRequest } from "../../core/schemas.js";
 import {
@@ -18,9 +19,6 @@ import {
 	jsonGenerateValidationError,
 } from "../http-helpers/request-validation.js";
 import {
-	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
-} from "../http-helpers/chat-request.js";
-import {
 	resolveRequestScope,
 	type RequestScope,
 } from "../http-helpers/request-scope.js";
@@ -31,6 +29,8 @@ import {
 import { executeGenerateRequest } from "../execution/generate-service.js";
 import { createStreamExecutor } from "../streaming/stream-executor.js";
 import { buildSSEChunkEvent } from "../../transformers/streaming.js";
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
 
 export interface ExecutionRouteDeps {
 	router: Router;
@@ -102,6 +102,22 @@ function handleStreamingRequest(
 
 		c.req.raw.signal.addEventListener("abort", abortHandler, { once: true });
 
+		let terminalStarted = false;
+		const writeTerminalError = async () => {
+			if (terminalStarted || c.req.raw.signal.aborted) return;
+			terminalStarted = true;
+			try {
+				await stream.writeSSE({
+					data: JSON.stringify({
+						error: { message: INTERNAL_ERROR_MESSAGE, type: "server_error", code: null },
+					}),
+				});
+				await stream.writeSSE({ data: "[DONE]" });
+			} catch {
+				// Client may have already disconnected; never retry a terminal write.
+			}
+		};
+
 		try {
 			await executor.execute({
 				writeChunk: async (chunk) => {
@@ -116,22 +132,16 @@ function handleStreamingRequest(
 						),
 					});
 				},
-				writeTerminalError: async (error) => {
-					try {
-						await stream.writeSSE({
-							data: JSON.stringify({
-								error: { message: error.message, type: "server_error", code: null },
-							}),
-						});
-						await stream.writeSSE({ data: "[DONE]" });
-					} catch {
-						// Stream may already be closed
-					}
-				},
+				writeTerminalError,
 				writeDone: async () => {
+					if (terminalStarted || c.req.raw.signal.aborted) return;
+					terminalStarted = true;
 					await stream.writeSSE({ data: "[DONE]" });
 				},
 			});
+		} catch {
+			// Resolution and fallback can fail before the executor invokes its terminal callback.
+			await writeTerminalError();
 		} finally {
 			c.req.raw.signal.removeEventListener("abort", abortHandler);
 		}
@@ -167,9 +177,8 @@ export function registerExecutionRoutes(
 					requestLogger,
 				}),
 			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -191,9 +200,8 @@ export function registerExecutionRoutes(
 			let preparedRequest;
 			try {
 				preparedRequest = prepareChatCompletionsRequest(validated);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				return jsonChatInvalidRequestError(c, message, null);
+			} catch {
+				return jsonChatInvalidRequestError(c, "", null);
 			}
 
 			const scope = resolveRequestScope(c);
@@ -210,28 +218,19 @@ export function registerExecutionRoutes(
 				);
 			}
 
-			try {
-				return c.json(
-					await executeNonStreamingChatCompletions({
-						prepared: preparedRequest,
-						router,
-						scope,
-						requestLogger,
-					}),
-				);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				if (message === CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED) {
-					return jsonChatInvalidRequestError(c, message, "messages");
-				}
-				throw error;
-			}
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			return c.json(
+				await executeNonStreamingChatCompletions({
+					prepared: preparedRequest,
+					router,
+					scope,
+					requestLogger,
+				}),
+			);
+		} catch {
 			return c.json(
 				{
 					error: {
-						message,
+						message: INTERNAL_ERROR_MESSAGE,
 						type: "server_error",
 						param: null,
 						code: null,

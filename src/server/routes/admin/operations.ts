@@ -2,9 +2,10 @@ import type { Hono } from 'hono';
 
 import { resetProviderCircuitBreakers } from '../../../circuit-breaker/admin-compat.js';
 import type { CostTracker } from '../../../core/cost-tracker.js';
+import { safeError } from '../../../core/safe-error.js';
 
 export interface AdminOperationsRouteDeps {
-  costTracker?: CostTracker;
+  costTracker?: Pick<CostTracker, 'bufferSize' | 'flush'>;
 }
 
 export function registerAdminOperationsRoutes(
@@ -17,7 +18,7 @@ export function registerAdminOperationsRoutes(
       const resetCount = resetProviderCircuitBreakers(provider);
 
       if (resetCount === 0) {
-        return c.json({ error: `No circuit breaker found for: ${provider}`, code: 'NOT_FOUND' }, 404);
+        return c.json({ error: 'The requested resource was not found.', code: 'NOT_FOUND' }, 404);
       }
 
       return c.json({
@@ -26,9 +27,8 @@ export function registerAdminOperationsRoutes(
         state: 'CLOSED',
         message: `Circuit breaker for ${provider} has been reset`,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: safeError('INTERNAL_ERROR').message }, 500);
     }
   });
 
@@ -48,9 +48,8 @@ export function registerAdminOperationsRoutes(
         flushed: bufferBefore - bufferAfter,
         remainingBuffer: bufferAfter,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: message }, 500);
+    } catch {
+      return c.json({ error: safeError('INTERNAL_ERROR').message }, 500);
     }
   });
 }

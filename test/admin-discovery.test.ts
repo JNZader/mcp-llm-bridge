@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * Admin discovery endpoint tests — verify POST /v1/admin/discover.
  */
@@ -12,7 +13,59 @@ import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
-import { createAllAdapters } from '../src/adapters/index.js';
+import type { AdminDiscoveryServices } from '../src/server/routes/admin/discovery.js';
+import { StubAdapter } from './helpers/stub-adapter.js';
+
+// ── Test-only discovery seams ─────────────────────────────
+
+const LOCAL_LLM_URLS = {
+  ollamaUrl: 'http://localhost:11434',
+  lmStudioUrl: 'http://localhost:1234',
+};
+const FIXED_TIMESTAMP = '2026-09-10T00:00:00.000Z';
+
+function createDiscoveryServices(expectedHfTokens: Array<string | undefined>) {
+  const calls = { loadCatalog: 0, importCatalog: 0, slimStatus: 0, discoverModels: 0 };
+  const services: AdminDiscoveryServices = {
+    loadCatalog: () => {
+      calls.loadCatalog++;
+      throw new Error('loadCatalog must not run in discovery tests');
+    },
+    importCatalog: () => {
+      calls.importCatalog++;
+      throw new Error('importCatalog must not run in discovery tests');
+    },
+    async getSlimLocalLLMStatus(localConfig, options) {
+      assert.deepEqual(localConfig, { enabled: false, ...LOCAL_LLM_URLS });
+      assert.deepEqual(options, { skipDetectionWhenDisabled: true });
+      calls.slimStatus++;
+      return {
+        enabled: false, ready: false, readyReason: 'Local LLM is disabled by runtime flag',
+        checkedAt: FIXED_TIMESTAMP, source: 'disabled', cacheHit: false,
+        backendCount: 2, connectedBackendCount: 0, disconnectedBackendCount: 2,
+        errorBackendCount: 0, modelCount: 0,
+        backends: [
+          { backend: 'ollama', status: 'disconnected', baseUrl: LOCAL_LLM_URLS.ollamaUrl, modelCount: 0, models: [] },
+          { backend: 'lm-studio', status: 'disconnected', baseUrl: LOCAL_LLM_URLS.lmStudioUrl, modelCount: 0, models: [] },
+        ],
+      };
+    },
+    async discoverModels(discoveryConfig, localConfig, db, options) {
+      assert.ok(calls.discoverModels < expectedHfTokens.length);
+      assert.equal(discoveryConfig?.hfToken, expectedHfTokens[calls.discoverModels]);
+      assert.equal(discoveryConfig?.enabled, true);
+      assert.deepEqual(localConfig, LOCAL_LLM_URLS);
+      assert.equal(db, undefined);
+      assert.deepEqual(options, { forceRefreshLocalDetection: true });
+      calls.discoverModels++;
+      return {
+        models: [], backendsScanned: ['ollama', 'lm-studio'], enrichedCount: 0, unenrichedCount: 0,
+        timestamp: FIXED_TIMESTAMP, errors: [], partial: false, snapshotUsed: false,
+      };
+    },
+  };
+  return { services, calls };
+}
 
 // ── Test infrastructure ──────────────────────────────────
 
@@ -29,15 +82,18 @@ const config: GatewayConfig = {
 const vault = new Vault(config);
 const router = new Router();
 
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
+router.register(new StubAdapter());
 
 let server: http.Server;
 let port = 0;
+const discovery = createDiscoveryServices([undefined, 'fake-token']);
 
 before(async () => {
-  server = startHttpServer({ router, vault, config }) as unknown as http.Server;
+  delete process.env['HF_TOKEN'];
+  server = startHttpServer({
+    router: freezeRouterForStartup(router), vault, config,
+    adminDiscoveryServices: discovery.services,
+  }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();
@@ -72,7 +128,7 @@ async function request(
   body?: object,
 ): Promise<{ status: number; body: unknown }> {
   const options: http.RequestOptions = {
-    hostname: 'localhost',
+    hostname: '127.0.0.1',
     port,
     path,
     method,
@@ -141,6 +197,7 @@ describe('POST /v1/admin/discover', () => {
     assert.ok(Array.isArray(body.localLLMStatus.backends));
     assert.ok(body.localLLMStatus.backends.length >= 2);
     assert.equal(typeof body.localLLMStatus.backends[0]?.modelCount, 'number');
+    assert.deepEqual(discovery.calls, { loadCatalog: 0, importCatalog: 0, slimStatus: 1, discoverModels: 1 });
   });
 
   it('accepts optional hfToken override', async () => {
@@ -148,5 +205,6 @@ describe('POST /v1/admin/discover', () => {
     assert.equal(res.status, 200);
     const body = res.body as { ok: boolean };
     assert.equal(body.ok, true);
+    assert.deepEqual(discovery.calls, { loadCatalog: 0, importCatalog: 0, slimStatus: 2, discoverModels: 2 });
   });
 });

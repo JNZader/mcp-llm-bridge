@@ -14,6 +14,7 @@ import type {
 	InternalLLMResponse,
 } from "../../src/core/internal-model.js";
 import type { Router } from "../../src/core/router.js";
+import { ProfileEnforcer } from "../../src/security/enforcer.js";
 
 /**
  * Build a minimal mock Router that satisfies ComparisonService's needs.
@@ -234,6 +235,7 @@ describe("ComparisonService", () => {
 		);
 		const service = new ComparisonService(router, {
 			maxCostCeiling: Infinity,
+			capability: new ProfileEnforcer("local-dev").issueComparisonCapability("__global__"),
 			store:
 				mockStore as unknown as import("../../src/comparison/persistence.js").ComparisonStore,
 		});
@@ -245,6 +247,16 @@ describe("ComparisonService", () => {
 		});
 
 		assert.equal(saved.length, 1);
+	});
+
+	it("does not persist without the explicit comparison capability", async () => {
+		const saved: unknown[] = [];
+		const service = new ComparisonService(createMockRouter(async (req) => makeSuccessResponse(req.model ?? "unknown")), {
+			maxCostCeiling: Infinity,
+			store: { save: (...args: unknown[]) => saved.push(args), query: () => [], getById: () => null } as unknown as import("../../src/comparison/persistence.js").ComparisonStore,
+		});
+		await service.compare({ prompt: "test", models: ["model-a", "model-b"], persist: true });
+		assert.equal(saved.length, 0);
 	});
 
 	it("persist=false does not save to store", async () => {

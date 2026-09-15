@@ -14,6 +14,8 @@ import {
   type ModelSyncLogRecord,
 } from './types.js';
 import { getFetcherForProvider } from './fetcher.js';
+import { logger } from '../core/logger.js';
+import { safeOperation } from '../core/safe-operation.js';
 
 // === Database Interface (minimal, to be implemented by consumer) ===
 
@@ -27,6 +29,14 @@ export interface Statement {
   get(...params: unknown[]): unknown | undefined;
 }
 
+const alreadyRunningStatuses = new WeakMap<object, ModelSyncRunStatus>();
+
+// Only constructor-registered identity is recognized; no properties or prototypes are inspected.
+export function getModelSyncAlreadyRunningStatus(value: unknown): ModelSyncRunStatus | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  return alreadyRunningStatuses.get(value);
+}
+
 export class ModelSyncAlreadyRunningError extends Error {
   readonly status: ModelSyncRunStatus;
 
@@ -34,6 +44,7 @@ export class ModelSyncAlreadyRunningError extends Error {
     super(`Model sync already running for provider: ${status.provider}`);
     this.name = 'ModelSyncAlreadyRunningError';
     this.status = status;
+    alreadyRunningStatuses.set(this, status);
   }
 }
 
@@ -342,8 +353,8 @@ export class ModelSyncManager {
         try {
           await this.syncProvider(config);
         } catch (error) {
-          if (!(error instanceof ModelSyncAlreadyRunningError)) {
-            console.error(error);
+          if (getModelSyncAlreadyRunningStatus(error) === undefined) {
+            logger.error(safeOperation('failed'), 'Model auto-sync failed.');
           }
         } finally {
           scheduleNext(config.autoSyncIntervalMs);

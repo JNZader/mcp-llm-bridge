@@ -9,11 +9,20 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { CostTracker } from '../src/core/cost-tracker.js';
+import Database from 'better-sqlite3';
 
 /** Create a temp dir and return a db path inside it. */
 function tempDbPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'cost-tracker-test-'));
   return join(dir, 'test.db');
+}
+
+function assertSafeTelemetryFailure(error: unknown, canaries: readonly string[]): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  for (const canary of canaries) {
+    assert.ok(!message.includes(canary), 'The rejection must not forward protected content');
+  }
+  return true;
 }
 
 describe('CostTracker', () => {
@@ -45,6 +54,29 @@ describe('CostTracker', () => {
     });
 
     assert.equal(tracker.bufferSize, 1);
+  });
+
+  it('rejects protected-content and provider-error canaries before usage persistence', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+    const canaries = [
+      'WU1-PLAIN-CANARY', 'WU1-NESTED-CANARY', 'WU1-RENAMED-CANARY',
+      'V1UxLUJBU0U2NC1DQU5BUlk=', 'WU1-ESCAPED-\\u0063ANARY', 'WU1-UNICODE-秘密',
+      `${'x'.repeat(9_990)}WU1-TRUNCATION-CANARY`,
+    ];
+
+    assert.throws(
+      () => tracker.record({
+        provider: 'provider', model: 'model', latencyMs: 1, success: false,
+        errorMessage: `provider failure: ${canaries[0]}`,
+        context: { nested: canaries[1], prompt_alias: canaries[2], encoded: canaries[3] },
+        escaped: canaries[4], unicode: canaries[5], boundary: canaries[6],
+      } as unknown as Parameters<CostTracker['record']>[0]),
+      (error: unknown) => assertSafeTelemetryFailure(error, canaries),
+    );
+    assert.equal(tracker.bufferSize, 0, 'Rejected input must not enter the usage buffer');
+    tracker.flush();
+    assert.deepEqual(tracker.query(), [], 'Rejected input must not create a usage row');
   });
 
   it('flush writes buffer to SQLite', () => {
@@ -79,6 +111,21 @@ describe('CostTracker', () => {
     assert.equal(records.length, 2);
   });
 
+  it('expires persisted usage older than the production thirty-day cutoff', () => {
+    dbPath = tempDbPath();
+    tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
+    tracker.record({ provider: 'openai', model: 'gpt-4o', latencyMs: 1, success: true });
+    tracker.flush();
+
+    const db = new Database(dbPath);
+    db.prepare("UPDATE usage_logs SET created_at = '2020-01-01 00:00:00'").run();
+    db.close();
+
+    const result = tracker.cleanupRetention(Date.parse('2020-02-01T00:00:00Z'));
+    assert.equal(result.outcome, 'success');
+    assert.deepEqual(tracker.query(), []);
+  });
+
   it('auto-calculates cost when not provided', () => {
     dbPath = tempDbPath();
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
@@ -101,15 +148,16 @@ describe('CostTracker', () => {
     assert.equal(record.costUsd, 12.50);
   });
 
-  it('keeps exact-token unknown-priced usage truthful with null cost', () => {
+  it('keeps explicit unknown-cost usage truthful with null cost', () => {
     dbPath = tempDbPath();
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
 
     tracker.record({
-      provider: 'custom-provider',
-      model: 'unknown-model-xyz',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
       tokensIn: 100,
       tokensOut: 50,
+      costUsd: null,
       latencyMs: 200,
       success: true,
     });
@@ -125,7 +173,7 @@ describe('CostTracker', () => {
     tracker.flush();
 
     const records = tracker.query();
-    const unknownRecord = records.find((record) => record.model === 'unknown-model-xyz');
+    const unknownRecord = records.find((record) => record.model === 'gpt-4o-mini');
     const knownRecord = records.find((record) => record.model === 'gpt-4o');
 
     assert.ok(unknownRecord);
@@ -247,9 +295,10 @@ describe('CostTracker', () => {
       success: true,
     });
     tracker.record({
-      provider: 'legacy-provider',
-      model: 'legacy-model',
+      provider: 'openai',
+      model: 'gpt-4o-mini',
       totalTokens: 9,
+      costUsd: null,
       latencyMs: 25,
       success: true,
     });
@@ -259,7 +308,7 @@ describe('CostTracker', () => {
     const records = tracker.query();
     assert.equal(records.length, 2);
 
-    const totalOnlyRecord = records.find((record) => record.provider === 'legacy-provider');
+    const totalOnlyRecord = records.find((record) => record.model === 'gpt-4o-mini');
     assert.ok(totalOnlyRecord);
     assert.equal(totalOnlyRecord.tokensIn, null);
     assert.equal(totalOnlyRecord.tokensOut, null);
@@ -276,8 +325,8 @@ describe('CostTracker', () => {
     assert.equal(summary.unknownCostRequestCount, 1);
     assert.equal(summary.hasUnknownCost, true);
 
-    const providerBreakdown = tracker.summary({ groupBy: 'provider' }).breakdown;
-    const legacy = providerBreakdown.find((entry) => entry.key === 'legacy-provider');
+    const providerBreakdown = tracker.summary({ groupBy: 'model' }).breakdown;
+    const legacy = providerBreakdown.find((entry) => entry.key === 'gpt-4o-mini');
     assert.ok(legacy);
     assert.equal(legacy.tokensIn, 0);
     assert.equal(legacy.tokensOut, 0);
@@ -427,12 +476,13 @@ describe('CostTracker', () => {
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
 
     tracker.record({
-      provider: 'custom-provider',
+      provider: 'openai',
       apiKeyId: 'key-1',
       userId: 'user-1',
-      model: 'unknown-model-xyz',
+      model: 'gpt-4o-mini',
       tokensIn: 10,
       tokensOut: 20,
+      costUsd: null,
       latencyMs: 50,
       success: true,
     });
@@ -496,7 +546,7 @@ describe('CostTracker', () => {
     assert.equal(allRecords.length, 1);
   });
 
-  it('stores keyName and project', () => {
+  it('does not persist keyName or project', () => {
     dbPath = tempDbPath();
     tracker = new CostTracker({ dbPath, flushIntervalMs: 60_000 });
 
@@ -513,9 +563,9 @@ describe('CostTracker', () => {
 
     tracker.flush();
 
-    const records = tracker.query({ project: 'my-project' });
+    const records = tracker.query();
     assert.equal(records.length, 1);
-    assert.equal(records[0]!.keyName, 'key-1');
-    assert.equal(records[0]!.project, 'my-project');
+    assert.equal(records[0]!.keyName, null);
+    assert.equal(records[0]!.project, null);
   });
 });

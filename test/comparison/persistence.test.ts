@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import Database from "better-sqlite3";
 import type { CompareResponse } from "../../src/comparison/index.js";
 import { ComparisonStore } from "../../src/comparison/persistence.js";
+import { RequestLogger } from "../../src/logging/request-logger.js";
+import { ProfileEnforcer } from "../../src/security/enforcer.js";
 
 function createTestDb(): { db: Database.Database; path: string } {
 	const path = join(tmpdir(), `mlb-comparison-test-${randomUUID()}.db`);
@@ -69,7 +71,10 @@ describe("ComparisonStore", () => {
 		const result = createTestDb();
 		db = result.db;
 		dbPath = result.path;
-		store = new ComparisonStore(db);
+		store = new ComparisonStore(
+			db,
+			new ProfileEnforcer("local-dev").issueComparisonCapability("*")!,
+		);
 	});
 
 	afterEach(() => {
@@ -183,5 +188,47 @@ describe("ComparisonStore", () => {
 		const results = store.query({ limit: 200 });
 		assert.ok(results.length <= 100);
 		assert.equal(results.length, 5); // only 5 records exist
+	});
+
+	it("denies persistence without the explicit comparison capability", () => {
+		const unauthorized = new ComparisonStore(db);
+		assert.throws(() => unauthorized.save(makeCompareResponse()));
+		assert.equal((db.prepare("SELECT count(*) AS count FROM comparison_results").get() as { count: number }).count, 0);
+	});
+
+	it("keeps a legacy identifier indistinguishable from an unknown identifier", () => {
+		db.exec("CREATE TABLE comparison_results_legacy (id TEXT PRIMARY KEY, prompt TEXT)");
+		db.prepare("INSERT INTO comparison_results_legacy VALUES (?, ?)").run("legacy-id", "private-canary");
+		assert.equal(store.getById("legacy-id"), null);
+		assert.equal(store.getById("unknown-id"), null);
+	});
+
+	it("keeps comparison content canaries out of ordinary telemetry and readback", async () => {
+		const canaries = {
+			prompt: "COMPARISON-PROMPT-CANARY",
+			systemPrompt: "COMPARISON-SYSTEM-PROMPT-CANARY",
+			response: "COMPARISON-RESPONSE-CANARY",
+			summary: "COMPARISON-SUMMARY-CANARY",
+		};
+		const response = makeCompareResponse({
+			prompt: canaries.prompt,
+			results: [{ ...makeCompareResponse().results[0]!, response: canaries.response }],
+			summary: { totalCost: 0, wallClockMs: 1, fastestModel: canaries.summary },
+		});
+		store.save(response, canaries.systemPrompt);
+
+		const ordinary = db.prepare("SELECT models, project, created_at FROM comparison_results WHERE id = ?").get(response.id);
+		assert.equal(JSON.stringify(ordinary).includes("COMPARISON-"), false);
+		const authorized = db.prepare("SELECT prompt, system_prompt, results, summary FROM authorized_comparison_results WHERE id = ?").get(response.id);
+		for (const canary of Object.values(canaries)) assert.equal(JSON.stringify(authorized).includes(canary), true);
+
+		db.exec(`CREATE TABLE request_logs (
+			id INTEGER PRIMARY KEY, timestamp INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+			correlation_id TEXT, total_tokens INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost REAL,
+			latency_ms INTEGER, attempts INTEGER NOT NULL DEFAULT 1, error TEXT, error_code TEXT, error_category TEXT
+		)`);
+		const ordinaryReadback = await new RequestLogger(db).getLogs({});
+		assert.deepEqual(ordinaryReadback.logs, []);
+		assert.equal(ordinaryReadback.total, 0);
 	});
 });

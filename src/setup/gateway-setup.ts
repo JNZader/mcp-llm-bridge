@@ -229,16 +229,16 @@ export async function runSetupGateway(
   let scope: GatewaySetupScope;
   try {
     ({ apply, scope } = parseGatewayArgs(argv));
-  } catch (err) {
-    console.error(`[setup-gateway] ${(err as Error).message}`);
+  } catch {
+    console.error('[setup-gateway] Invalid --scope value. Expected "user" or "project".');
     return 1;
   }
 
   let port: number;
   try {
     port = resolveGatewayPort(env);
-  } catch (err) {
-    console.error(`[setup-gateway] ${(err as Error).message}`);
+  } catch {
+    console.error('[setup-gateway] LLM_GATEWAY_PORT must be a valid port number (1-65535).');
     return 1;
   }
 
@@ -292,7 +292,6 @@ export async function runSetupGateway(
     return 0;
   }
 
-  const settingsPath = options.settingsPathOverride ?? resolveSettingsPath(scope);
   const envVarsRecord: Record<string, string> = {
     ANTHROPIC_BASE_URL: gatewayEnv.ANTHROPIC_BASE_URL,
   };
@@ -300,7 +299,14 @@ export async function runSetupGateway(
     envVarsRecord.ANTHROPIC_AUTH_TOKEN = gatewayEnv.ANTHROPIC_AUTH_TOKEN;
   }
 
-  const result = mergeGatewayEnvIntoSettings(settingsPath, envVarsRecord);
+  let result: SettingsEnvMergeResult;
+  try {
+    const settingsPath = options.settingsPathOverride ?? resolveSettingsPath(scope);
+    result = mergeGatewayEnvIntoSettings(settingsPath, envVarsRecord);
+  } catch {
+    console.error('[setup-gateway] Unable to update Claude Code settings.');
+    return 1;
+  }
 
   console.log('');
   console.log(`[setup-gateway] Wrote env block to ${result.settingsPath} (scope: ${scope})`);

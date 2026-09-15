@@ -138,6 +138,10 @@ describe("chat-completions-service", () => {
 			} as never,
 		});
 
+		const durable = captured.filter((entry) => entry.phase === "end");
+		assert.equal(durable.length, 1);
+		assert.equal(durable[0]?.responseData, undefined);
+		assert.equal(JSON.stringify(durable).includes("Strict mode catches more bugs."), false);
 		assert.deepEqual(captured, [
 			{
 				phase: "start",
@@ -171,20 +175,6 @@ describe("chat-completions-service", () => {
 				inputTokens: 4,
 				outputTokens: 5,
 				attempts: 1,
-				responseData: JSON.stringify({
-					text: "Strict mode catches more bugs.",
-					provider: "mock-provider",
-					model: "gpt-4o-mini",
-					tokensUsed: 9,
-					inputTokens: 4,
-					outputTokens: 5,
-					requestedProvider: "openai",
-					requestedModel: "gpt-4o-mini",
-					resolvedProvider: "mock-provider",
-					resolvedModel: "gpt-4o-mini",
-					fallbackUsed: false,
-					routing: { strategy: "mock", attemptedProviders: ["mock-provider"] },
-				}),
 			},
 		]);
 

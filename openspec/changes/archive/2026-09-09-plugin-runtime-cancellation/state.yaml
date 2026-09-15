@@ -1,0 +1,132 @@
+{
+  "schema": "gentle-ai.sdd-preproposal/v1",
+  "revision": 5,
+  "change": "plugin-runtime-cancellation",
+  "artifact_store": "openspec",
+  "scope_authorization": "unit2-implementation",
+  "exploration": {
+    "outcome": "done",
+    "reference": "exploration.md",
+    "sha256": "ee7d95ac6c947f13d84b56d533e6f75222ddf625c50c23e8a243f3245ddf1a33"
+  },
+  "research": {
+    "requested": true,
+    "selection": "selected",
+    "classes": [
+      "documentation"
+    ],
+    "capability_schema": "gentle-ai.sdd-research-capability/v1",
+    "observed_grants": [
+      "documentation",
+      "open-web"
+    ],
+    "used_grants": [
+      "documentation"
+    ],
+    "admission": "admitted",
+    "outcome": "done",
+    "revision": 1,
+    "openspec_reference": "research.md",
+    "openspec_sha256": "e2add801266fed634634e8315f3d5f968825082d1f81512403ce1056712f260e",
+    "engram_reference": null
+  },
+  "product_decisions": {
+    "status": "confirmed",
+    "selection_mode": "one_option_per_group",
+    "allowed_answers": [
+      "A",
+      "B",
+      "C"
+    ],
+    "selections": {
+      "environment": "A",
+      "stdio": "A",
+      "wire_values": "A",
+      "failure_restart": "A",
+      "native_deployment": "A",
+      "invocation_timeout": "A"
+    },
+    "confirmed_input": "si...1a...2a...3a....4a...5a...6a",
+    "envelope_reference": "exploration.md#recommendation"
+  },
+  "research_question": {
+    "selection_mode": "single",
+    "allowed_answers": [
+      "si",
+      "no"
+    ],
+    "selected": "si",
+    "options": [
+      {
+        "answer": "si",
+        "label": "Formal research",
+        "effect": "Complete source-backed SDD research before proposal; not a runtime experiment."
+      },
+      {
+        "answer": "no",
+        "label": "Use existing evidence",
+        "effect": "No formal research phase; retain current source inspection and referenced Node documentation with their limitations."
+      }
+    ]
+  },
+  "proposal_ready": true,
+  "continuation": "Unit 4 RED authoring is authorized for tasks 4.1 and 4.2; production and installed-package execution require the next bounded continuation.",
+  "preservation": {
+    "rdd": "disabled",
+    "previous_change": "containment-and-evidence-harness",
+    "previous_change_action": "leave_unchanged",
+    "implementation_authorized": true,
+    "implementation_scope": "Unit 2 only; Units 3\u20134 remain unauthorized."
+  },
+  "implementation_authorization": {
+    "status": "granted",
+    "source": "user: dale continua",
+    "authorized_work_unit": "Unit 2: 1.3\u21922.3\u21922.4",
+    "authorized_task_ids": [
+      "1.3",
+      "2.3",
+      "2.4"
+    ],
+    "authorized_paths": [
+      "src/mcp-builder/plugin-runtime-worker.ts",
+      "src/mcp-builder/plugin-runtime-host.ts",
+      "test/mcp-builder/plugin-runtime-worker.test.ts",
+      "test/mcp-builder/plugin-runtime-diagnostics.test.ts",
+      "test/mcp-builder/fixtures/plugin-runtime/",
+      "tsup.config.ts",
+      "package.json"
+    ],
+    "later_units_authorized": false,
+    "recorded_at": "2026-09-08"
+  },
+  "unit3_authorization": {
+    "status": "granted",
+    "source": "user: dale continua",
+    "authorized_work_unit": "Unit 3: 1.4\u21923.1\u21923.2\u21923.3",
+    "authorized_task_ids": [
+      "1.4",
+      "3.1",
+      "3.2",
+      "3.3"
+    ],
+    "later_units_authorized": false,
+    "recorded_at": "2026-09-08"
+  },
+  "unit4_authorization": {
+    "status": "granted",
+    "source": "user: dale",
+    "authorized_work_unit": "Unit 4: 4.1\u21924.2",
+    "authorized_task_ids": [
+      "4.1",
+      "4.2"
+    ],
+    "authorized_paths": [
+      "test/e2e/plugin-runtime-package.test.ts",
+      "test/mcp-builder/plugin-runtime-diagnostics.test.ts",
+      "test/mcp-builder/fixtures/plugin-runtime/unit4-package-harness.ts",
+      "openspec/changes/plugin-runtime-cancellation/state.yaml",
+      "openspec/changes/plugin-runtime-cancellation/apply-progress.md"
+    ],
+    "recorded_at": "2026-09-09"
+  }
+}

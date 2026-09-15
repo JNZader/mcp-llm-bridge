@@ -16,6 +16,10 @@ interface LatencyMeasurer {
 	stopBackgroundTask(): void;
 }
 
+interface PluginRuntimeRegistry {
+	closeAll(): Promise<void>;
+}
+
 interface VaultLike {
 	destroy(): void;
 }
@@ -28,6 +32,7 @@ type ProcessOn = (
 type ProcessExit = (code: number) => void;
 
 export interface ShutdownDeps {
+	pluginRuntimeRegistry?: PluginRuntimeRegistry;
 	compressor: Destroyable;
 	latencyMeasurer: LatencyMeasurer;
 	freeModelRouter: Destroyable;
@@ -52,6 +57,7 @@ interface ShutdownFailure {
  * Register graceful shutdown handlers for process termination signals.
  */
 export async function setupGracefulShutdown({
+	pluginRuntimeRegistry,
 	compressor,
 	latencyMeasurer,
 	freeModelRouter,
@@ -86,6 +92,7 @@ export async function setupGracefulShutdown({
 			};
 
 			logger.info({ signal }, "Shutting down");
+			await runStep("pluginRuntimeRegistry.closeAll", async () => pluginRuntimeRegistry?.closeAll());
 			await runStep("compressor.destroy", () => compressor.destroy());
 			await runStep("latencyMeasurer.stopBackgroundTask", () =>
 				latencyMeasurer.stopBackgroundTask(),

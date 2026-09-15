@@ -1,7 +1,5 @@
-import {
-  buildStreamingExecutionResponseData,
-  type RouterExecutionContract,
-} from "../../core/router-execution-contract.js";
+import { safeOperation, safeOperationError } from "../../core/safe-operation.js";
+import type { RouterExecutionContract } from "../../core/router-execution-contract.js";
 import { getCircuitBreakerV2, type ResolvedStreamingProvider } from "../../core/router.js";
 import type {
 	CaptureEndInput,
@@ -66,10 +64,16 @@ export function createStreamingRequestLogFinalizer(
 		}
 
 		logCompleted = true;
-		await requestLogger.captureEnd(logCtx, input);
+		await requestLogger.captureEnd(logCtx, sanitizeRequestLogInput(input));
 	};
 
 	return { logCtx, finalizeRequestLog };
+}
+
+function sanitizeRequestLogInput(input: CaptureEndInput): CaptureEndInput {
+	return input.error === undefined
+		? input
+		: { ...input, error: safeOperationError(safeOperation("failed")) };
 }
 
 export async function finalizeStreamingAttemptSuccess(
@@ -107,12 +111,6 @@ export async function finalizeStreamingAttemptSuccess(
 		totalTokens,
 		inputTokens,
 		outputTokens,
-		responseData: buildStreamingResponseData({
-			executionContract: input.executionContract,
-			providerId,
-			resolvedModel,
-			responseModel,
-		}),
 	});
 }
 
@@ -134,7 +132,7 @@ export async function finalizeStreamingAttemptFailure(
 		finalizeRequestLog,
 	} = input;
 	const resolvedError = normalizeStreamingError(error);
-	const message = resolvedError.message;
+	const message = safeOperationError(safeOperation("failed")).message;
 
 	getCircuitBreakerV2().recordFailure(providerId, "default", resolvedModel);
 	recordResult?.({
@@ -181,7 +179,7 @@ export async function finalizeStreamingAttemptAbort(
 		finalizeRequestLog,
 	} = input;
 	const resolvedError = normalizeStreamingError(error);
-	const message = resolvedError.message;
+	const message = safeOperationError(safeOperation("failed")).message;
 
 	recordResult?.({
 		model: resolvedModel,
@@ -202,27 +200,7 @@ export async function finalizeStreamingAttemptAbort(
 		inputTokens,
 		outputTokens,
 		error: resolvedError,
-		responseData: buildStreamingResponseData({
-			executionContract: input.executionContract,
-			providerId,
-			resolvedModel,
-		}),
 	});
 
 	return resolvedError;
-}
-
-interface StreamingResponseDataInput {
-	executionContract: RouterExecutionContract;
-	providerId: string;
-	resolvedModel: string;
-	responseModel?: string;
-}
-
-function buildStreamingResponseData(input: StreamingResponseDataInput) {
-	return buildStreamingExecutionResponseData(input.executionContract, {
-		providerId: input.providerId,
-		resolvedModel: input.resolvedModel,
-		responseModel: input.responseModel,
-	});
 }

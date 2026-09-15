@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { SQLiteAnalyticsReader, SQLiteAnalyticsWriter } from "../../src/analytics/index.js";
+import { AnalyticsAggregator, SQLiteAnalyticsReader, SQLiteAnalyticsWriter } from "../../src/analytics/index.js";
 import { MigrationRunner } from "../../src/db/migrate.js";
 
 describe("SQLiteAnalyticsWriter", () => {
@@ -296,4 +296,70 @@ describe("SQLiteAnalyticsWriter", () => {
 		assert.equal(reader.query({ dimension: "hourly" })[0]?.totalTokens, 17);
 		assert.equal(reader.query({ dimension: "daily" })[0]?.totalTokens, 17);
 	});
+
+	it("expires old aggregates after the production persistence boundary completes", async () => {
+		const db = runner.getDatabase();
+		const writer = new SQLiteAnalyticsWriter(db);
+		const cutoff = Date.parse("2024-02-01T00:00:00Z");
+
+		await writer.upsert({
+			flushedAt: cutoff - 31 * 24 * 60 * 60 * 1000,
+			hourly: [{ timestamp: cutoff - 31 * 24 * 60 * 60 * 1000, data: analyticsPoint() }],
+			daily: [],
+		});
+		const aggregator = new AnalyticsAggregator({ persistenceWriter: writer, flushIntervalMs: 60_000 });
+		aggregator.record("openai", "gpt-4o", {
+			channel: "gateway",
+			latencyMs: 1,
+			timestamp: cutoff,
+		});
+		await aggregator.flush();
+		await aggregator.destroy();
+
+		const rows = db.prepare("SELECT hour FROM analytics_hourly ORDER BY hour").all() as Array<{ hour: number }>;
+		assert.deepEqual(rows, []);
+	});
+
+	it("rejects sensitive direct-writer metadata before any aggregate is persisted", async () => {
+		const db = runner.getDatabase();
+		const writer = new SQLiteAnalyticsWriter(db);
+		const canaries = [
+			"WU3-PLAIN-CANARY", "WU3-NESTED-CANARY", "WU3-RENAMED-CANARY",
+			"V1UzLUJBU0U2NC1DQU5BUlk=", "WU3-ESCAPED-\\u0063ANARY", "WU3-UNICODE-秘密",
+			`${"x".repeat(9_990)}WU3-TRUNCATION-CANARY`,
+		];
+
+		for (const canary of canaries) {
+			await assert.rejects(writer.upsert({
+				flushedAt: Date.now(),
+				hourly: [{
+					timestamp: Date.now(),
+					data: { requests: 1, successfulRequests: 1, failedRequests: 0, retriedRequests: 0,
+						totalTokens: 1, inputTokens: 1, outputTokens: 0, cost: 0, avgLatency: 1,
+						errorRate: 0, retryRate: 0, renamedPayload: canary } as never,
+				}],
+				daily: [],
+			}), /Telemetry sink input rejected/);
+		}
+
+		const row = db.prepare("SELECT COUNT(*) AS count FROM analytics_hourly").get() as { count: number };
+		assert.equal(row.count, 0);
+	});
 });
+
+function analyticsPoint() {
+	return {
+		timestamp: 0,
+		requests: 1,
+		successfulRequests: 1,
+		failedRequests: 0,
+		retriedRequests: 0,
+		totalTokens: 1,
+		inputTokens: 1,
+		outputTokens: 0,
+		cost: 0,
+		avgLatency: 1,
+		errorRate: 0,
+		retryRate: 0,
+	};
+}

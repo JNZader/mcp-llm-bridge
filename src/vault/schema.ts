@@ -13,6 +13,60 @@ import type Database from 'better-sqlite3';
 export { GLOBAL_PROJECT } from '../core/constants.js';
 import { GLOBAL_PROJECT } from '../core/constants.js';
 
+export const STORAGE_MIGRATION_GATE = {
+  RAW_WRITE_REJECTION: 'RAW_WRITE_REJECTION',
+  ROUTINE_READBACK_DENIAL: 'ROUTINE_READBACK_DENIAL',
+  AUTHORIZED_COMPARISON_BEHAVIOR: 'AUTHORIZED_COMPARISON_BEHAVIOR',
+  LEGACY_ISOLATION: 'LEGACY_ISOLATION',
+} as const;
+
+export const STORAGE_MIGRATION_GATE_STATUS = {
+  VERIFIED: 'VERIFIED',
+  FAILED: 'FAILED',
+  INDETERMINATE: 'INDETERMINATE',
+  NOT_VERIFIED: 'NOT_VERIFIED',
+} as const;
+
+type StorageMigrationGate = (typeof STORAGE_MIGRATION_GATE)[keyof typeof STORAGE_MIGRATION_GATE];
+type StorageMigrationGateStatus = (typeof STORAGE_MIGRATION_GATE_STATUS)[keyof typeof STORAGE_MIGRATION_GATE_STATUS];
+
+interface StorageMigrationGateEvidence {
+  forward?: Partial<Record<StorageMigrationGate, StorageMigrationGateStatus>>;
+  rollback?: Partial<Record<StorageMigrationGate, StorageMigrationGateStatus>>;
+}
+
+interface StorageMigrationGateDirectionResult {
+  gates: Record<StorageMigrationGate, StorageMigrationGateStatus>;
+  isFullyVerified: boolean;
+}
+
+interface StorageMigrationGateResult {
+  forward: StorageMigrationGateDirectionResult;
+  rollback: StorageMigrationGateDirectionResult;
+  isFullyVerified: boolean;
+}
+
+export function evaluateStorageMigrationGates(
+  evidence: StorageMigrationGateEvidence,
+): StorageMigrationGateResult {
+  const evaluateDirection = (
+    directionEvidence: Partial<Record<StorageMigrationGate, StorageMigrationGateStatus>> | undefined,
+  ): StorageMigrationGateDirectionResult => {
+  const gates = Object.fromEntries(
+    Object.values(STORAGE_MIGRATION_GATE).map((gate) => [
+      gate,
+      directionEvidence?.[gate] ?? STORAGE_MIGRATION_GATE_STATUS.NOT_VERIFIED,
+    ]),
+  ) as Record<StorageMigrationGate, StorageMigrationGateStatus>;
+  const isFullyVerified = Object.values(gates).every((status) => status === STORAGE_MIGRATION_GATE_STATUS.VERIFIED);
+    return { gates, isFullyVerified };
+  };
+
+  const forward = evaluateDirection(evidence.forward);
+  const rollback = evaluateDirection(evidence.rollback);
+  return { forward, rollback, isFullyVerified: forward.isFullyVerified && rollback.isFullyVerified };
+}
+
 /**
  * Create the credentials table if it does not already exist,
  * and migrate from the old schema if needed.
@@ -110,114 +164,41 @@ export function initializeDb(db: Database.Database): void {
 
   // ── Usage logs table (Phase 4: Cost Tracking) ──
   db.exec(`
+    CREATE TABLE IF NOT EXISTS request_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp INTEGER NOT NULL,
+      provider TEXT NOT NULL, model TEXT NOT NULL, correlation_id TEXT,
+      total_tokens INTEGER, input_tokens INTEGER, output_tokens INTEGER, cost REAL,
+      latency_ms INTEGER, attempts INTEGER NOT NULL DEFAULT 1,
+      error TEXT CHECK (error IS NULL OR error IN ('rate_limited', 'timed_out', 'unavailable', 'failed')),
+      error_code TEXT, error_category TEXT,
+      created_at INTEGER DEFAULT (strftime('%s', 'now'))
+    );
+  `);
+
+  const requestLogColumns = db.pragma('table_info(request_logs)') as Array<{ name: string }>;
+  if (!requestLogColumns.some((column) => column.name === 'error')) {
+    db.exec('ALTER TABLE request_logs ADD COLUMN error TEXT');
+  }
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS usage_logs (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       provider    TEXT NOT NULL,
-      key_name    TEXT NOT NULL DEFAULT 'default',
       model       TEXT NOT NULL,
-      project     TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
-      user_id     TEXT,
       tokens_in   INTEGER,
       tokens_out  INTEGER,
       total_tokens INTEGER,
       cost_usd    REAL,
       latency_ms  INTEGER NOT NULL DEFAULT 0,
       success     INTEGER NOT NULL DEFAULT 1,
-      error_message TEXT,
+      error_code TEXT CHECK (error_code IS NULL OR error_code IN ('rate_limited', 'timed_out', 'unavailable', 'failed')),
+      error_category TEXT CHECK (error_category IS NULL OR error_category IN ('client', 'provider', 'transient')),
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_usage_provider_time ON usage_logs(provider, created_at);
     CREATE INDEX IF NOT EXISTS idx_usage_model_time ON usage_logs(model, created_at);
-    CREATE INDEX IF NOT EXISTS idx_usage_project_time ON usage_logs(project, created_at);
-    CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage_logs(user_id, created_at);
   `);
-
-  const usageColumns = db.pragma('table_info(usage_logs)') as Array<{
-    name: string;
-    notnull: number;
-  }>;
-  const usageColumnMap = new Map(usageColumns.map((column) => [column.name, column]));
-  const hasUsageTotalTokens = usageColumnMap.has('total_tokens');
-  const hasUsageUserId = usageColumnMap.has('user_id');
-  const costUsdColumn = usageColumnMap.get('cost_usd');
-  const tokensInColumn = usageColumnMap.get('tokens_in');
-  const tokensOutColumn = usageColumnMap.get('tokens_out');
-  const usageTotalTokensSelect = hasUsageTotalTokens ? 'total_tokens' : 'NULL';
-  const usageUserIdSelect = hasUsageUserId ? 'user_id' : 'NULL';
-  const usageSplitColumnsAreNullable =
-    tokensInColumn?.notnull === 0 && tokensOutColumn?.notnull === 0;
-  const usageCostColumnIsNullable = costUsdColumn?.notnull === 0;
-
-  if (!hasUsageTotalTokens || !hasUsageUserId || !usageSplitColumnsAreNullable || !usageCostColumnIsNullable) {
-    db.exec(`
-      DROP INDEX IF EXISTS idx_usage_provider_time;
-      DROP INDEX IF EXISTS idx_usage_model_time;
-      DROP INDEX IF EXISTS idx_usage_project_time;
-      DROP INDEX IF EXISTS idx_usage_user_time;
-
-      CREATE TABLE usage_logs_new (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        provider     TEXT NOT NULL,
-        key_name     TEXT NOT NULL DEFAULT 'default',
-        model        TEXT NOT NULL,
-        project      TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
-        user_id      TEXT,
-        tokens_in    INTEGER,
-        tokens_out   INTEGER,
-        total_tokens INTEGER,
-        cost_usd     REAL,
-        latency_ms   INTEGER NOT NULL DEFAULT 0,
-        success      INTEGER NOT NULL DEFAULT 1,
-        error_message TEXT,
-        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      INSERT INTO usage_logs_new (
-        id,
-        provider,
-        key_name,
-        model,
-        project,
-        user_id,
-        tokens_in,
-        tokens_out,
-        total_tokens,
-        cost_usd,
-        latency_ms,
-        success,
-        error_message,
-        created_at
-      )
-      SELECT
-        id,
-        provider,
-        key_name,
-        model,
-        project,
-        ${usageUserIdSelect},
-        tokens_in,
-        tokens_out,
-        CASE
-          WHEN tokens_in IS NOT NULL AND tokens_out IS NOT NULL THEN tokens_in + tokens_out
-          ELSE ${usageTotalTokensSelect}
-        END,
-        cost_usd,
-        latency_ms,
-        success,
-        error_message,
-        created_at
-      FROM usage_logs;
-
-      DROP TABLE usage_logs;
-      ALTER TABLE usage_logs_new RENAME TO usage_logs;
-
-      CREATE INDEX idx_usage_provider_time ON usage_logs(provider, created_at);
-      CREATE INDEX idx_usage_model_time ON usage_logs(model, created_at);
-      CREATE INDEX idx_usage_project_time ON usage_logs(project, created_at);
-      CREATE INDEX idx_usage_user_time ON usage_logs(user_id, created_at);
-    `);
-  }
 
   // ── Price config table (Phase 4: Cost Tracking) ──
   db.exec(`
@@ -296,17 +277,22 @@ export function initializeDb(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS comparison_results (
       id              TEXT PRIMARY KEY,
-      prompt          TEXT NOT NULL,
-      system_prompt   TEXT,
       models          TEXT NOT NULL,
-      results         TEXT NOT NULL,
-      summary         TEXT NOT NULL,
       project         TEXT NOT NULL DEFAULT '${GLOBAL_PROJECT}',
       created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_comparison_project ON comparison_results(project);
     CREATE INDEX IF NOT EXISTS idx_comparison_created ON comparison_results(created_at);
+
+    CREATE TABLE IF NOT EXISTS authorized_comparison_results (
+      id              TEXT PRIMARY KEY REFERENCES comparison_results(id),
+      prompt          TEXT NOT NULL,
+      system_prompt   TEXT,
+      results         TEXT NOT NULL,
+      summary         TEXT NOT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // ── HF Model Cache table (Sprint 3: Auto-Discovery) ──

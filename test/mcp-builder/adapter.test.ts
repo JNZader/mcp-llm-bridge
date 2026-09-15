@@ -112,12 +112,7 @@ describe('McpDefinitionAdapter', () => {
     assert.deepStrictEqual(result, {
       content: [{
         type: 'text',
-        text: JSON.stringify({
-          error: 'boom',
-          code: 'dynamic-tool-error',
-          toolName: 'fail',
-          plugin: 'test-server',
-        }),
+        text: JSON.stringify({ error: 'Dynamic tool execution failed.', code: 'dynamic-tool-error' }),
       }],
       isError: true,
     });
@@ -159,13 +154,7 @@ describe('McpDefinitionAdapter', () => {
       assert.deepStrictEqual(result, {
         content: [{
           type: 'text',
-          text: JSON.stringify({
-            error: "Dynamic tool 'hang' timed out after 20ms",
-            code: 'dynamic-tool-timeout',
-            toolName: 'hang',
-            plugin: 'timeout-plugin',
-            timeoutMs: 20,
-          }),
+          text: JSON.stringify({ error: 'Dynamic tool execution timed out.', code: 'dynamic-tool-timeout' }),
         }],
         isError: true,
       });
@@ -208,11 +197,8 @@ describe('McpDefinitionAdapter', () => {
     assert.equal(parseToolPayload(first!).code, 'dynamic-tool-error');
     assert.equal(parseToolPayload(second!).code, 'dynamic-tool-error');
     assert.deepStrictEqual(parseToolPayload(third!), {
-      error: "Dynamic tool 'always_fail' has been quarantined after 2 consecutive failures",
+      error: 'Dynamic tool is quarantined.',
       code: 'dynamic-tool-quarantined',
-      toolName: 'always_fail',
-      plugin: 'failing-plugin',
-      consecutiveFailures: 2,
     });
     assert.deepStrictEqual(adapter.getRuntimeHealth(), [{
       name: 'always_fail',
@@ -221,7 +207,6 @@ describe('McpDefinitionAdapter', () => {
       consecutiveFailures: 2,
       quarantined: true,
       lastErrorCode: 'dynamic-tool-error',
-      lastErrorMessage: 'boom-2',
     }]);
   });
 
@@ -262,11 +247,8 @@ describe('McpDefinitionAdapter', () => {
       assert.equal(parseToolPayload(first!).code, 'dynamic-tool-timeout');
       assert.equal(parseToolPayload(second!).code, 'dynamic-tool-timeout');
       assert.deepStrictEqual(parseToolPayload(third!), {
-        error: "Dynamic tool 'always_hang' has been quarantined after 2 consecutive failures",
+        error: 'Dynamic tool is quarantined.',
         code: 'dynamic-tool-quarantined',
-        toolName: 'always_hang',
-        plugin: 'timeout-plugin',
-        consecutiveFailures: 2,
       });
     } finally {
       delete process.env.MCP_PLUGIN_TOOL_TIMEOUT_MS;
@@ -312,7 +294,6 @@ describe('McpDefinitionAdapter', () => {
       consecutiveFailures: 0,
       quarantined: false,
       lastErrorCode: undefined,
-      lastErrorMessage: undefined,
     }]);
   });
 

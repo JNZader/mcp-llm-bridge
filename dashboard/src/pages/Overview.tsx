@@ -55,8 +55,10 @@ export function Overview() {
         />
         <KpiCard
           title="Cost (24h)"
-          value={`$${overview.usage.totalCost.toFixed(2)}`}
-          subtitle={`${overview.usage.totalTokens.toLocaleString()} tokens`}
+          value={overview.usage.totalCost === null ? "Unknown" : `$${overview.usage.totalCost.toFixed(2)}`}
+          subtitle={overview.usage.hasUnknownCost
+            ? `${overview.usage.totalTokens.toLocaleString()} tokens; some costs are unknown`
+            : `${overview.usage.totalTokens.toLocaleString()} tokens`}
           icon={DollarSign}
         />
       </div>

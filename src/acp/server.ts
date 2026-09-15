@@ -15,6 +15,8 @@
 import type {
   JsonRpcRequest,
   JsonRpcResponse,
+  JsonRpcInputErrorResponse,
+  JsonRpcRawResponse,
   AcpInitializeParams,
   AcpInitializeResult,
   AcpStartTaskParams,
@@ -36,6 +38,105 @@ import type {
 } from './types.js';
 import { ACP_METHODS, ACP_ERROR_CODES } from './types.js';
 import { AcpToMcpTranslator, type TranslationContext } from './translator.js';
+import { safeError } from '../core/safe-error.js';
+
+type AcpErrorCode = (typeof ACP_ERROR_CODES)[keyof typeof ACP_ERROR_CODES];
+
+interface PublicRpcError {
+  readonly code: AcpErrorCode;
+  readonly message: string;
+}
+
+const RPC_ERROR_MESSAGES: Readonly<Record<AcpErrorCode, string>> = Object.freeze({
+  [ACP_ERROR_CODES.TASK_NOT_FOUND]: 'Task was not found.',
+  [ACP_ERROR_CODES.TASK_ALREADY_COMPLETED]: 'Task is already completed.',
+  [ACP_ERROR_CODES.TASK_CANCELLED]: 'Task was cancelled.',
+  [ACP_ERROR_CODES.INVALID_TASK_STATE]: 'Task state is invalid.',
+  [ACP_ERROR_CODES.SERVER_NOT_INITIALIZED]: 'Server is not initialized.',
+  [ACP_ERROR_CODES.PARSE_ERROR]: 'Parse error.',
+  [ACP_ERROR_CODES.INVALID_REQUEST]: 'Invalid request.',
+  [ACP_ERROR_CODES.METHOD_NOT_FOUND]: 'Method was not found.',
+  [ACP_ERROR_CODES.INVALID_PARAMS]: 'Invalid parameters.',
+  [ACP_ERROR_CODES.INTERNAL_ERROR]: safeError('INTERNAL_ERROR').message,
+});
+
+const RAW_REQUEST_DECODE_KIND = {
+  REQUEST: 'request',
+  ERROR: 'error',
+} as const;
+
+type RawRequestDecodeResult =
+  | { kind: typeof RAW_REQUEST_DECODE_KIND.REQUEST; request: JsonRpcRequest }
+  | { kind: typeof RAW_REQUEST_DECODE_KIND.ERROR; response: JsonRpcInputErrorResponse };
+
+function isRawRequestObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRawJsonRpcRequest(value: unknown): value is JsonRpcRequest {
+  if (!isRawRequestObject(value) || !Object.hasOwn(value, 'id')) {
+    return false;
+  }
+
+  const id = value.id;
+  return (
+    (typeof id === 'string' || (typeof id === 'number' && Number.isSafeInteger(id))) &&
+    value.jsonrpc === '2.0' &&
+    typeof value.method === 'string' &&
+    (value.params === undefined || isRawRequestObject(value.params))
+  );
+}
+
+function rawInputError(
+  id: string | number | null,
+  code: typeof ACP_ERROR_CODES.PARSE_ERROR | typeof ACP_ERROR_CODES.INVALID_REQUEST | typeof ACP_ERROR_CODES.INVALID_PARAMS,
+): JsonRpcInputErrorResponse {
+  return { jsonrpc: '2.0', id, error: { code, message: RPC_ERROR_MESSAGES[code] } };
+}
+
+function decodeRawRequest(rawJson: string): RawRequestDecodeResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(null, ACP_ERROR_CODES.PARSE_ERROR) };
+  }
+
+  if (!isRawRequestObject(parsed)) {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(null, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  const id = parsed.id;
+  if (!Object.hasOwn(parsed, 'id') || (typeof id !== 'string' && !(typeof id === 'number' && Number.isSafeInteger(id)))) {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(null, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  if (parsed.jsonrpc !== '2.0' || typeof parsed.method !== 'string') {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(id, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  if (parsed.params !== undefined && !isRawRequestObject(parsed.params)) {
+    const code = Array.isArray(parsed.params) ? ACP_ERROR_CODES.INVALID_PARAMS : ACP_ERROR_CODES.INVALID_REQUEST;
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(id, code) };
+  }
+
+  if (!isRawJsonRpcRequest(parsed)) {
+    return { kind: RAW_REQUEST_DECODE_KIND.ERROR, response: rawInputError(id, ACP_ERROR_CODES.INVALID_REQUEST) };
+  }
+
+  return { kind: RAW_REQUEST_DECODE_KIND.REQUEST, request: parsed };
+}
+
+const rpcErrorIdentities = new WeakMap<object, PublicRpcError>();
+
+function projectRpcError(value: unknown): PublicRpcError {
+  const captured = ((typeof value === 'object' && value !== null) || typeof value === 'function')
+    ? rpcErrorIdentities.get(value) : undefined;
+  return captured ?? {
+    code: ACP_ERROR_CODES.INTERNAL_ERROR,
+    message: RPC_ERROR_MESSAGES[ACP_ERROR_CODES.INTERNAL_ERROR],
+  };
+}
 
 // ─── Handler Contract ────────────────────────────────────────
 
@@ -151,16 +252,27 @@ export class AcpServer {
         result,
       };
     } catch (error) {
-      const err = error as { code?: number; message?: string };
+      const publicError = projectRpcError(error);
       return {
         jsonrpc: '2.0',
         id: request.id,
-        error: {
-          code: err.code ?? ACP_ERROR_CODES.INTERNAL_ERROR,
-          message: err.message ?? 'Internal server error',
-        },
+        error: publicError,
       };
     }
+  }
+
+  /**
+   * Handle one raw JSON-RPC request string at the ACP typed-request boundary.
+   * This is a single-request API, not a full JSON-RPC transport: batches,
+   * notification-shaped inputs, framing, serialization, stdin and ports are unsupported.
+   * String identifiers are recommended for large values; JSON duplicate keys retain native
+   * JSON.parse last-key-wins behavior.
+   */
+  async handleRawRequest(rawJson: string): Promise<JsonRpcRawResponse> {
+    const decoded = decodeRawRequest(rawJson);
+    return decoded.kind === RAW_REQUEST_DECODE_KIND.ERROR
+      ? decoded.response
+      : this.handleRequest(decoded.request);
   }
 
   // ─── Method Dispatch ─────────────────────────────────────────
@@ -371,9 +483,8 @@ export class AcpServer {
 
       this.tasks.set(taskId, updatedTask);
       this.emitTaskUpdate(updatedTask);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.failTask(taskId, 'EXECUTION_ERROR', message);
+    } catch {
+      this.failTask(taskId, 'EXECUTION_ERROR', safeError('INTERNAL_ERROR').message);
     }
   }
 
@@ -534,8 +645,11 @@ export class AcpServer {
     this.notificationHandler?.({ task });
   }
 
-  private rpcError(code: number, message: string): { code: number; message: string } {
-    return { code, message };
+  private rpcError(code: AcpErrorCode, _message: string): PublicRpcError {
+    const captured = Object.freeze({ code, message: RPC_ERROR_MESSAGES[code] });
+    const error = { ...captured };
+    rpcErrorIdentities.set(error, captured);
+    return error;
   }
 
   // ─── Test Helpers ──────────────────────────────────────────

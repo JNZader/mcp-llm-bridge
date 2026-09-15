@@ -1,18 +1,20 @@
 import type { Context, Hono } from 'hono';
 import type Database from 'better-sqlite3';
+import { safeError } from '../../../core/safe-error.js';
+import type { ModelSyncRunStatus } from '../../../model-sync/index.js';
+import type { PriceSyncRunStatus } from '../../../price-sync/index.js';
 
 import type { Vault } from '../../../vault/vault.js';
 import {
-  ModelSyncAlreadyRunningError,
+  getModelSyncAlreadyRunningStatus,
   ModelSyncManager,
   isProviderType,
   PROVIDER_TYPE,
   type ProviderType,
 } from '../../../model-sync/index.js';
-import { PriceManager, PriceSyncAlreadyRunningError } from '../../../price-sync/index.js';
+import { PriceManager, getPriceSyncAlreadyRunningStatus } from '../../../price-sync/index.js';
 import {
   resolveProviderApiKey,
-  resolveProviderApiKeyEnv,
   resolveProviderBaseUrl,
 } from '../../../core/provider-runtime-config.js';
 
@@ -135,7 +137,10 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
 
       const providerValidation = validateProvider(provider, 'provider');
       if (!providerValidation.ok) {
-        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', providerValidation.details);
+        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', {
+          field: 'provider',
+          supportedProviders: supportedSyncProviders,
+        });
       }
 
       const resolvedProvider = providerValidation.provider;
@@ -164,16 +169,12 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         return jsonError(
           c,
           400,
-          `No API key found for provider: ${resolvedProvider}`,
+          'Provider credentials are not configured.',
           'MISSING_CREDENTIALS',
           {
-              provider: resolvedProvider,
-              resolution: [
-                'Provide apiKey in the request body',
-                `Set ${resolveProviderApiKeyEnv(resolvedProvider)} in the environment`,
-                'Store a default credential in the vault',
-              ],
-            },
+            provider: resolvedProvider,
+            resolution: ['REQUEST_API_KEY', 'PROVIDER_ENV_KEY', 'DEFAULT_VAULT_CREDENTIAL'],
+          },
         );
       }
 
@@ -194,10 +195,11 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           autoSyncIntervalMs,
         });
       } catch (error) {
-        if (error instanceof ModelSyncAlreadyRunningError) {
+        const activeRun = getModelSyncAlreadyRunningStatus(error);
+        if (activeRun !== undefined) {
           return jsonError(c, 409, 'Model sync already running', 'SYNC_ALREADY_RUNNING', {
             provider: resolvedProvider,
-            activeRun: error.status,
+            activeRun: projectModelSyncStatus(activeRun),
           });
         }
 
@@ -213,9 +215,8 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         removed: result.modelsRemoved,
         timestamp: result.timestamp,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -228,7 +229,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       const provider = c.req.query('provider') ?? undefined;
       const providerValidation = validateOptionalProvider(provider, 'provider');
       if (!providerValidation.ok) {
-        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', providerValidation.details);
+        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', { field: 'provider', supportedProviders: supportedSyncProviders });
       }
 
       const syncManager = new ModelSyncManager(deps.db);
@@ -237,12 +238,11 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         : supportedSyncProviders.map((supportedProvider) => syncManager.getRunStatus(supportedProvider));
 
       return c.json({
-        statuses,
+        statuses: statuses.map(projectModelSyncStatus),
         count: statuses.length,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -257,12 +257,12 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
 
       const providerValidation = validateOptionalProvider(provider, 'provider');
       if (!providerValidation.ok) {
-        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', providerValidation.details);
+        return jsonError(c, 400, providerValidation.error, 'VALIDATION_ERROR', { field: 'provider', supportedProviders: supportedSyncProviders });
       }
 
       const limitValidation = validateLimit(limitStr, 'limit');
       if (!limitValidation.ok) {
-        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', limitValidation.details);
+        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', { field: 'limit', min: 1, max: maxSyncHistoryLimit });
       }
 
       const syncManager = new ModelSyncManager(deps.db);
@@ -279,13 +279,12 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           modelsFound: h.modelsFound,
           modelsAdded: h.modelsAdded,
           modelsRemoved: h.modelsRemoved,
-          error: h.error,
+          error: projectSyncDiagnostic(h, 'error'),
         })),
         count: history.length,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -310,7 +309,6 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           if (!isProviderType(provider)) {
             return jsonError(c, 400, 'Invalid provider for provider parameter', 'VALIDATION_ERROR', {
               field: 'provider',
-              received: provider ?? null,
               supportedProviders: supportedSyncProviders,
             });
           }
@@ -322,7 +320,6 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
             'UNSUPPORTED_PARAMETER',
             {
               field: 'provider',
-              received: provider,
             },
           );
         }
@@ -333,19 +330,29 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       try {
         result = await priceManager.syncPrices();
       } catch (error) {
-        if (error instanceof PriceSyncAlreadyRunningError) {
+        const activeRun = getPriceSyncAlreadyRunningStatus(error);
+        if (activeRun !== undefined) {
           return jsonError(c, 409, 'Price sync already running', 'SYNC_ALREADY_RUNNING', {
-            activeRun: error.status,
+            activeRun: projectPriceSyncStatus(activeRun),
           });
         }
 
         throw error;
       }
 
-      return c.json({ ok: true, synced: result.added + result.updated, details: result });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+      return c.json({
+        ok: true,
+        synced: result.added + result.updated,
+        details: {
+          timestamp: result.timestamp,
+          updated: result.updated,
+          added: result.added,
+          unchanged: result.unchanged,
+          error: projectSyncDiagnostic(result, 'error'),
+        },
+      });
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -356,10 +363,9 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       }
 
       const priceManager = new PriceManager(deps.db);
-      return c.json(priceManager.getRunStatus());
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+      return c.json(projectPriceSyncStatus(priceManager.getRunStatus()));
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
 
@@ -372,7 +378,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       const limitStr = c.req.query('limit');
       const limitValidation = validateLimit(limitStr, 'limit');
       if (!limitValidation.ok) {
-        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', limitValidation.details);
+        return jsonError(c, 400, limitValidation.error, 'VALIDATION_ERROR', { field: 'limit', min: 1, max: maxSyncHistoryLimit });
       }
 
       const priceManager = new PriceManager(deps.db);
@@ -384,13 +390,59 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
           syncedAt: entry.syncedAt,
           modelsUpdated: entry.modelsUpdated,
           modelsAdded: entry.modelsAdded,
-          error: entry.error,
+          error: projectSyncDiagnostic(entry, 'error'),
         })),
         count: history.length,
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return jsonError(c, 500, message, 'INTERNAL_ERROR');
+    } catch {
+      return jsonError(c, 500, safeError('INTERNAL_ERROR').message, 'INTERNAL_ERROR');
     }
   });
+}
+
+function projectSyncDiagnostic(source: object, key: string): string | null | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (descriptor === undefined) return undefined;
+  if ('value' in descriptor && descriptor.value == null) return descriptor.value;
+  return safeError('INTERNAL_ERROR').message;
+}
+
+function projectSyncTiming(status: ModelSyncRunStatus | PriceSyncRunStatus) {
+  return {
+    isRunning: status.isRunning,
+    startedAt: status.startedAt,
+    lastCompletedAt: status.lastCompletedAt,
+    lastSuccessAt: status.lastSuccessAt,
+    lastError: projectSyncDiagnostic(status, 'lastError'),
+  };
+}
+
+function projectModelSyncStatus(status: ModelSyncRunStatus) {
+  const summary = status.lastResultSummary;
+  return {
+    provider: status.provider,
+    ...projectSyncTiming(status),
+    lastResultSummary: summary == null ? summary : {
+      provider: summary.provider,
+      timestamp: summary.timestamp,
+      modelsFound: summary.modelsFound,
+      modelsAdded: summary.modelsAdded,
+      modelsRemoved: summary.modelsRemoved,
+      error: projectSyncDiagnostic(summary, 'error'),
+    },
+  };
+}
+
+function projectPriceSyncStatus(status: PriceSyncRunStatus) {
+  const summary = status.lastResultSummary;
+  return {
+    ...projectSyncTiming(status),
+    lastResultSummary: summary == null ? summary : {
+      timestamp: summary.timestamp,
+      updated: summary.updated,
+      added: summary.added,
+      unchanged: summary.unchanged,
+      error: projectSyncDiagnostic(summary, 'error'),
+    },
+  };
 }

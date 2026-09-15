@@ -15,7 +15,42 @@ function tempDbPath(): string {
   return join(dir, 'test.db');
 }
 
+function assertSafeTelemetryFailure(error: unknown, canaries: readonly string[]): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  for (const canary of canaries) {
+    assert.ok(!message.includes(canary), 'The rejection must not forward protected content');
+  }
+  return true;
+}
+
 describe('router-telemetry', () => {
+  it('rejects protected-content and provider-error canaries before telemetry side effects', () => {
+    const analyticsRecords: Array<Record<string, unknown>> = [];
+    const costRecords: Array<Record<string, unknown>> = [];
+    const canaries = [
+      'WU1-PLAIN-CANARY', 'WU1-NESTED-CANARY', 'WU1-RENAMED-CANARY',
+      'V1UxLUJBU0U2NC1DQU5BUlk=', 'WU1-ESCAPED-\\u0063ANARY', 'WU1-UNICODE-秘密',
+      `${'x'.repeat(9_990)}WU1-TRUNCATION-CANARY`,
+    ];
+    const input = {
+      provider: 'provider', model: 'model', latencyMs: 1, success: false,
+      errorMessage: `provider failure: ${canaries[0]}`,
+      context: { nested: canaries[1], prompt_alias: canaries[2], encoded: canaries[3] },
+      escaped: canaries[4], unicode: canaries[5], boundary: canaries[6],
+    } as unknown as Parameters<typeof recordUsage>[1];
+
+    assert.throws(
+      () => recordUsage({
+        analyticsAggregator: { record: (_provider: string, _model: string, usage: Record<string, unknown>) => analyticsRecords.push(usage) } as never,
+        costTracker: { record: (usage: Record<string, unknown>) => costRecords.push(usage) } as never,
+        modelRouter: null,
+      }, input),
+      (error: unknown) => assertSafeTelemetryFailure(error, canaries),
+    );
+    assert.deepEqual(analyticsRecords, [], 'Rejected input must not reach analytics');
+    assert.deepEqual(costRecords, [], 'Rejected input must not reach cost telemetry');
+  });
+
   it('persists total-only usage without fabricating token splits', () => {
     const analyticsRecords: Array<Record<string, unknown>> = [];
     const costRecords: Array<Record<string, unknown>> = [];
@@ -35,7 +70,7 @@ describe('router-telemetry', () => {
         modelRouter: null,
       },
       {
-        provider: 'legacy-provider',
+        provider: 'openai',
         model: 'gpt-4o-mini',
         totalTokens: 9,
         latencyMs: 25,
@@ -59,7 +94,7 @@ describe('router-telemetry', () => {
     ]);
     assert.deepEqual(costRecords, [
       {
-        provider: 'legacy-provider',
+        provider: 'openai',
         model: 'gpt-4o-mini',
         tokensIn: undefined,
         tokensOut: undefined,
@@ -70,7 +105,6 @@ describe('router-telemetry', () => {
         project: undefined,
         keyName: 'key-123',
         userId: 'user-123',
-        errorMessage: undefined,
       },
     ]);
   });
@@ -87,8 +121,8 @@ describe('router-telemetry', () => {
           modelRouter: null,
         },
         {
-          provider: 'legacy-provider',
-          model: 'legacy-model',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
           totalTokens: 13,
           latencyMs: 40,
           success: true,
@@ -99,14 +133,14 @@ describe('router-telemetry', () => {
 
       tracker.flush();
 
-      const records = tracker.query({ provider: 'legacy-provider' });
+      const records = tracker.query({ provider: 'openai' });
       assert.equal(records.length, 1);
       assert.equal(records[0]?.tokensIn, null);
       assert.equal(records[0]?.tokensOut, null);
       assert.equal(records[0]?.totalTokens, 13);
       assert.equal(records[0]?.costUsd, null);
-      assert.equal(records[0]?.keyName, 'key-789');
-      assert.equal(records[0]?.userId, 'user-789');
+      assert.equal(records[0]?.keyName, null);
+      assert.equal(records[0]?.userId, null);
     } finally {
       tracker.destroy();
       rmSync(dbPath, { force: true });
@@ -127,8 +161,8 @@ describe('router-telemetry', () => {
           modelRouter: null,
         },
         {
-          provider: 'anonymous-provider',
-          model: 'anonymous-model',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
           totalTokens: 7,
           latencyMs: 12,
           success: true,
@@ -137,9 +171,9 @@ describe('router-telemetry', () => {
 
       tracker.flush();
 
-      const records = tracker.query({ provider: 'anonymous-provider' });
+      const records = tracker.query({ provider: 'openai' });
       assert.equal(records.length, 1);
-      assert.equal(records[0]?.keyName, 'default');
+      assert.equal(records[0]?.keyName, null);
       assert.equal(records[0]?.userId, null);
     } finally {
       tracker.destroy();
@@ -161,12 +195,12 @@ describe('router-telemetry', () => {
           modelRouter: null,
         },
         provider: {
-          id: 'stream-provider',
+          id: 'openai',
         } as never,
       });
 
       recordStreamingResult({
-        model: 'stream-model',
+        model: 'gpt-4o-mini',
         latencyMs: 18,
         success: true,
         project: 'stream-project',
@@ -176,12 +210,12 @@ describe('router-telemetry', () => {
 
       tracker.flush();
 
-      const records = tracker.query({ provider: 'stream-provider' });
+      const records = tracker.query({ provider: 'openai' });
       assert.equal(records.length, 1);
-      assert.equal(records[0]?.model, 'stream-model');
-      assert.equal(records[0]?.project, 'stream-project');
-      assert.equal(records[0]?.keyName, 'key-stream');
-      assert.equal(records[0]?.userId, 'user-stream');
+      assert.equal(records[0]?.model, 'gpt-4o-mini');
+      assert.equal(records[0]?.project, null);
+      assert.equal(records[0]?.keyName, null);
+      assert.equal(records[0]?.userId, null);
       assert.equal(records[0]?.tokensIn, null);
       assert.equal(records[0]?.tokensOut, null);
       assert.equal(records[0]?.totalTokens, null);

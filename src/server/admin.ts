@@ -18,7 +18,7 @@ import type { GatewayConfig } from '../core/types.js';
 import type { SessionManager } from '../session/index.js';
 import { parseBearerToken, tokenEquals } from './auth-helpers/bearer.js';
 import { registerAdminApiKeyRoutes } from './routes/admin/api-keys.js';
-import { registerAdminDiscoveryRoutes } from './routes/admin/discovery.js';
+import { registerAdminDiscoveryRoutes, type AdminDiscoveryServices } from './routes/admin/discovery.js';
 import { registerAdminDashboardRoutes } from './routes/admin/dashboard.js';
 import { registerAdminOperationsRoutes } from './routes/admin/operations.js';
 import { registerAdminShellRoutes } from './routes/admin/shell.js';
@@ -87,6 +87,8 @@ export interface AdminDeps {
   freeModelRouter?: import('../free-models/router.js').FreeModelRouter;
   /** Optional session manager for group-level sticky session metrics. */
   sessionManager?: SessionManager;
+  /** Optional service overrides for hermetic admin discovery tests. */
+  adminDiscoveryServices?: AdminDiscoveryServices;
 }
 
 /**
@@ -108,7 +110,7 @@ export function registerAdminRoutes(app: Hono, deps: AdminDeps): void {
   registerAdminDiscoveryRoutes(app, {
     db: deps.db,
     freeModelRouter: deps.freeModelRouter,
-  });
+  }, deps.adminDiscoveryServices);
   registerAdminOperationsRoutes(app, { costTracker: deps.costTracker });
   registerAdminShellRoutes(app, { config });
   registerAdminSecurityProfileRoutes(app, { db: deps.db });

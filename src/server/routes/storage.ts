@@ -1,15 +1,20 @@
 import type { Context, Hono } from "hono";
 
 import { VALID_PROVIDERS } from "../../core/constants.js";
+import { safeError, toSafeHttpError } from "../../core/safe-error.js";
 import {
 	validateCredentialStore,
 	validateFileStore,
 } from "../../core/schemas.js";
 import type { Vault } from "../../vault/vault.js";
+import { getVaultDeletionCode } from "../../vault/deletion-error.js";
 import {
 	getValidationIssue,
 	resolveRequestProject,
 } from "../http-helpers/request-validation.js";
+
+const INTERNAL_ERROR_MESSAGE = toSafeHttpError(safeError("INTERNAL_ERROR")).body.error;
+const ACCESS_DENIED_MESSAGE = toSafeHttpError(safeError("ACCESS_DENIED")).body.error;
 
 export interface StorageRouteDeps {
 	vault: Vault;
@@ -19,16 +24,17 @@ function getScopedProject(c: Context): string | undefined {
 	return c.req.query("project") ?? c.req.header("X-Project") ?? undefined;
 }
 
-function jsonDeleteError(c: Context, message: string): Response {
-	if (message.includes("Unauthorized")) {
-		return c.json({ error: message, code: "UNAUTHORIZED" }, 403);
+function jsonDeleteError(c: Context, error: unknown): Response {
+	const code = getVaultDeletionCode(error);
+	if (code === "UNAUTHORIZED") {
+		return c.json({ error: ACCESS_DENIED_MESSAGE, code: "UNAUTHORIZED" }, 403);
 	}
 
-	if (message.includes("not found")) {
-		return c.json({ error: message, code: "NOT_FOUND" }, 404);
+	if (code === "NOT_FOUND") {
+		return c.json({ error: "The requested resource was not found.", code: "NOT_FOUND" }, 404);
 	}
 
-	return c.json({ error: message }, 500);
+	return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 }
 
 export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
@@ -76,9 +82,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 				},
 				201,
 			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -86,9 +91,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 		try {
 			const credentials = vault.listMasked(getScopedProject(c));
 			return c.json({ credentials });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -103,8 +107,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 			vault.delete(id, getScopedProject(c));
 			return c.json({ ok: true });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return jsonDeleteError(c, message);
+			return jsonDeleteError(c, error);
 		}
 	});
 
@@ -148,9 +151,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 				},
 				201,
 			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -158,9 +160,8 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 		try {
 			const files = vault.listFiles(getScopedProject(c));
 			return c.json({ files });
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return c.json({ error: message }, 500);
+		} catch {
+			return c.json({ error: INTERNAL_ERROR_MESSAGE }, 500);
 		}
 	});
 
@@ -175,8 +176,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 			vault.deleteFile(id, getScopedProject(c));
 			return c.json({ ok: true });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return jsonDeleteError(c, message);
+			return jsonDeleteError(c, error);
 		}
 	});
 }

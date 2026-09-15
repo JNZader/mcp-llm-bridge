@@ -1,3 +1,6 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
+import { safeError } from "../src/core/safe-error.js";
+
 /**
  * HTTP Logs API endpoint tests — GET /v1/logs
  *
@@ -17,7 +20,6 @@ import { getCircuitBreakerV2, resetCircuitBreakerV2, Router } from '../src/core/
 import { createRouterExecutionContract } from '../src/core/router-execution-contract.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
-import { createAllAdapters } from '../src/adapters/index.js';
 import { RequestLogger } from '../src/logging/request-logger.js';
 import { StubAdapter } from './helpers/stub-adapter.js';
 
@@ -46,9 +48,6 @@ const logsDbPath = `/tmp/test-http-logs-logger-${Date.now()}.db`;
 const vault = new Vault(config);
 const router = new Router();
 
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
 router.register(new StubAdapter());
 
 let server: http.Server;
@@ -174,6 +173,19 @@ async function seedTestLogs(): Promise<void> {
   }
 }
 
+function assertSafeStreamFailure(raw: string, privateMessage: string) {
+  const data = raw.split("\n").filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trim());
+  assert.deepEqual(JSON.parse(data.at(-2)!), {
+    error: { message: safeError("INTERNAL_ERROR").message, type: "server_error", code: null },
+  });
+  assert.equal(data.at(-1), "[DONE]");
+  assert.equal(data.filter((value) => value === "[DONE]").length, 1);
+  assert.equal(data.filter((value) => value !== "[DONE]" && JSON.parse(value).error).length, 1);
+  assert.equal(raw.includes(privateMessage), false);
+}
+
+
 describe('GET /v1/logs', () => {
   before(async () => {
     // Create separate database for request logs
@@ -192,6 +204,8 @@ describe('GET /v1/logs', () => {
         cost REAL,
         latency_ms INTEGER NOT NULL,
         error TEXT,
+        error_code TEXT,
+        error_category TEXT,
         attempts INTEGER NOT NULL DEFAULT 1,
         correlation_id TEXT,
         request_data TEXT,
@@ -209,7 +223,7 @@ describe('GET /v1/logs', () => {
     requestLogger = new RequestLogger(logsDb);
 
     server = startHttpServer({
-      router,
+      router: freezeRouterForStartup(router),
       vault,
       config,
       requestLogger,
@@ -333,7 +347,7 @@ describe('GET /v1/logs', () => {
   });
 
 	describe('Filtering by correlation ID', () => {
-		it('should expose and filter logs by correlationId', async () => {
+		it('should filter logs by correlationId without exposing it in the projection', async () => {
 			const correlationId = 'corr-http-logs-filter';
 
 			const generateRes = await request('POST', '/v1/generate', {
@@ -363,7 +377,7 @@ describe('GET /v1/logs', () => {
 				};
 
 				assert.equal(data.total, 1);
-				assert.equal(data.logs[0]?.correlationId, correlationId);
+				assert.ok(!('correlationId' in data.logs[0]!));
 				assert.ok(!('requestData' in data.logs[0]!));
 				assert.ok(!('responseData' in data.logs[0]!));
 			} finally {
@@ -583,7 +597,7 @@ describe('GET /v1/logs', () => {
       assert.equal(res.status, 200);
       const data = res.data as {
         logs: Array<{
-          id: number;
+          id: string;
           timestamp: number;
           provider: string;
           model: string;
@@ -599,7 +613,7 @@ describe('GET /v1/logs', () => {
       };
 
       const log = data.logs[0]!;
-      assert.ok(typeof log.id === 'number', 'Should have id');
+      assert.ok(typeof log.id === 'string' && log.id.startsWith('log_'), 'Should have opaque log id');
       assert.ok(typeof log.timestamp === 'number', 'Should have timestamp');
       assert.ok(typeof log.provider === 'string', 'Should have provider');
       assert.ok(typeof log.model === 'string', 'Should have model');
@@ -975,7 +989,7 @@ describe('GET /v1/logs', () => {
         });
 
         assert.equal(res.status, 200);
-        assert.match(res.data, /last startup failure/);
+        assertSafeStreamFailure(res.data, "last startup failure");
         assert.match(res.data, /data: \[DONE\]/);
 
         const logsRes = await request('GET', `/v1/logs?model=${streamModel}`);
@@ -990,7 +1004,8 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.provider, 'last-failing-provider');
         assert.equal(data.logs[0]?.model, streamModel);
         assert.equal(data.logs[0]?.attempts, 2);
-        assert.equal(data.logs[0]?.error, 'last startup failure');
+        assert.equal(data.logs[0]?.error, "Provider request failed");
+        assert.equal(JSON.stringify(data.logs).includes("last startup failure"), false);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);
@@ -1041,7 +1056,7 @@ describe('GET /v1/logs', () => {
 
         assert.equal(res.status, 200);
         assert.match(res.data, /partial/);
-        assert.match(res.data, /mid-stream failure/);
+        assertSafeStreamFailure(res.data, "mid-stream failure");
         assert.doesNotMatch(res.data, /should-not-appear/);
         assert.equal(recoveryProviderCalls, 0);
 
@@ -1057,7 +1072,8 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.provider, 'primary-stream-provider');
         assert.equal(data.logs[0]?.model, streamModel);
         assert.equal(data.logs[0]?.attempts, 1);
-        assert.equal(data.logs[0]?.error, 'mid-stream failure');
+        assert.equal(data.logs[0]?.error, "Provider request failed");
+        assert.equal(JSON.stringify(data.logs).includes("mid-stream failure"), false);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);

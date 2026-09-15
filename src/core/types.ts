@@ -6,6 +6,7 @@
  */
 
 import type { TaskClassification } from '../classification/index.js';
+import type { GithubOAuthConfig } from '../auth/runtime.js';
 
 export type ProviderType = 'api' | 'cli';
 
@@ -107,11 +108,17 @@ export interface StoredFile {
 
 export type TrustLevel = 'local-dev' | 'restricted' | 'open';
 
+export interface AdminAuthConfig {
+  staticToken?: string;
+  githubOAuth?: GithubOAuthConfig;
+}
+
 export interface GatewayConfig {
   masterKey: Buffer;
   dbPath: string;
   httpPort: number;
   project?: string;
   authToken?: string;
+  adminAuth?: AdminAuthConfig;
   securityProfile?: TrustLevel;
 }

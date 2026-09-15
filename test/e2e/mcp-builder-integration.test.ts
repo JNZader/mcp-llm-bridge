@@ -1,14 +1,14 @@
+import { freezeRouterForStartup } from "../helpers/frozen-router.js";
 /**
  * E2E integration tests for mcp-builder dynamic plugin loading.
  */
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, rm, readdir } from 'fs/promises';
+import { mkdir, mkdtemp, writeFile, rm, readdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'node:crypto';
-import { unlinkSync, existsSync } from 'node:fs';
 
 import { Vault } from '../../src/vault/vault.js';
 import { Router } from '../../src/core/router.js';
@@ -19,28 +19,62 @@ import { dynamicToolAdapter } from '../../src/server/mcp.js';
 import { getDynamicPluginLoadSummary, getRuntimeMcpTools } from '../../src/server/mcp.js';
 import { ProfileEnforcer } from '../../src/security/enforcer.js';
 
-const config: GatewayConfig = {
-  masterKey: randomBytes(32),
-  dbPath: `/tmp/test-mcp-builder-e2e-${Date.now()}.db`,
-  httpPort: 0,
-};
+const EXPECTED_SAFE_INTERNAL_ERROR = {
+  error: 'An unexpected internal error occurred.',
+  code: 'INTERNAL_ERROR',
+} as const;
 
-const vault = new Vault(config);
-const router = new Router();
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
+const TEST_ENV_KEYS = [
+  'MCP_DYNAMIC_SERVERS',
+  'MCP_SERVERS_DIR',
+  'MCP_PLUGIN_TOOL_TIMEOUT_MS',
+  'MCP_PLUGIN_LOAD_TIMEOUT_MS',
+  'APPROVAL_FLOWS_ENABLED',
+] as const;
+type TestEnvKey = (typeof TEST_ENV_KEYS)[number];
+
+const originalEnv = new Map<TestEnvKey, string | undefined>(
+  TEST_ENV_KEYS.map((key) => [key, process.env[key]]),
+);
+const originalCwd = process.cwd();
+
+type TestMcpServer = Awaited<ReturnType<typeof startMcpServer>>;
+
+let ownedRoot: string;
+let tempDir: string;
+let dbPath: string;
+let vault!: Vault;
+let router!: Router;
+let server: TestMcpServer | undefined;
+
+function restoreProcessState(): void {
+  if (process.cwd() !== originalCwd) process.chdir(originalCwd);
+
+  for (const key of TEST_ENV_KEYS) {
+    const value = originalEnv.get(key);
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
 }
 
-process.on('exit', () => {
-  vault.close();
-  for (const suffix of ['', '-wal', '-shm']) {
-    const filePath = config.dbPath + suffix;
-    if (existsSync(filePath)) unlinkSync(filePath);
+async function closeServerSafely(): Promise<void> {
+  const activeServer = server;
+  server = undefined;
+  try {
+    await activeServer?.close();
+  } catch {
+    // Cleanup must not replace the primary test failure.
   }
-});
+}
 
-let tempDir: string;
-let server: any;
+async function resetPluginDirectory(): Promise<void> {
+  if (!tempDir) return;
+  await rm(tempDir, { recursive: true, force: true });
+  await mkdir(tempDir, { recursive: true });
+}
 
 function healthyRuntime(toolNames: string[]) {
   return {
@@ -58,15 +92,47 @@ function healthyRuntime(toolNames: string[]) {
 }
 
 before(async () => {
-  tempDir = join(tmpdir(), `mcp-builder-e2e-${Date.now()}`);
+  ownedRoot = await mkdtemp(join(tmpdir(), 'mcp-builder-e2e-'));
+  tempDir = join(ownedRoot, 'mcp-servers');
+  dbPath = join(ownedRoot, 'vault.db');
   await mkdir(tempDir, { recursive: true });
+
+  const config: GatewayConfig = {
+    masterKey: randomBytes(32),
+    dbPath,
+    httpPort: 0,
+  };
+  vault = new Vault(config);
+  router = new Router();
+  for (const adapter of createAllAdapters(vault)) {
+    router.register(adapter);
+  }
+});
+
+beforeEach(() => {
+  restoreProcessState();
+});
+
+afterEach(async () => {
+  await closeServerSafely();
+  restoreProcessState();
+  await resetPluginDirectory();
 });
 
 after(async () => {
-  await rm(tempDir, { recursive: true, force: true });
-  if (server?.close) {
-    await server.close();
+  await closeServerSafely();
+  restoreProcessState();
+
+  try {
+    vault.destroy();
+  } catch {
+    // A partially constructed fixture must not mask its primary failure.
   }
+
+  for (const suffix of ['', '-wal', '-shm']) {
+    await rm(dbPath + suffix, { force: true });
+  }
+  await rm(ownedRoot, { recursive: true, force: true });
 });
 
 // ── Server start scenarios ───────────────────────────────────
@@ -76,7 +142,7 @@ describe('MCP dynamic server startup', () => {
     process.env.MCP_DYNAMIC_SERVERS = 'false';
     delete process.env.MCP_SERVERS_DIR;
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
     assert.ok(server, 'server should start');
     assert.equal(dynamicToolAdapter, undefined);
     assert.deepStrictEqual(getDynamicPluginLoadSummary(), {
@@ -91,10 +157,10 @@ describe('MCP dynamic server startup', () => {
     // Verify no dynamic tools by calling a non-existent dynamic tool
     const result = await handleToolCall('dynamic_greet', { name: 'test' }, router, vault);
     assert.ok(result.isError, 'should return error');
-    assert.ok(result.content[0]!.text.includes('Unknown tool'), 'should report unknown tool');
+    assert.deepStrictEqual(JSON.parse(result.content[0]!.text), EXPECTED_SAFE_INTERNAL_ERROR);
 
     await server.close();
-    server = null;
+    server = undefined;
   });
 
   it('server starts with default ./mcp-servers directory when MCP_SERVERS_DIR is unset', async () => {
@@ -132,7 +198,7 @@ describe('MCP dynamic server startup', () => {
     try {
       process.chdir(appRoot);
 
-      server = await startMcpServer({ router, vault });
+      server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
       assert.ok(server, 'server should start');
 
       assert.ok(dynamicToolAdapter, 'dynamicToolAdapter should be set');
@@ -151,7 +217,7 @@ describe('MCP dynamic server startup', () => {
       assert.ok(result.content[0]!.text.includes('loaded from default dir'));
 
       await server.close();
-      server = null;
+      server = undefined;
     } finally {
       process.chdir(originalCwd);
       await rm(join(defaultPluginsDir, 'default-dir.mcp-server.js'), { force: true });
@@ -185,7 +251,7 @@ describe('MCP dynamic server startup', () => {
     `;
     await writeFile(join(tempDir, 'test.mcp-server.js'), pluginContent, 'utf-8');
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
     assert.ok(server, 'server should start');
 
     // Verify dynamic tool is loaded
@@ -206,7 +272,7 @@ describe('MCP dynamic server startup', () => {
     assert.ok(result.content[0]!.text.includes('Hello, World!'), 'should return greeting');
 
     await server.close();
-    server = null;
+    server = undefined;
 
     // Cleanup plugin file
     await rm(join(tempDir, 'test.mcp-server.js'));
@@ -222,7 +288,7 @@ describe('MCP dynamic server startup', () => {
       await rm(join(tempDir, file), { recursive: true, force: true });
     }
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
     assert.ok(server, 'server should start without crashing');
 
     // Verify no dynamic tools
@@ -240,10 +306,10 @@ describe('MCP dynamic server startup', () => {
     // Calling a non-existent tool should still return unknown tool
     const result = await handleToolCall('dynamic_greet', { name: 'test' }, router, vault);
     assert.ok(result.isError, 'should return error');
-    assert.ok(result.content[0]!.text.includes('Unknown tool'), 'should report unknown tool');
+    assert.deepStrictEqual(JSON.parse(result.content[0]!.text), EXPECTED_SAFE_INTERNAL_ERROR);
 
     await server.close();
-    server = null;
+    server = undefined;
   });
 });
 
@@ -276,14 +342,14 @@ describe('Dynamic tool execution', () => {
     `;
     await writeFile(join(tempDir, 'exec.mcp-server.js'), pluginContent, 'utf-8');
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
 
     const result = await handleToolCall('dynamic_echo', { msg: 'hi' }, router, vault);
     assert.ok(!result.isError);
     assert.ok(result.content[0]!.text.includes('echo: hi'));
 
     await server.close();
-    server = null;
+    server = undefined;
     await rm(join(tempDir, 'exec.mcp-server.js'));
   });
 
@@ -313,7 +379,7 @@ describe('Dynamic tool execution', () => {
     await writeFile(join(tempDir, 'timeout.mcp-server.js'), pluginContent, 'utf-8');
 
     try {
-      server = await startMcpServer({ router, vault });
+      server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
 
       const startedAt = Date.now();
       const first = await handleToolCall('dynamic_hang', {}, router, vault);
@@ -325,26 +391,17 @@ describe('Dynamic tool execution', () => {
       assert.equal(first.isError, true);
       assert.equal(second.isError, true);
       assert.deepStrictEqual(JSON.parse(first.content[0]!.text), {
-        error: "Dynamic tool 'dynamic_hang' timed out after 25ms",
+        error: 'Dynamic tool execution timed out.',
         code: 'dynamic-tool-timeout',
-        toolName: 'dynamic_hang',
-        plugin: 'timeout',
-        timeoutMs: 25,
       });
       assert.deepStrictEqual(JSON.parse(second.content[0]!.text), {
-        error: "Dynamic tool 'dynamic_hang' timed out after 25ms",
+        error: 'Dynamic tool execution timed out.',
         code: 'dynamic-tool-timeout',
-        toolName: 'dynamic_hang',
-        plugin: 'timeout',
-        timeoutMs: 25,
       });
       assert.equal(result.isError, true);
       assert.deepStrictEqual(JSON.parse(result.content[0]!.text), {
-        error: "Dynamic tool 'dynamic_hang' has been quarantined after 2 consecutive failures",
+        error: 'Dynamic tool is quarantined.',
         code: 'dynamic-tool-quarantined',
-        toolName: 'dynamic_hang',
-        plugin: 'timeout',
-        consecutiveFailures: 2,
       });
 
       assert.deepStrictEqual(getDynamicPluginLoadSummary().loaded, [{
@@ -360,13 +417,13 @@ describe('Dynamic tool execution', () => {
             consecutiveFailures: 2,
             quarantined: true,
             lastErrorCode: 'dynamic-tool-timeout',
-            lastErrorMessage: 'Dynamic tool timed out after 25ms',
+            lastErrorMessage: undefined,
           }],
         },
       }]);
     } finally {
       await server?.close?.();
-      server = null;
+      server = undefined;
       delete process.env.MCP_PLUGIN_TOOL_TIMEOUT_MS;
       await rm(join(tempDir, 'timeout.mcp-server.js'), { force: true });
     }
@@ -402,7 +459,7 @@ describe('Dynamic tool security profiles', () => {
     `;
     await writeFile(join(tempDir, 'read.mcp-server.js'), pluginContent, 'utf-8');
 
-    server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault, securityProfile: 'restricted' });
 
     const enforcer = new ProfileEnforcer('restricted');
     enforcer.registerDynamicTool('dynamic_read', { category: 'read' });
@@ -414,7 +471,7 @@ describe('Dynamic tool security profiles', () => {
 
     enforcer.destroy();
     await server.close();
-    server = null;
+    server = undefined;
     await rm(join(tempDir, 'read.mcp-server.js'));
   });
 
@@ -448,7 +505,7 @@ describe('Dynamic tool security profiles', () => {
       };
     `, 'utf-8');
 
-    server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault, securityProfile: 'restricted' });
 
     const enforcer = new ProfileEnforcer('restricted');
     enforcer.registerDynamicTool('dynamic_admin', { category: 'admin' });
@@ -459,12 +516,12 @@ describe('Dynamic tool security profiles', () => {
 
     assert.equal(adminResult.isError, true);
     assert.equal(destructiveResult.isError, true);
-    assert.ok(adminResult.content[0]!.text.includes('denied'));
-    assert.ok(destructiveResult.content[0]!.text.includes('denied'));
+    assert.deepStrictEqual(JSON.parse(adminResult.content[0]!.text), EXPECTED_SAFE_INTERNAL_ERROR);
+    assert.deepStrictEqual(JSON.parse(destructiveResult.content[0]!.text), EXPECTED_SAFE_INTERNAL_ERROR);
 
     enforcer.destroy();
     await server.close();
-    server = null;
+    server = undefined;
     await rm(join(tempDir, 'blocked.mcp-server.js'));
   });
 
@@ -497,7 +554,7 @@ describe('Dynamic tool security profiles', () => {
       };
     `, 'utf-8');
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
 
     const summary = getDynamicPluginLoadSummary();
     assert.deepStrictEqual(summary.loaded, [{
@@ -513,7 +570,7 @@ describe('Dynamic tool security profiles', () => {
     assert.equal(dynamicToolAdapter?.hasTool('dynamic_quarantined'), false);
 
     await server.close();
-    server = null;
+    server = undefined;
     await rm(join(tempDir, 'quarantine.mcp-server.js'));
   });
 
@@ -540,7 +597,7 @@ describe('Dynamic tool security profiles', () => {
     `, 'utf-8');
 
     try {
-      server = await startMcpServer({ router, vault, securityProfile: 'restricted' });
+      server = await startMcpServer({ router: freezeRouterForStartup(router), vault, securityProfile: 'restricted' });
 
       const approvalStore = new (await import('../../src/approval/index.js')).ApprovalStore();
       const enforcer = new ProfileEnforcer('restricted');
@@ -569,7 +626,7 @@ describe('Dynamic tool security profiles', () => {
       enforcer.destroy();
     } finally {
       await server?.close?.();
-      server = null;
+      server = undefined;
       delete process.env.APPROVAL_FLOWS_ENABLED;
       await rm(join(tempDir, 'approval.mcp-server.js'), { force: true });
     }
@@ -603,14 +660,14 @@ describe('Dynamic tool security profiles', () => {
     await writeFile(join(tempDir, 'delayed.mcp-server.js'), pluginContent, 'utf-8');
 
     const startedAt = Date.now();
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
     const elapsedMs = Date.now() - startedAt;
 
     assert.ok(elapsedMs >= 125, `startup should await plugin load, got ${elapsedMs}ms`);
     assert.ok(dynamicToolAdapter?.hasTool('dynamic_delayed'));
 
     await server.close();
-    server = null;
+    server = undefined;
     await rm(join(tempDir, 'delayed.mcp-server.js'));
   });
 
@@ -648,7 +705,7 @@ describe('Dynamic tool security profiles', () => {
     `, 'utf-8');
 
     try {
-      server = await startMcpServer({ router, vault });
+      server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
 
     const summary = getDynamicPluginLoadSummary();
     assert.deepStrictEqual(summary.loaded, [{
@@ -666,7 +723,7 @@ describe('Dynamic tool security profiles', () => {
       assert.equal(result.content[0]!.text, 'healthy');
     } finally {
       await server?.close?.();
-      server = null;
+      server = undefined;
       delete process.env.MCP_PLUGIN_LOAD_TIMEOUT_MS;
       await rm(join(tempDir, 'hung.mcp-server.js'), { force: true });
       await rm(join(tempDir, 'healthy.mcp-server.js'), { force: true });
@@ -726,7 +783,7 @@ describe('Dynamic tool security profiles', () => {
       };
     `, 'utf-8');
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
 
     const summary = getDynamicPluginLoadSummary();
     assert.deepStrictEqual(summary.loaded, [
@@ -766,7 +823,7 @@ describe('Dynamic tool security profiles', () => {
     assert.equal(getRuntimeMcpTools().filter((tool) => tool.name === 'llm_generate').length, 1);
 
     await server.close();
-    server = null;
+    server = undefined;
     await rm(join(tempDir, 'alpha.mcp-server.js'));
     await rm(join(tempDir, 'beta.mcp-server.js'));
     await rm(join(tempDir, 'builtin.mcp-server.js'));
@@ -793,25 +850,25 @@ describe('Dynamic tool security profiles', () => {
       };
     `, 'utf-8');
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
     assert.ok(dynamicToolAdapter?.hasTool('dynamic_first'));
     await server.close();
-    server = null;
+    server = undefined;
 
     await rm(join(tempDir, 'first.mcp-server.js'));
     process.env.MCP_DYNAMIC_SERVERS = 'false';
     delete process.env.MCP_SERVERS_DIR;
 
-    server = await startMcpServer({ router, vault });
+    server = await startMcpServer({ router: freezeRouterForStartup(router), vault });
 
     assert.equal(dynamicToolAdapter, undefined);
     assert.equal(getRuntimeMcpTools().some((tool) => tool.name === 'dynamic_first'), false);
 
     const result = await handleToolCall('dynamic_first', {}, router, vault);
     assert.ok(result.isError);
-    assert.ok(result.content[0]!.text.includes('Unknown tool'));
+    assert.deepStrictEqual(JSON.parse(result.content[0]!.text), EXPECTED_SAFE_INTERNAL_ERROR);
 
     await server.close();
-    server = null;
+    server = undefined;
   });
 });

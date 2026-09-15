@@ -1,3 +1,4 @@
+import { freezeRouterForStartup } from "./helpers/frozen-router.js";
 /**
  * HTTP endpoint tests — verify REST API behavior.
  */
@@ -14,7 +15,6 @@ import { MAX_PROMPT_LENGTH } from '../src/core/constants.js';
 import type { GatewayConfig } from '../src/core/types.js';
 import { startHttpServer } from '../src/server/http.js';
 import { TOOLS } from '../src/server/mcp.js';
-import { createAllAdapters } from '../src/adapters/index.js';
 import { getCircuitBreakerV2, resetCircuitBreakerV2 } from '../src/core/router.js';
 import { StubAdapter } from './helpers/stub-adapter.js';
 
@@ -33,21 +33,20 @@ const config: GatewayConfig = {
 
 const vault = new Vault(config);
 const router = new Router();
-
-for (const adapter of createAllAdapters(vault)) {
-  router.register(adapter);
-}
+const ALLOWED_TEST_ORIGIN = "https://allowed.example";
+const previousCorsOrigins = process.env["LLM_GATEWAY_CORS_ORIGINS"];
 
 // Register an always-available stub so the models list is deterministically
-// non-empty even in a credential-less CI (real adapters report unavailable
-// without live provider creds). Tests then verify endpoint shape and wiring.
+// non-empty in credential-less CI. Tests verify endpoint shape and wiring
+// without constructing credential-dependent production adapters.
 router.register(new StubAdapter());
 
 let server: http.Server;
 let port = 0;
 
 before(async () => {
-  server = startHttpServer({ router, vault, config }) as unknown as http.Server;
+  process.env["LLM_GATEWAY_CORS_ORIGINS"] = ALLOWED_TEST_ORIGIN;
+  server = startHttpServer({ router: freezeRouterForStartup(router), vault, config }) as unknown as http.Server;
   await new Promise<void>((resolve) => {
     server.on('listening', () => {
       const address = server.address();
@@ -59,19 +58,27 @@ before(async () => {
   });
 });
 
-after(() => {
-  return new Promise<void>((resolve) => {
-    server.close(() => {
-      vault.close();
-      for (const suffix of ['', '-wal', '-shm']) {
-        const filePath = config.dbPath + suffix;
-        if (existsSync(filePath)) {
-          unlinkSync(filePath);
+after(async () => {
+  try {
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        vault.close();
+        for (const suffix of ['', '-wal', '-shm']) {
+          const filePath = config.dbPath + suffix;
+          if (existsSync(filePath)) {
+            unlinkSync(filePath);
+          }
         }
-      }
-      resolve();
+        resolve();
+      });
     });
-  });
+  } finally {
+    if (previousCorsOrigins === undefined) {
+      delete process.env["LLM_GATEWAY_CORS_ORIGINS"];
+    } else {
+      process.env["LLM_GATEWAY_CORS_ORIGINS"] = previousCorsOrigins;
+    }
+  }
 });
 
 afterEach(() => {
@@ -353,6 +360,13 @@ describe('GET /v1/tools/catalog', () => {
   });
 });
 
+describe('MCP telemetry compatibility metadata', () => {
+  it('marks legacy usage schemas deprecated with a v2 successor', () => {
+    const tool = TOOLS.find((entry) => entry.name === 'usage_query')!;
+    assert.deepEqual(tool.deprecation, { deprecated: true, successor: '/v2/usage' });
+  });
+});
+
 describe('GET /v1/tools/search', () => {
   it('searches across the real MCP runtime catalog', async () => {
     const res = await request('GET', '/v1/tools/search?q=semantic%20code');
@@ -518,30 +532,60 @@ describe('GET /v1/files', () => {
 
 // ── CORS ───────────────────────────────────────────────────
 
+async function requestCorsPreflight(origin: string): Promise<{
+  status: number;
+  body: string;
+  headers: http.IncomingHttpHeaders;
+}> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/v1/models',
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'PATCH',
+          'Access-Control-Request-Headers': 'Authorization',
+        },
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => resolve({
+          status: res.statusCode ?? 0,
+          body,
+          headers: res.headers,
+        }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 describe('CORS headers', () => {
-  it.skip('OPTIONS request returns CORS headers', async () => {
-    // NOTE: This test may fail depending on server configuration
-    // The CORS middleware should handle OPTIONS requests
-    return new Promise<void>((resolve, reject) => {
-      const req = http.request(
-        {
-          hostname: '127.0.0.1',
-          port,
-          path: '/v1/models',
-          method: 'OPTIONS',
-          headers: {
-            'Origin': 'http://localhost:3000',
-          },
-        },
-        (res) => {
-          // CORS headers should be present
-          assert.ok(res.headers['access-control-allow-origin'] !== undefined);
-          resolve();
-        },
-      );
-      req.on('error', reject);
-      req.end();
+  it('returns the configured policy for an allowed PATCH preflight', async () => {
+    const res = await requestCorsPreflight(ALLOWED_TEST_ORIGIN);
+
+    assert.equal(res.status, 204);
+    assert.equal(res.headers['access-control-allow-origin'], ALLOWED_TEST_ORIGIN);
+    assert.equal(res.headers['access-control-allow-credentials'], 'true');
+    assert.equal(res.headers['access-control-allow-methods'], 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    assert.equal(res.headers['access-control-allow-headers'], 'Content-Type,Authorization,X-Project,x-api-key,X-CSRF-Token');
+    assert.equal(res.headers['access-control-max-age'], '86400');
+  });
+
+  it('rejects a denied preflight without an allow-origin header', async () => {
+    const res = await requestCorsPreflight('https://denied.example');
+
+    assert.equal(res.status, 403);
+    assert.deepEqual(JSON.parse(res.body), {
+      error: 'The request origin is not allowed.',
+      code: 'CSRF_ORIGIN_INVALID',
     });
+    assert.equal(res.headers['access-control-allow-origin'], undefined);
   });
 });
 

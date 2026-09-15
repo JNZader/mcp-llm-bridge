@@ -8,6 +8,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { logger } from '../core/logger.js';
+import { safeOperation } from '../core/safe-operation.js';
 
 /** Claude CLI OAuth credentials file format. */
 export interface ClaudeOAuthCredentials {
@@ -164,8 +166,8 @@ export function syncToOpencodeAuth(token: TokenInfo, _project?: string): boolean
     writeFileSync(OPENCODE_AUTH_PATH, JSON.stringify(authData, null, 2), 'utf-8');
 
     return true;
-  } catch (error) {
-    console.error('[claude-oauth] Failed to sync to opencode auth:', error);
+  } catch {
+    logger.error(safeOperation('failed'), '[claude-oauth] Failed to sync to opencode auth:');
     return false;
   }
 }

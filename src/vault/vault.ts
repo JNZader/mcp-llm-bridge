@@ -16,6 +16,7 @@ import { dirname } from 'node:path';
 import type { GatewayConfig, MaskedCredential, StoredFile } from '../core/types.js';
 import { encrypt, decrypt } from './crypto.js';
 import { initializeDb } from './schema.js';
+import { createVaultDeletionError } from './deletion-error.js';
 import {
   readClaudeOAuthToken,
   refreshTokenIfNeeded,
@@ -27,7 +28,9 @@ import {
   MASK_VISIBLE_CHARS,
   MASK_SUFFIX,
 } from '../core/constants.js';
-import { childLogger } from '../core/logger.js';
+import { childLogger, logger } from '../core/logger.js';
+import { safeOperation } from '../core/safe-operation.js';
+import { safeError } from '../core/safe-error.js';
 
 // ── Vault Audit Logging ─────────────────────────────────────
 
@@ -258,7 +261,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'store', provider, keyName, project: proj, success: true } satisfies VaultAuditEvent);
       return Number(result.lastInsertRowid);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'store', provider, keyName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -293,7 +296,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'access', provider, keyName, project: proj, success: true } satisfies VaultAuditEvent);
       return decrypted;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'access', provider, keyName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -367,7 +370,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'list', provider: '*', project: proj, success: true } satisfies VaultAuditEvent);
       return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'list', provider: '*', project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -390,7 +393,7 @@ export class Vault {
       .get(id) as { project: string; provider: string; key_name: string } | undefined;
 
     if (!row) {
-      const err = new Error(`Credential not found: id ${id}`);
+      const err = createVaultDeletionError('NOT_FOUND', `Credential not found: id ${id}`);
       vaultAuditLogger.error({ action: 'delete', provider: 'unknown', project: project ?? GLOBAL_PROJECT, success: false, error: err.message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -400,7 +403,7 @@ export class Vault {
     const isSameProject = row.project === project;
 
     if (!isGlobal && !isSameProject) {
-      const err = new Error(
+      const err = createVaultDeletionError('UNAUTHORIZED',
         `Unauthorized: credential belongs to project "${row.project}", not "${project ?? '_global'}"`,
       );
       vaultAuditLogger.error({ action: 'delete', provider: row.provider, keyName: row.key_name, project: row.project, success: false, error: err.message } satisfies VaultAuditEvent);
@@ -479,7 +482,7 @@ export class Vault {
       vaultAuditLogger.info({ action: 'store_file', provider, fileName, project: proj, success: true } satisfies VaultAuditEvent);
       return Number(result.lastInsertRowid);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = safeError('INTERNAL_ERROR').message;
       vaultAuditLogger.error({ action: 'store_file', provider, fileName, project: proj, success: false, error: message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -523,7 +526,7 @@ export class Vault {
       .get(id) as { project: string; provider: string; file_name: string } | undefined;
 
     if (!row) {
-      const err = new Error(`File not found: id ${id}`);
+      const err = createVaultDeletionError('NOT_FOUND', `File not found: id ${id}`);
       vaultAuditLogger.error({ action: 'delete_file', provider: 'unknown', project: project ?? GLOBAL_PROJECT, success: false, error: err.message } satisfies VaultAuditEvent);
       throw err;
     }
@@ -533,7 +536,7 @@ export class Vault {
     const isSameProject = row.project === project;
 
     if (!isGlobal && !isSameProject) {
-      const err = new Error(
+      const err = createVaultDeletionError('UNAUTHORIZED',
         `Unauthorized: file belongs to project "${row.project}", not "${project ?? '_global'}"`,
       );
       vaultAuditLogger.error({ action: 'delete_file', provider: row.provider, fileName: row.file_name, project: row.project, success: false, error: err.message } satisfies VaultAuditEvent);
@@ -713,9 +716,9 @@ export class Vault {
     if (token.refreshToken) {
       try {
         token = await refreshTokenIfNeeded(token);
-      } catch (error) {
+      } catch {
         // Log but continue with existing token
-        console.warn('[vault] Token refresh failed, using existing token:', error);
+        logger.warn(safeOperation('failed'), '[vault] Token refresh failed, using existing token:');
       }
     }
 
