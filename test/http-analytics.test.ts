@@ -948,8 +948,8 @@ describe('GET /v1/analytics', () => {
 			const writer = new SQLiteAnalyticsWriter(db);
 			const reader = new SQLiteAnalyticsReader(db);
 			const liveAggregator = new AnalyticsAggregator();
-			const persistedTimestamp = Date.UTC(2026, 0, 10, 10, 15, 0);
-			const liveTimestamp = Date.UTC(2026, 0, 11, 11, 20, 0);
+			const persistedTimestamp = Date.UTC(2026, 8, 10, 10, 15, 0);
+			const liveTimestamp = Date.UTC(2026, 8, 11, 11, 20, 0);
 
 			await writer.upsert({
 				flushedAt: Date.now(),
@@ -1073,8 +1073,8 @@ describe('GET /v1/analytics', () => {
 				persistenceWriter: new SQLiteAnalyticsWriter(firstRunner.getDatabase()),
 				flushIntervalMs: 10_000,
 			});
-			const firstTimestamp = Date.UTC(2026, 0, 10, 15, 5, 0);
-			const secondTimestamp = Date.UTC(2026, 0, 10, 15, 25, 0);
+			const firstTimestamp = Date.UTC(2026, 8, 10, 15, 5, 0);
+			const secondTimestamp = Date.UTC(2026, 8, 10, 15, 25, 0);
 
 			persistentAggregator.record('openai', 'gpt-4o', {
 				inputTokens: 120,
@@ -1177,7 +1177,7 @@ describe('GET /v1/analytics', () => {
 				const writer = new SQLiteAnalyticsWriter(db);
 				const reader = new SQLiteAnalyticsReader(db);
 				const liveAggregator = new AnalyticsAggregator();
-				const timestamp = Date.UTC(2026, 0, 10, 15, 5, 0);
+				const timestamp = Date.UTC(2026, 8, 10, 15, 5, 0);
 
 				await writer.upsert({
 					flushedAt: Date.now(),
@@ -1292,9 +1292,9 @@ describe('GET /v1/analytics', () => {
 					flushedAt: Date.now(),
 					hourly: [
 						{
-							timestamp: Date.UTC(2026, 0, 10, 15, 0, 0),
+							timestamp: Date.UTC(2026, 8, 10, 15, 0, 0),
 							data: {
-								timestamp: Date.UTC(2026, 0, 10, 15, 0, 0),
+								timestamp: Date.UTC(2026, 8, 10, 15, 0, 0),
 								requests: 4,
 								successfulRequests: 4,
 								failedRequests: 0,
@@ -1311,9 +1311,9 @@ describe('GET /v1/analytics', () => {
 					],
 					daily: [
 						{
-							timestamp: Date.UTC(2026, 0, 10, 0, 0, 0),
+							timestamp: Date.UTC(2026, 8, 10, 0, 0, 0),
 							data: {
-								timestamp: Date.UTC(2026, 0, 10, 0, 0, 0),
+								timestamp: Date.UTC(2026, 8, 10, 0, 0, 0),
 								requests: 4,
 								successfulRequests: 4,
 								failedRequests: 0,

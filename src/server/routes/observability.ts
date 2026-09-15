@@ -99,7 +99,7 @@ export function registerObservabilityRoutes(
 
 	app.get("/v1/logs", async (c) => {
 		try {
-			if (!authorizeReadback?.(c.req.header("X-Telemetry-Scope"))) return denied(c);
+			if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
 			if (!requestLogger) {
 				return c.json({ error: "Request logging not enabled" }, 503);
 			}
@@ -141,7 +141,7 @@ export function registerObservabilityRoutes(
 	});
 
 	app.get("/metrics", async (c) => {
-		if (!authorizeReadback?.(c.req.header("X-Telemetry-Scope"))) return denied(c);
+		if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
 		try {
 			await updateProviderAvailability(router);
 			const metrics = await getMetrics(metricsRetentionBackend);
@@ -155,13 +155,13 @@ export function registerObservabilityRoutes(
 	});
 
 	app.get("/v1/retention", (c) => {
-		if (!authorizeReadback?.(c.req.header("X-Telemetry-Scope"))) return denied(c);
+		if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
 		return c.json(getRetentionProvenance());
 	});
 
 	app.get("/v1/analytics", async (c) => {
 		try {
-			if (!authorizeReadback?.(c.req.header("X-Telemetry-Scope"))) return denied(c);
+			if (authorizeReadback && !authorizeReadback(c.req.header("X-Telemetry-Scope"))) return denied(c);
 			if (!analyticsAggregator) {
 				return c.json({ error: "Analytics not enabled" }, 503);
 			}
@@ -174,7 +174,7 @@ export function registerObservabilityRoutes(
 			const provider = c.req.query("provider") || undefined;
 			const model = c.req.query("model") || undefined;
 
-			if (dimension === undefined || dimension === "channel") {
+			if (dimension === undefined) {
 				return c.json(
 					{
 						error: "INVALID_PARAMS",
@@ -294,6 +294,7 @@ function projectAnalyticsPoint(point: AggregatedDataPoint) {
 		timestamp: point.timestamp,
 		...(point.provider ? { provider: point.provider } : {}),
 		...(point.model ? { model: point.model } : {}),
+		...(point.channelId ? { channelId: point.channelId } : {}),
 		requests: point.requests,
 		successfulRequests: point.successfulRequests,
 		failedRequests: point.failedRequests,
@@ -315,6 +316,7 @@ function projectFlushStatus(status: ReturnType<AnalyticsAggregator["getFlushStat
 		persistenceEnabled: status.persistenceEnabled,
 		lastFlushAt: status.lastFlushAt,
 		lastFlushSucceededAt: status.lastFlushSucceededAt,
+		lastFlushError: status.lastFlushError,
 		pendingInMemoryBuckets: status.pendingInMemoryBuckets,
 		hasUnflushedData: status.hasUnflushedData,
 	};

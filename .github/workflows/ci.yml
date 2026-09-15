@@ -38,7 +38,7 @@ jobs:
         run: pnpm run typecheck
 
       - name: Test
-        run: pnpm test
+        run: pnpm run test:ci
         env:
           # Serving default is 30 min; a hung CLI in CI must not eat the 60m job.
           OPENCODE_GENERATE_TIMEOUT_MS: "15000"

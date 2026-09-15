@@ -14,6 +14,7 @@
     "serve": "tsx src/index.ts serve",
     "test:wp00:devcontainer": "node --import tsx test/wp00/run-devcontainer-mcp-http-proof.ts --run",
     "test": "node --import tsx --import ./test/setup/inject-require.mjs --test \"test/**/*.test.ts\"",
+    "test:ci": "node --import tsx --import ./test/setup/inject-require.mjs --test \"test/*.test.ts\" \"test/admin/**/*.test.ts\" \"test/analytics/**/*.test.ts\" \"test/bootstrap/**/*.test.ts\" \"test/comparison/**/*.test.ts\" \"test/core/**/*.test.ts\" \"test/helpers/**/*.test.ts\" \"test/http/**/*.test.ts\" \"test/integration/**/*.test.ts\" \"test/logging/**/*.test.ts\" \"test/mcp-builder/**/*.test.ts\" \"test/migrations/**/*.test.ts\" \"test/server/**/*.test.ts\" \"test/vault/**/*.test.ts\" \"test/wp00/**/*.test.ts\" --test-concurrency=8",
     "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
