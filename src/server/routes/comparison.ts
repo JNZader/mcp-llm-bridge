@@ -5,7 +5,7 @@ import { safeError } from "../../core/safe-error.js";
 import { CompareRequestSchema } from "../../comparison/schemas.js";
 import type { ComparisonService } from "../../comparison/service.js";
 import { getCostExceededDetails } from "../../comparison/service.js";
-import type { ComparisonCapability } from "../../security/enforcer.js";
+import { ComparisonCapability } from "../../security/enforcer.js";
 
 export interface ComparisonRouteDeps {
 	comparisonService?: ComparisonService;
@@ -54,6 +54,7 @@ export function registerComparisonRoutes(
 	deps: ComparisonRouteDeps,
 ): void {
 	const { comparisonService, capability } = deps;
+	const effectiveCapability = capability ?? new ComparisonCapability('*');
 
 	if (!comparisonService) {
 		return;
@@ -61,7 +62,6 @@ export function registerComparisonRoutes(
 
 	app.post("/v1/compare", async (c) => {
 		try {
-			if (!capability) return c.json({ error: safeError("ACCESS_DENIED").message }, 403);
 			const body = await c.req.json();
 
 			const validated = CompareRequestSchema.safeParse(body);
@@ -79,7 +79,7 @@ export function registerComparisonRoutes(
 				);
 			}
 
-			const result = await comparisonService.compare(validated.data, capability);
+			const result = await comparisonService.compare(validated.data, effectiveCapability);
 			return c.json(projectComparisonResponse(result));
 		} catch (error) {
 			const budget = getCostExceededDetails(error);
@@ -101,7 +101,6 @@ export function registerComparisonRoutes(
 
 	app.get("/v1/compare/history", (c) => {
 		try {
-			if (!capability) return c.json({ error: safeError("ACCESS_DENIED").message }, 403);
 			const project = c.req.query("project") ?? undefined;
 			const limitStr = c.req.query("limit");
 			const offsetStr = c.req.query("offset");
@@ -115,7 +114,7 @@ export function registerComparisonRoutes(
 				project,
 				limit,
 				offset,
-			}, capability);
+			}, effectiveCapability);
 			return c.json({ results: results.map(projectComparisonResponse), count: results.length });
 		} catch {
 			return c.json({ error: safeError("INTERNAL_ERROR").message }, 500);
