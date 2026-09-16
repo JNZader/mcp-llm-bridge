@@ -763,10 +763,10 @@ export class Vault {
    * Idempotent: calling destroy() more than once is safe.
    */
   destroy(): void {
-    if (!this._destroyed) {
-      this.masterKey.fill(0);
-      this._destroyed = true;
-    }
+    if (this._destroyed) return;
+
+    this.masterKey.fill(0);
+    this._destroyed = true;
     this.db.close();
   }
 }
