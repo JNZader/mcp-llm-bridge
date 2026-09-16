@@ -3,7 +3,7 @@ runners:
   - name: node
     stack: node
     directory: .
-    setup: pnpm install --frozen-lockfile --force
+    setup: pnpm install --frozen-lockfile --force --store-dir /tmp/mcp-llm-bridge-pnpm-store
     build: pnpm run build
     test: pnpm test
     requires: [node, pnpm]
