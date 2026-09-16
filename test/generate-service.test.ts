@@ -259,4 +259,33 @@ describe("generate-service", () => {
 		assert.equal("costEvidence" in missing, false);
 		assert.equal("costEvidence" in nonZero, false);
 	});
+
+	it("bounds large responses in the request log without changing the API result", async () => {
+		const captured: Array<Record<string, unknown>> = [];
+		const text = "x".repeat(20_000);
+
+		const result = await executeGenerateRequest({
+			validated: { prompt: "Hello world" },
+			scope: {},
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "unknown", startTime: 0 }) as never,
+				captureEnd: async (_ctx: unknown, input?: { responseData?: string }) => {
+					captured.push({ responseData: input?.responseData });
+				},
+			} as never,
+			router: {
+				generate: async () => ({
+					text,
+					provider: "mock-provider",
+					model: "mock-model",
+					resolvedProvider: "mock-provider",
+					resolvedModel: "mock-model",
+					tokensUsed: 1,
+				}) as never,
+			} as never,
+		});
+
+		assert.equal(result.text, text);
+		assert.ok((captured[0]?.responseData as string).length <= 10_000);
+	});
 });

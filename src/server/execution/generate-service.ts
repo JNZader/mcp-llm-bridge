@@ -3,6 +3,7 @@ import type { GenerateResponse } from "../../core/types.js";
 import { GENERATE_COMPLETE_STOP } from "../../core/types.js";
 import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
+import { serializeLogPayload } from "../../logging/serialize-log-payload.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
 import { estimateZeroCostEvidence } from "../../core/usage-provenance.js";
@@ -65,7 +66,7 @@ export async function executeGenerateRequest(
 				model: result.resolvedModel,
 				totalTokens: result.tokensUsed,
 				attempts: resolveAttemptsFromRouting(result),
-				responseData: JSON.stringify(result),
+				responseData: serializeLogPayload(result),
 			});
 		}
 

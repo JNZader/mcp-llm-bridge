@@ -8,5 +8,6 @@
 
 export * from './types.js';
 export * from './schemas.js';
+export { serializeLogPayload } from './serialize-log-payload.js';
 export { RequestLogger } from './request-logger.js';
 export type { DirectCaptureInput, CaptureStartInput, CaptureEndInput, CleanupOptions } from './request-logger.js';

@@ -5,6 +5,7 @@ import type { Router } from "../../core/router.js";
 import type { UsageProvenance } from "../../core/types.js";
 import { readUsageProvenance } from "../../core/usage-provenance.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
+import { serializeLogPayload } from "../../logging/serialize-log-payload.js";
 import {
 	createOpenAIUsage,
 	normalizeOpenAIRequest,
@@ -208,7 +209,7 @@ async function finalizeNonStreamingSuccess(
 		inputTokens: result.inputTokens,
 		outputTokens: result.outputTokens,
 		attempts: resolveAttemptsFromRouting(result),
-		responseData: JSON.stringify(result),
+		responseData: serializeLogPayload(result),
 	});
 }
 
