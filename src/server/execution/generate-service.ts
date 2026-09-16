@@ -6,6 +6,7 @@ import type { RequestLogger } from "../../logging/request-logger.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
 import { estimateZeroCostEvidence } from "../../core/usage-provenance.js";
+import { sanitizeError } from "../../core/error-sanitizer.js";
 
 function withConsumerStopReason(result: GenerateResponse): GenerateResponse {
 	const stopReason =
@@ -74,7 +75,7 @@ export async function executeGenerateRequest(
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {
 				attempts: 1,
-				error: error instanceof Error ? error : new Error(String(error)),
+				error: sanitizeError(error),
 			});
 		}
 

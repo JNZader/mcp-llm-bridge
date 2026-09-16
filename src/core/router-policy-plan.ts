@@ -18,6 +18,7 @@ import {
 } from './router-candidate-planner.js';
 import { logger } from './logger.js';
 import { normalizeProviderId } from './provider-aliases.js';
+import type { RoutingMode } from './schemas.js';
 
 export interface RoutingPolicyPlanRequest {
   prompt: string;
@@ -26,6 +27,7 @@ export interface RoutingPolicyPlanRequest {
   strict: boolean;
   requireProvider: boolean;
   clientId?: string;
+  routingMode?: RoutingMode;
 }
 
 export interface BuildRoutingPolicyPlanOptions {
@@ -72,6 +74,49 @@ export async function buildRoutingPolicyPlan(
   const requestModel = options.request.model;
   const strict = options.request.strict;
   const requireProvider = options.request.requireProvider;
+  const contractual = options.request.routingMode === 'contractual';
+
+  if (contractual) {
+    if (!requestedProvider || !requestModel) {
+      throw new Error('Contractual routing requires explicit provider and model');
+    }
+
+    const provider = options.providers.find((candidate) => candidate.id === requestedProvider);
+    if (!provider) {
+      throw new Error(`Contractual provider ${requestedProvider} is unavailable`);
+    }
+
+    if (!(await provider.isAvailable())) {
+      throw new Error(`Contractual provider ${requestedProvider} is unavailable`);
+    }
+
+    if (!provider.models.some((candidate) => candidate.id === requestModel)) {
+      throw new Error(
+        `Contractual model ${requestModel} is unavailable from provider ${requestedProvider}`,
+      );
+    }
+
+    const blockedStrictCandidate =
+      options.circuitBreaker.canExecute(provider.id, 'default', requestModel).allowed
+        ? null
+        : provider;
+    return {
+      requestModel,
+      matchedGroup: null,
+      orderedCandidates: [provider],
+      availableCandidates: blockedStrictCandidate ? [] : [provider],
+      blockedStrictCandidate,
+      classification: null,
+      offloadClassification: null,
+      modelRouterDecision: null,
+      appliedModelRouterDecision: null,
+      routedModel: requestModel,
+      requestedProvider,
+      strict,
+      requireProvider,
+      stickySession: null,
+    };
+  }
   let matchedGroup: ProviderGroup | null = null;
   let orderedCandidates: LLMProvider[] | null = null;
 

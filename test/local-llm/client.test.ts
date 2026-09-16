@@ -57,6 +57,29 @@ describe('LocalLLMError', () => {
 });
 
 describe('callLocalLLM timer cleanup', () => {
+  it('redacts quoted JSON and bearer secrets from backend errors', async () => {
+    const quotedSecret = 'super-secret';
+    const bearerSecret = 'another-secret';
+    mock.method(globalThis, 'fetch', async () => ({
+      ok: false,
+      status: 502,
+      text: async () => `{"api_key":"${quotedSecret}","token":"${bearerSecret}"} authorization=auth-secret Bearer ${bearerSecret}`,
+    }) as Response);
+
+    await assert.rejects(
+      () => callLocalLLM(TEST_MODEL, 'hello'),
+      (error: unknown) => {
+        assert.ok(error instanceof LocalLLMError);
+        assert.doesNotMatch(error.message, new RegExp(`${quotedSecret}|${bearerSecret}`));
+        assert.doesNotMatch(error.message, /auth-secret/);
+        assert.match(error.message, /api_key.*REDACTED/);
+        assert.match(error.message, /authorization.*REDACTED/);
+        assert.match(error.message, /Bearer \[REDACTED\]/);
+        return true;
+      },
+    );
+  });
+
   it('clears the abort timer when fetch fails before timeout', async () => {
     const timerToken = createFakeTimeoutHandle('request-timer');
     const setTimeoutMock = createMockSetTimeout(() => timerToken);

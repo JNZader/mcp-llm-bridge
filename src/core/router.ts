@@ -350,6 +350,7 @@ export class Router {
         provider: normalizedRequest.provider,
         strict: normalizedRequest.strict === true,
         requireProvider: normalizedRequest.requireProvider === true,
+        routingMode: normalizedRequest.routingMode,
       },
       groupStore: null,
       sessionManager: null,
@@ -497,6 +498,9 @@ export class Router {
     }
 
     throwIfGenerationAborted(executionOptions);
+    if (normalizedRequest.routingMode === 'contractual') {
+      throwAllProvidersFailed(providerErrors.errors);
+    }
 
     // Try free model fallback before giving up
     if (!normalizedRequest.requireProvider && this._freeModelRouter?.isAvailable) {

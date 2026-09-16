@@ -3,6 +3,7 @@ import {
   type RouterExecutionContract,
 } from "../../core/router-execution-contract.js";
 import { getCircuitBreakerV2, type ResolvedStreamingProvider } from "../../core/router.js";
+import { sanitizeError } from "../../core/error-sanitizer.js";
 import type {
 	CaptureEndInput,
 	RequestLogger,
@@ -44,7 +45,7 @@ interface StreamingAttemptAbortInput extends StreamingAttemptTelemetryInput {
 }
 
 export function normalizeStreamingError(error: unknown): Error {
-	return error instanceof Error ? error : new Error(String(error));
+	return sanitizeError(error);
 }
 
 export function createStreamingRequestLogFinalizer(

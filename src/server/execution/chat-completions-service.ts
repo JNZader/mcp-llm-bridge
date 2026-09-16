@@ -18,6 +18,7 @@ import {
 	buildChatInternalRequestFromMessages,
 } from "../http-helpers/chat-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
+import { sanitizeError } from "../../core/error-sanitizer.js";
 
 const SUPPORTED_CHAT_MESSAGE_ROLES: ReadonlySet<string> = new Set([
 	"system",
@@ -221,7 +222,7 @@ async function finalizeNonStreamingFailure(
 
 	await logger.requestLogger.captureEnd(logger.logCtx, {
 		attempts: 1,
-		error: error instanceof Error ? error : new Error(String(error)),
+		error: sanitizeError(error),
 	});
 }
 

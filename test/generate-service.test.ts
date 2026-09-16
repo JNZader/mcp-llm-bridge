@@ -160,7 +160,7 @@ describe("generate-service", () => {
 
 	it("logs failures and rethrows the router error", async () => {
 		const captured: Array<Record<string, unknown>> = [];
-		const failure = new Error("router blew up");
+		const failure = new Error('router blew up {"api_key":"generate-secret","token":"generate-token"} Bearer generate-bearer');
 
 		await assert.rejects(
 			() =>
@@ -213,7 +213,7 @@ describe("generate-service", () => {
 			{
 				phase: "end",
 				attempts: 1,
-				error: "router blew up",
+				error: 'router blew up {"api_key":[REDACTED],"token":[REDACTED]} Bearer [REDACTED]',
 			},
 		]);
 	});

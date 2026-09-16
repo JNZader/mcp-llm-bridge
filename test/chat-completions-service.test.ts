@@ -478,4 +478,35 @@ describe("chat-completions-service", () => {
 			routing: undefined,
 		});
 	});
+
+	it("redacts provider secrets before persisting a failed request", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+		let loggedError: Error | undefined;
+
+		await assert.rejects(
+			() => executeNonStreamingChatCompletions({
+				prepared,
+				scope: {},
+				requestLogger: {
+					captureStart: () => ({}) as never,
+					captureEnd: async (_ctx: unknown, input?: { error?: Error }) => {
+						loggedError = input?.error;
+					},
+				} as never,
+				router: {
+					generateFromInternal: async () => {
+						throw new Error('chat failure {"api_key":"chat-secret","token":"chat-token"} Bearer chat-bearer');
+					},
+				} as never,
+			}),
+		);
+
+		assert.ok(loggedError);
+		assert.doesNotMatch(loggedError.message, /chat-secret|chat-token|chat-bearer/);
+		assert.match(loggedError.message, /api_key.*REDACTED/);
+		assert.match(loggedError.message, /Bearer \[REDACTED\]/);
+	});
 });

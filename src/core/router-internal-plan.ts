@@ -59,6 +59,9 @@ export async function buildInternalRoutingPlan(
       : undefined;
   const strict = optimizedRequest.metadata?.['strict'] === true;
   const requireProvider = optimizedRequest.metadata?.['requireProvider'] === true;
+  const routingMode = optimizedRequest.metadata?.['routingMode'] === 'contractual'
+    ? 'contractual' as const
+    : undefined;
   const sharedPlan = await buildRoutingPolicyPlan({
     providers: options.providers,
     request: {
@@ -67,6 +70,7 @@ export async function buildInternalRoutingPlan(
       provider: requestedProvider,
       strict,
       requireProvider,
+      routingMode,
       clientId:
         typeof optimizedRequest.metadata?.['clientId'] === 'string'
           ? optimizedRequest.metadata['clientId']

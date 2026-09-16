@@ -144,6 +144,14 @@ export function buildInternalRequestFromGenerate(request: GenerateRequest): Inte
     metadata['requireProvider'] = request.requireProvider;
   }
 
+  if (request.routingMode) {
+    metadata['routingMode'] = request.routingMode;
+  }
+
+  if (request.responseFormat) {
+    metadata['responseFormat'] = request.responseFormat;
+  }
+
   if (request.project) {
     metadata['project'] = request.project;
   }

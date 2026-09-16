@@ -1011,7 +1011,7 @@ describe('GET /v1/logs', () => {
             name: 'primary-stream-provider',
             async *transformStream() {
               yield { content: 'partial', done: false, model: streamModel };
-              throw new Error('mid-stream failure');
+              throw new Error('mid-stream failure {"api_key":"stream-secret","token":"stream-token"} Bearer stream-bearer');
             },
           },
         },
@@ -1042,6 +1042,7 @@ describe('GET /v1/logs', () => {
         assert.equal(res.status, 200);
         assert.match(res.data, /partial/);
         assert.match(res.data, /mid-stream failure/);
+        assert.doesNotMatch(res.data, /stream-secret|stream-token|stream-bearer/);
         assert.doesNotMatch(res.data, /should-not-appear/);
         assert.equal(recoveryProviderCalls, 0);
 
@@ -1057,7 +1058,8 @@ describe('GET /v1/logs', () => {
         assert.equal(data.logs[0]?.provider, 'primary-stream-provider');
         assert.equal(data.logs[0]?.model, streamModel);
         assert.equal(data.logs[0]?.attempts, 1);
-        assert.equal(data.logs[0]?.error, 'mid-stream failure');
+        assert.match(data.logs[0]?.error ?? '', /mid-stream failure/);
+        assert.doesNotMatch(data.logs[0]?.error ?? '', /stream-secret|stream-token|stream-bearer/);
       } finally {
         (router as any).resolveStreamingProviders = originalResolveStreamingProviders;
         deleteLogsByModel(streamModel);

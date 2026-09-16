@@ -115,9 +115,19 @@ export class LocalLLMProvider implements LLMProvider {
       throw new LocalLLMError('No local models available', 'ollama');
     }
 
-    // Pick model: use request.model if it matches a local model, else best available
+    const contractual = request.routingMode === 'contractual';
+
+    // Contractual requests must use the exact requested model. Do not delegate
+    // this lookup to the best-model helper: contractual selection is identity
+    // matching, while automatic routing retains preferred/first-model behavior.
     let model: LocalModel | null = null;
-    if (request.model) {
+    if (contractual) {
+      model = request.model
+        ? Array.from(this.detectionResults.values())
+            .flat()
+            .find((candidate) => candidate.id === request.model) ?? null
+        : null;
+    } else if (request.model) {
       model = pickBestLocalModel(
         Array.from(this.detectionResults.entries()).map(([backend, models]) => ({
           backend: backend as 'ollama' | 'lm-studio',
@@ -126,6 +136,12 @@ export class LocalLLMProvider implements LLMProvider {
           models,
         })),
         request.model,
+      );
+    }
+    if (!model && contractual) {
+      throw new LocalLLMError(
+        `Contractual model ${request.model ?? '(missing)'} is unavailable from local-llm`,
+        'ollama',
       );
     }
     if (!model) {
@@ -144,9 +160,9 @@ export class LocalLLMProvider implements LLMProvider {
       throw new LocalLLMError('No suitable local model found', 'ollama');
     }
 
-    // Classify task for offloading — if not offloadable, refuse
+    // Contractual mode bypasses only this automatic offload classifier gate.
     const classification = classifyForOffload(request.prompt);
-    if (!meetsOffloadThreshold(classification, this.config.minOffloadConfidence)) {
+    if (!contractual && !meetsOffloadThreshold(classification, this.config.minOffloadConfidence)) {
       throw new LocalLLMError(
         `Task not offloadable: ${classification.reason}`,
         model.backend,
@@ -158,6 +174,7 @@ export class LocalLLMProvider implements LLMProvider {
       request.prompt,
       request.system,
       this.config,
+      request.responseFormat,
     );
 
     return {

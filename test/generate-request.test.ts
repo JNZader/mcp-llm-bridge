@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { GenerateRequest as GenerateRequestBody } from '../src/core/schemas.js';
+import { validateGenerateRequest, type GenerateRequest as GenerateRequestBody } from '../src/core/schemas.js';
+import { buildInternalRequestFromGenerate } from '../src/core/router-shaping.js';
 import { prepareGenerateRequest } from '../src/server/http-helpers/generate-request.js';
 import type { RequestScope } from '../src/server/http-helpers/request-scope.js';
 
@@ -73,6 +74,28 @@ describe('prepareGenerateRequest', () => {
 			apiKeyId: undefined,
 			userId: undefined,
 		});
+	});
+
+	it('propagates the generic JSON response format', () => {
+		const prepared = prepareGenerateRequest(
+			{
+				prompt: 'Return one JSON object.',
+				model: 'granite3.2:2b',
+				provider: 'local-llm',
+				routingMode: 'contractual',
+				responseFormat: 'json',
+			},
+			createContext(),
+		);
+
+		assert.equal(prepared.responseFormat, 'json');
+		assert.equal(buildInternalRequestFromGenerate(prepared).metadata?.responseFormat, 'json');
+	});
+
+	it('rejects JSON response mode outside the contractual route', () => {
+		assert.throws(() =>
+			validateGenerateRequest({ prompt: 'Return JSON.', responseFormat: 'json' }),
+		);
 	});
 
 	it('optimizes flat prompts only when there is no explicit system', () => {
