@@ -1,0 +1,9 @@
+version: 1
+runners:
+  - name: node
+    stack: node
+    directory: .
+    setup: pnpm install --frozen-lockfile --force
+    build: pnpm run build
+    test: pnpm test
+    requires: [node, pnpm]
