@@ -1,0 +1,22 @@
+# Keep the build context small and never ship secrets or local state.
+.git
+.gitignore
+node_modules
+dashboard/node_modules
+dist
+docs
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+.DS_Store
+coverage
+.vscode
+.idea
+docs/audit
+*.md
+!README.md
+test
+**/__tests__
+**/*.test.ts

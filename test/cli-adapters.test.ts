@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { Vault } from '../src/vault/vault.js';
 import { materializeProviderHome, cleanupAllProviderHomes } from '../src/adapters/cli-home.js';
 import { isCliAvailableAsync, MAX_COPILOT_ARGV_PROMPT_CHARS } from '../src/adapters/cli-utils.js';
-import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput, resolveOpenCodeGenerateTimeoutMs } from '../src/adapters/cli-opencode.js';
+import { extractOpenCodeError, OPENCODE_GENERATE_TIMEOUT_MS, openCodeStopReason, parseOpenCodeModelsList, parseOpenCodeOutput, parseOpenCodeToolEvidence, resolveOpenCodeGenerateTimeoutMs } from '../src/adapters/cli-opencode.js';
 import {
   DEFAULT_CLI_GENERATE_TIMEOUT_MS,
   GENERATE_HTTP_HEADROOM_MS,
@@ -327,6 +327,62 @@ describe('parseOpenCodeModelsList', () => {
     ]);
     assert.equal(models[0]!.provider, 'opencode-cli');
     assert.equal(models[0]!.name, 'Deepseek V4 Flash');
+  });
+});
+
+describe('parseOpenCodeToolEvidence', () => {
+  it('reports zero for structured lifecycle, text, and step_finish events', () => {
+    const evidence = parseOpenCodeToolEvidence([
+      JSON.stringify({ type: 'step_start', part: { id: 'step-1' } }),
+      JSON.stringify({ type: 'text', part: { text: 'OK' } }),
+      JSON.stringify({ type: 'step_finish', part: { tokens: { input: 1, output: 1 } } }),
+    ].join('\n'));
+    assert.equal(evidence?.toolCallCount, 0);
+    assert.equal(evidence?.observable, true);
+  });
+
+  it('reports nonzero for tool events and is unavailable for malformed output', () => {
+    assert.equal(parseOpenCodeToolEvidence(JSON.stringify({ type: 'tool_start' }))?.toolCallCount, 1);
+    assert.equal(parseOpenCodeToolEvidence('{not-json'), undefined);
+  });
+
+  it('requires a non-empty string step id', () => {
+    for (const id of [undefined, '', 42]) {
+      assert.equal(
+        parseOpenCodeToolEvidence(JSON.stringify({ type: 'step_start', part: id === undefined ? {} : { id }})),
+        undefined,
+      );
+    }
+  });
+
+  it('rejects a step_finish with an invalid present counter', () => {
+    assert.equal(
+      parseOpenCodeToolEvidence(JSON.stringify({ type: 'step_finish', part: { tokens: { input: 1, output: 'bad' } } })),
+      undefined,
+    );
+  });
+
+  it('requires a terminal step_finish for zero-tool evidence', () => {
+    assert.equal(parseOpenCodeToolEvidence(JSON.stringify({ type: 'step_start', part: { id: 'step-1' } })), undefined);
+  });
+
+  it('does not claim zero calls when the OpenCode stream is empty or unrecognized', () => {
+    assert.equal(parseOpenCodeToolEvidence(''), undefined);
+    assert.equal(parseOpenCodeToolEvidence(JSON.stringify({ type: 'message' })), undefined);
+  });
+
+  it('rejects malformed lifecycle, step_finish, and message payloads even after valid text', () => {
+    const text = JSON.stringify({ type: 'text', part: { text: 'OK' } });
+    assert.equal(parseOpenCodeToolEvidence(`${text}\n${JSON.stringify({ type: 'step_start' })}`), undefined);
+    assert.equal(parseOpenCodeToolEvidence(`${text}\n${JSON.stringify({ type: 'step_finish', part: {} })}`), undefined);
+    assert.equal(parseOpenCodeToolEvidence(`${text}\n${JSON.stringify({ type: 'message', part: {} })}`), undefined);
+  });
+
+  it('fails closed for unknown events and treats tool aliases as tool activity', () => {
+    const text = JSON.stringify({ type: 'text', part: { text: 'OK' } });
+    assert.equal(parseOpenCodeToolEvidence(`${text}\n${JSON.stringify({ type: 'future_event' })}`), undefined);
+    assert.equal(parseOpenCodeToolEvidence(JSON.stringify({ type: 'tool_end' }))?.toolCallCount, 1);
+    assert.equal(parseOpenCodeToolEvidence(JSON.stringify({ type: 'tool_custom' }))?.toolCallCount, 1);
   });
 });
 

@@ -13,12 +13,14 @@
  * - Response parsing
  */
 
-import type { LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
+import type { GenerateExecutionOptions, LLMProvider, GenerateRequest, GenerateResponse, ModelInfo } from '../core/types.js';
+import { createGenerationAbortError, isGenerationAbortError, throwIfGenerationAborted } from '../core/generation-cancellation.js';
 import type { Vault } from '../vault/vault.js';
-import { materializeProviderHome } from './cli-home.js';
+import { materializeRequestProviderHome } from './cli-home.js';
 import {
   assertPromptNotOnArgv,
-  execCliSync,
+  CLI_FAILURE_KIND,
+  execCliAsync,
   isCliAvailableAsync,
   MAX_ARGV_PROMPT_CHARS,
 } from './cli-utils.js';
@@ -37,6 +39,21 @@ export interface CliAdapterConfig {
   readonly models: ModelInfo[];
   /** If set, the prompt is passed as this flag's value (agy `-p` requires an argument). */
   readonly argvPromptFlag?: string;
+}
+
+interface CliFailureDetails {
+  readonly code?: string;
+  readonly kind?: string;
+  readonly message: string;
+  readonly stdout?: string;
+}
+
+function readCliFailureDetails(error: unknown): CliFailureDetails {
+  if (!(error instanceof Error)) return { message: String(error) };
+  const code = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+  const kind = 'kind' in error && typeof error.kind === 'string' ? error.kind : undefined;
+  const stdout = 'stdout' in error && typeof error.stdout === 'string' ? error.stdout : undefined;
+  return { message: error.message, code, kind, stdout };
 }
 
 /**
@@ -124,9 +141,11 @@ export abstract class BaseCliAdapter implements LLMProvider {
     // Default: no validation
   }
 
-  async generate(request: GenerateRequest): Promise<GenerateResponse> {
+  async generate(request: GenerateRequest, options?: GenerateExecutionOptions): Promise<GenerateResponse> {
+    throwIfGenerationAborted(options);
     const model = request.model ?? this.config.defaultModel;
     const providerFiles = this.vault.getProviderFiles(this.config.cliCommand, request.project);
+    throwIfGenerationAborted(options);
     
     // Validate provider files if any exist
     if (providerFiles.length > 0) {
@@ -134,7 +153,7 @@ export abstract class BaseCliAdapter implements LLMProvider {
     }
 
     const mount = providerFiles.length > 0
-      ? materializeProviderHome(this.config.cliCommand, providerFiles, request.project)
+      ? materializeRequestProviderHome(this.config.cliCommand, providerFiles, request.project)
       : null;
 
     try {
@@ -159,17 +178,20 @@ export abstract class BaseCliAdapter implements LLMProvider {
           );
         }
         args.push(promptFlag, prompt);
-        output = execCliSync(this.config.cliCommand, args, {
+        ({ stdout: output } = await execCliAsync(this.config.cliCommand, args, {
           env,
           timeout: resolveCliGenerateTimeoutMs(env),
-        });
+          signal: options?.signal,
+        }));
       } else {
-        output = execCliSync(this.config.cliCommand, args, {
+        ({ stdout: output } = await execCliAsync(this.config.cliCommand, args, {
           env,
           input: prompt,
           timeout: resolveCliGenerateTimeoutMs(env),
-        });
+          signal: options?.signal,
+        }));
       }
+      throwIfGenerationAborted(options);
 
       const text = this.parseResponse(output);
       return {
@@ -182,8 +204,14 @@ export abstract class BaseCliAdapter implements LLMProvider {
         fallbackUsed: false,
       };
     } catch (error) {
-      const execError = error as { stdout?: string; message?: string };
-      if (execError.stdout) {
+      if (isGenerationAbortError(error) || options?.signal?.aborted) {
+        throw createGenerationAbortError();
+      }
+      const execError = readCliFailureDetails(error);
+      if (execError.kind === CLI_FAILURE_KIND.TERMINATION && execError.code === 'ETIMEDOUT') {
+        throw new Error(`${this.config.name} CLI timed out`);
+      }
+      if (execError.kind === CLI_FAILURE_KIND.EXIT && execError.stdout) {
         try {
           const text = this.parseResponse(execError.stdout);
           if (text) {

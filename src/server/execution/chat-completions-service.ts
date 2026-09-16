@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type { ChatCompletionsRequest } from "../../core/schemas.js";
 import type { Router } from "../../core/router.js";
+import type { UsageProvenance } from "../../core/types.js";
+import { readUsageProvenance } from "../../core/usage-provenance.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import {
 	createOpenAIUsage,
@@ -11,10 +13,20 @@ import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
 import {
 	assertChatMessagesContainUserMessage,
+	type ChatGenerateCanonicalRequest,
 	type ChatGenerateMessage,
 	buildChatInternalRequestFromMessages,
 } from "../http-helpers/chat-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
+
+const SUPPORTED_CHAT_MESSAGE_ROLES: ReadonlySet<string> = new Set([
+	"system",
+	"user",
+	"assistant",
+] as const);
+
+const UNSUPPORTED_CHAT_MESSAGE_ROLE_ERROR =
+	"Chat completions supports only system, user, and assistant message roles";
 
 interface GatewayMetadataInput {
 	requestedProvider?: string;
@@ -26,6 +38,7 @@ interface GatewayMetadataInput {
 	inputTokens?: number;
 	outputTokens?: number;
 	routing?: { attemptedProviders?: string[] } & Record<string, unknown>;
+	usageProvenance?: UsageProvenance;
 }
 
 interface NonStreamingChatResult extends GatewayMetadataInput {
@@ -51,7 +64,7 @@ interface NonStreamingChatLogger {
 
 export interface PreparedChatCompletionsRequest {
 	canonicalRequest: CanonicalRequest;
-	optimizedCanonicalRequest: CanonicalRequest;
+	optimizedCanonicalRequest: ChatGenerateCanonicalRequest;
 }
 
 export interface ExecuteNonStreamingChatCompletionsInput {
@@ -60,12 +73,15 @@ export interface ExecuteNonStreamingChatCompletionsInput {
 	scope: RequestScope;
 	requestLogger?: RequestLogger;
 	now?: () => number;
-	createChatCompletionId?: () => string;
+  createChatCompletionId?: () => string;
+  abortSignal?: AbortSignal;
 }
 
 export function prepareChatCompletionsRequest(
 	validated: ChatCompletionsRequest,
 ): PreparedChatCompletionsRequest {
+	assertSupportedChatMessageRoles(validated.messages);
+
 	const canonicalRequest = normalizeOpenAIRequest(validated);
 	const normalizedOptimizedMessages = normalizeOptimizedMessages(
 		optimizeMessages(
@@ -84,6 +100,16 @@ export function prepareChatCompletionsRequest(
 			messages: normalizedOptimizedMessages,
 		},
 	};
+}
+
+function assertSupportedChatMessageRoles(
+	messages: ReadonlyArray<Pick<ChatCompletionsRequest["messages"][number], "role">>,
+): void {
+	for (const message of messages) {
+		if (!SUPPORTED_CHAT_MESSAGE_ROLES.has(message.role)) {
+			throw new Error(UNSUPPORTED_CHAT_MESSAGE_ROLE_ERROR);
+		}
+	}
 }
 
 function normalizeOptimizedMessages(
@@ -119,6 +145,7 @@ export async function executeNonStreamingChatCompletions(
 		requestLogger,
 		now = Date.now,
 		createChatCompletionId = () => `chatcmpl-${randomUUID()}`,
+		abortSignal,
 	} = input;
 	const logger = createNonStreamingLogger({
 		requestLogger,
@@ -135,6 +162,7 @@ export async function executeNonStreamingChatCompletions(
 					prepared.optimizedCanonicalRequest.messages,
 					scope,
 				),
+				{ signal: abortSignal },
 			),
 		);
 
@@ -251,6 +279,7 @@ function mapInternalResultToNonStreamingChatResult(
 		readMetadataString(metadata, "resolvedProvider") ?? provider;
 	const resolvedModel =
 		readMetadataString(metadata, "resolvedModel") ?? result.model;
+	const usageProvenance = readUsageProvenance(metadata["usageProvenance"]);
 
 	return {
 		text: result.content,
@@ -265,6 +294,7 @@ function mapInternalResultToNonStreamingChatResult(
 		resolvedModel,
 		fallbackUsed: metadata["fallbackUsed"] === true,
 		routing: readRoutingMetadata(metadata["routing"]),
+		...(usageProvenance ? { usageProvenance } : {}),
 	};
 }
 
@@ -297,5 +327,6 @@ function buildGatewayMetadata(result: GatewayMetadataInput) {
 		inputTokens: result.inputTokens,
 		outputTokens: result.outputTokens,
 		routing: result.routing,
+		...(result.usageProvenance ? { usageProvenance: result.usageProvenance } : {}),
 	};
 }

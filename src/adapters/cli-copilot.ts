@@ -11,11 +11,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { LLMProvider, GenerateRequest, GenerateResponse } from '../core/types.js';
+import type { LLMProvider, GenerateExecutionOptions, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { Vault } from '../vault/vault.js';
+import { throwIfGenerationAborted } from '../core/generation-cancellation.js';
 import {
   assertPromptNotOnArgv,
-  execCliSync,
+  execCliAsync,
   isCliAvailableAsync,
   MAX_COPILOT_ARGV_PROMPT_CHARS,
 } from './cli-utils.js';
@@ -55,7 +56,9 @@ export class CopilotCliAdapter implements LLMProvider {
     this.vault = vault;
   }
 
-  async generate(request: GenerateRequest): Promise<GenerateResponse> {
+  async generate(request: GenerateRequest, executionOptions?: GenerateExecutionOptions): Promise<GenerateResponse> {
+    throwIfGenerationAborted(executionOptions);
+
     const model = request.model ?? 'gpt-4.1';
     const fullPrompt = request.system ? `${request.system}\n\n${request.prompt}` : request.prompt;
     if (fullPrompt.length > MAX_COPILOT_ARGV_PROMPT_CHARS) {
@@ -74,14 +77,19 @@ export class CopilotCliAdapter implements LLMProvider {
       // Fall back to any local environment auth already present.
     }
 
+    throwIfGenerationAborted(executionOptions);
     const promptDir = mkdtempSync(join(tmpdir(), 'mcp-copilot-prompt-'));
     const promptPath = join(promptDir, 'prompt.txt');
     try {
       writeFileSync(promptPath, fullPrompt, { mode: 0o600 });
       const args = buildCopilotGenerateArgs(model, promptPath);
       assertPromptNotOnArgv('copilot', args, [fullPrompt, request.system, request.prompt]);
-      const output = execCliSync('copilot', args, { env });
-      return { text: output.trim(), provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
+      const { stdout } = await execCliAsync('copilot', args, {
+        env,
+        signal: executionOptions?.signal,
+      });
+      throwIfGenerationAborted(executionOptions);
+      return { text: stdout.trim(), provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
     } finally {
       rmSync(promptDir, { recursive: true, force: true });
     }

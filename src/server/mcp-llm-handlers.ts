@@ -21,6 +21,10 @@ export async function handleLlmGenerateTool(
   router: Router,
   bridge?: BridgeOrchestrator | null,
 ): Promise<McpToolResult> {
+  if (Object.prototype.hasOwnProperty.call(args, 'requireProvider')) {
+    return jsonResult({ error: 'requireProvider is not supported by the llm_generate MCP tool' }, true);
+  }
+
   let prompt = args['prompt'] as string | undefined;
   const system = args['system'] as string | undefined;
   const context = args['context'] as string | undefined;

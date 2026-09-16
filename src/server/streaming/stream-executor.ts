@@ -4,15 +4,17 @@ import type { RouterExecutionContract } from "../../core/router-execution-contra
 import type { ResolvedStreamingProvider, Router } from "../../core/router.js";
 import type { GenerateResponse } from "../../core/types.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
-import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { InternalLLMChunk } from "../../transformers/streaming.js";
-import type { ProviderStreamVaultPort } from "./provider-stream-client.js";
 import {
 	buildChatGenerateRequest,
 	buildChatInternalRequestFromMessages,
+	type ChatGenerateCanonicalRequest,
 } from "../http-helpers/chat-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
-import { buildProviderStreamCall } from "./provider-stream-client.js";
+import {
+	buildProviderStreamCall,
+	type ProviderStreamVaultPort,
+} from "./provider-stream-client.js";
 import {
 	createStreamingRequestLogFinalizer,
 	finalizeStreamingAttemptAbort,
@@ -29,7 +31,7 @@ export interface StreamExecutorOutput {
 }
 
 export interface CreateStreamExecutorInput {
-	canonical: CanonicalRequest;
+	canonical: ChatGenerateCanonicalRequest;
 	router: Router;
 	costTracker?: CostTracker;
 	vault?: ProviderStreamVaultPort;
@@ -83,7 +85,7 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 	const internalRequest: InternalLLMRequest = buildChatInternalRequestFromMessages(
 		canonical,
 		canonical.messages.map((message) => ({
-			role: message.role as "system" | "user" | "assistant",
+			role: message.role,
 			content: message.content,
 		})),
 		scope,
@@ -148,7 +150,9 @@ export function createStreamExecutor(input: CreateStreamExecutorInput): StreamEx
 				if (resolvedCandidates.length === 0) {
 					let result: GenerateResponse;
 					try {
-						result = await router.generate(buildChatGenerateRequest(canonical, scope));
+						result = await router.generate(buildChatGenerateRequest(canonical, scope), {
+							signal: abortSignal,
+						});
 					} catch (error) {
 						if (aborted || isAbortError(error)) {
 							await finalizeAbort();

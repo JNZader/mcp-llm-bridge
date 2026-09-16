@@ -16,6 +16,7 @@
  */
 
 import type {
+  GenerateExecutionOptions,
   GenerateRequest,
   GenerateResponse,
   LLMProvider,
@@ -66,6 +67,7 @@ import {
   throwAllProvidersFailed,
   tryCandidates,
 } from './router-attempts.js';
+import { isGenerationAbortError, throwIfGenerationAborted } from './generation-cancellation.js';
 import { optimizeMessagesEnabled } from './runtime-flags.js';
 
 import { logger } from './logger.js';
@@ -127,6 +129,16 @@ function normalizeGenerateRequestProvider(request: GenerateRequest): GenerateReq
     ...request,
     provider,
   };
+}
+
+function validateRequiredProviderRequest(request: GenerateRequest): void {
+  if (request.requireProvider !== undefined && typeof request.requireProvider !== 'boolean') {
+    throw new Error('requireProvider must be a boolean');
+  }
+
+  if (request.requireProvider && (typeof request.provider !== 'string' || !request.provider.trim())) {
+    throw new Error('provider must be a non-blank string when requireProvider is true');
+  }
 }
 
 function normalizeInternalRequestProvider(request: InternalLLMRequest): InternalLLMRequest {
@@ -315,13 +327,15 @@ export class Router {
    * on failure. Throws if all providers fail.
    * Uses circuit breaker to skip providers that are currently failing.
    */
-  async generate(request: GenerateRequest): Promise<GenerateResponse> {
+  async generate(request: GenerateRequest, executionOptions?: GenerateExecutionOptions): Promise<GenerateResponse> {
+    throwIfGenerationAborted(executionOptions);
+    validateRequiredProviderRequest(request);
     const normalizedRequest = normalizeGenerateRequestProvider(request);
 
     if (this.canUseInternalGenerateCompatibilityPath()) {
       return buildGenerateResponseFromInternal(
         normalizedRequest,
-        await this.generateFromInternal(buildInternalRequestFromGenerate(normalizedRequest)),
+        await this.generateFromInternal(buildInternalRequestFromGenerate(normalizedRequest), executionOptions),
       );
     }
 
@@ -335,6 +349,7 @@ export class Router {
         model: normalizedRequest.model,
         provider: normalizedRequest.provider,
         strict: normalizedRequest.strict === true,
+        requireProvider: normalizedRequest.requireProvider === true,
       },
       groupStore: null,
       sessionManager: null,
@@ -345,6 +360,7 @@ export class Router {
       fallbackModel: 'unknown',
       explicitFallbackOrder: this._explicitFallbackOrder,
     });
+    throwIfGenerationAborted(executionOptions);
     const candidates = plan.orderedCandidates;
     const routingMetadata = {
       strategy: determineRoutingStrategy({
@@ -374,9 +390,9 @@ export class Router {
       );
     }
 
-    if (plan.strict && plan.blockedStrictCandidate) {
+    if ((plan.strict || normalizedRequest.requireProvider) && plan.blockedStrictCandidate) {
       throw new Error(
-        `Strict mode candidate ${plan.blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
+        `${normalizedRequest.requireProvider ? 'Required provider' : 'Strict mode'} candidate ${plan.blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
       );
     }
 
@@ -411,6 +427,7 @@ export class Router {
         classification: plan.classification,
         attempt: 1,
         ...telemetry,
+        executionOptions,
         logFailure: ({ provider: failedProvider, attemptedModel, message }) => {
           logger.warn({ provider: failedProvider.id, model: attemptedModel, error: message }, 'Provider failed');
         },
@@ -424,6 +441,7 @@ export class Router {
 
     const providerErrors = createProviderErrorAccumulator();
     const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) => {
+      throwIfGenerationAborted(executionOptions);
       executionContract.recordAttempt(provider.id);
       return executeGenerateAttempt({
         provider,
@@ -438,6 +456,7 @@ export class Router {
         classification: plan.classification,
         attempt: index + 1,
         ...telemetry,
+        executionOptions,
         logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
           if (error instanceof LocalLLMError) {
             logger.warn(
@@ -477,11 +496,14 @@ export class Router {
       });
     }
 
+    throwIfGenerationAborted(executionOptions);
+
     // Try free model fallback before giving up
-    if (this._freeModelRouter?.isAvailable) {
+    if (!normalizedRequest.requireProvider && this._freeModelRouter?.isAvailable) {
       try {
         logger.info('All paid providers failed, attempting free model fallback');
         const freeResult = await this._freeModelRouter.generate(normalizedRequest);
+        throwIfGenerationAborted(executionOptions);
         executionContract.recordAttempt('free-models');
         const freeModelExecutionContract = createRouterExecutionContract({
           requestedProvider: normalizedRequest.provider,
@@ -528,7 +550,8 @@ export class Router {
    *
    * After successful response: pin session if stickiness is enabled.
    */
-  async generateFromInternal(request: InternalLLMRequest): Promise<InternalLLMResponse> {
+  async generateFromInternal(request: InternalLLMRequest, executionOptions?: GenerateExecutionOptions): Promise<InternalLLMResponse> {
+    throwIfGenerationAborted(executionOptions);
     const normalizedRequest = normalizeInternalRequestProvider(request);
 
     if (!this._transformerRegistry) {
@@ -551,6 +574,7 @@ export class Router {
       optimizeMessages: optimizeMessagesEnabled(),
       explicitFallbackOrder: this._explicitFallbackOrder,
     });
+    throwIfGenerationAborted(executionOptions);
     const { optimizedRequest } = plan;
 
     const model = plan.model;
@@ -584,6 +608,7 @@ export class Router {
         if (circuitBreaker.canExecute(stickyProvider.id, 'default', plan.routedModel).allowed) {
           try {
             executionContract.recordAttempt(stickyProvider.id);
+            throwIfGenerationAborted(executionOptions);
             const result = await tryProvider({
               provider: stickyProvider,
               request: buildInternalRequest(
@@ -598,7 +623,9 @@ export class Router {
               attempt: 1,
                 routedEndpoint: plan.appliedModelRouterDecision?.endpoint,
                 ...telemetry,
+                executionOptions,
             });
+            throwIfGenerationAborted(executionOptions);
             return withInternalResolutionMetadata(
               result,
               buildInternalResolutionMetadataOptions(executionContract, {
@@ -606,7 +633,8 @@ export class Router {
                 resolvedModel: result.model,
               }),
             );
-          } catch {
+          } catch (error) {
+            if (isGenerationAbortError(error)) throw error;
             // Sticky provider failed — fall through to normal routing
             logger.warn(
               {
@@ -627,9 +655,9 @@ export class Router {
       );
     }
 
-    if (plan.strict && plan.blockedStrictCandidate) {
+    if ((plan.strict || plan.requireProvider) && plan.blockedStrictCandidate) {
       throw new Error(
-        `Strict mode candidate ${plan.blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
+        `${plan.requireProvider ? 'Required provider' : 'Strict mode'} candidate ${plan.blockedStrictCandidate.id} is blocked by an open circuit breaker.`,
       );
     }
 
@@ -642,6 +670,7 @@ export class Router {
 
     const providerErrors = createProviderErrorAccumulator();
     const attemptedResult = await tryCandidates(plan.availableCandidates, (provider, index) => {
+      throwIfGenerationAborted(executionOptions);
       executionContract.recordAttempt(provider.id);
       return tryProvider({
         provider,
@@ -656,6 +685,7 @@ export class Router {
         attempt: index + 1,
         routedEndpoint: plan.appliedModelRouterDecision?.endpoint,
         ...telemetry,
+        executionOptions,
       });
     },
       (provider, error) => {
@@ -664,6 +694,7 @@ export class Router {
     );
 
     if (attemptedResult) {
+      throwIfGenerationAborted(executionOptions);
       // Pin session on success if stickiness is enabled
       if (this._sessionManager && plan.stickySession?.stickyTtlMs) {
         this._sessionManager.pinRouterStickySession(

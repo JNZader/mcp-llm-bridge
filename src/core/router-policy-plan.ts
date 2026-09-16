@@ -24,6 +24,7 @@ export interface RoutingPolicyPlanRequest {
   provider?: string;
   model?: string;
   strict: boolean;
+  requireProvider: boolean;
   clientId?: string;
 }
 
@@ -60,6 +61,7 @@ export interface RoutingPolicyPlan {
   routedModel: string;
   requestedProvider?: string;
   strict: boolean;
+  requireProvider: boolean;
   stickySession: StickySessionRoutingIntent | null;
 }
 
@@ -69,6 +71,7 @@ export async function buildRoutingPolicyPlan(
   const requestedProvider = normalizeProviderId(options.request.provider);
   const requestModel = options.request.model;
   const strict = options.request.strict;
+  const requireProvider = options.request.requireProvider;
   let matchedGroup: ProviderGroup | null = null;
   let orderedCandidates: LLMProvider[] | null = null;
 
@@ -92,6 +95,7 @@ export async function buildRoutingPolicyPlan(
         prompt: options.request.prompt,
         model: requestModel,
         provider: requestedProvider,
+        requireProvider,
       },
       (candidates) =>
         reorderByLatency(candidates, options.latencyMeasurer, options.explorationRate),
@@ -104,7 +108,7 @@ export async function buildRoutingPolicyPlan(
   let modelRouterDecision: RoutingDecision | null = null;
   let appliedModelRouterDecision: RoutingDecision | null = null;
 
-  if (options.modelRouter && options.modelRouter.enabled && !requestedProvider && !strict) {
+  if (options.modelRouter && options.modelRouter.enabled && !requestedProvider && !strict && !requireProvider) {
     classification = classify(options.request.prompt);
     modelRouterDecision = options.modelRouter.route(classification);
     if (modelRouterDecision) {
@@ -121,7 +125,7 @@ export async function buildRoutingPolicyPlan(
     }
   }
 
-  if (!requestedProvider && !strict && !appliedModelRouterDecision) {
+  if (!requestedProvider && !strict && !requireProvider && !appliedModelRouterDecision) {
     offloadClassification = classifyForOffload(options.request.prompt);
     if (offloadClassification.shouldOffload) {
       orderedCandidates = prioritizeProviderCandidate(orderedCandidates, 'local-llm');
@@ -134,6 +138,7 @@ export async function buildRoutingPolicyPlan(
     options.circuitBreaker,
     routedModel,
     strict,
+    requireProvider,
   );
 
   return {
@@ -149,6 +154,7 @@ export async function buildRoutingPolicyPlan(
     routedModel,
     requestedProvider,
     strict,
+    requireProvider,
     stickySession: buildStickySessionRoutingIntent({
       sessionManager: options.sessionManager,
       clientId: options.request.clientId,

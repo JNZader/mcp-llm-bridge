@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import type { ChatCompletionsRequest } from "../src/core/schemas.js";
+import type { InternalLLMRequest } from "../src/core/internal-model.js";
 import {
 	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
 	buildChatInternalRequestFromMessages,
@@ -117,5 +118,31 @@ describe("prepareChatGenerateRequest", () => {
 				},
 			},
 		);
+	});
+
+	it("characterizes the normalized three-role internal request limitation", () => {
+		const internalRequest: InternalLLMRequest = buildChatInternalRequestFromMessages(
+			{
+				messages: [
+					{ role: "system", content: "System." },
+					{ role: "user", content: "User." },
+					{ role: "assistant", content: "Assistant." },
+					{ role: "developer", content: "Developer." },
+					{ role: "tool", content: "Tool." },
+					{ role: "function", content: "Function." },
+				],
+			},
+			[
+				{ role: "system", content: "System." },
+				{ role: "user", content: "User." },
+				{ role: "assistant", content: "Assistant." },
+			],
+		);
+
+		assert.deepEqual(internalRequest.messages, [
+			{ role: "system", content: "System." },
+			{ role: "user", content: "User." },
+			{ role: "assistant", content: "Assistant." },
+		]);
 	});
 });

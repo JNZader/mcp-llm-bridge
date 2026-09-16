@@ -1,4 +1,5 @@
 import type { LLMProvider } from './types.js';
+import { isGenerationAbortError } from './generation-cancellation.js';
 
 export interface RouterAttemptResult<T> {
   result: T;
@@ -36,6 +37,7 @@ export async function tryCandidates<T>(
         index,
       };
     } catch (error) {
+      if (isGenerationAbortError(error)) throw error;
       onError(provider, error, index);
     }
   }

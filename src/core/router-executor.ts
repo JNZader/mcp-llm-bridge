@@ -1,4 +1,4 @@
-import type { GenerateRequest, GenerateResponse, LLMProvider } from './types.js';
+import type { GenerateExecutionOptions, GenerateRequest, GenerateResponse, LLMProvider } from './types.js';
 import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.js';
 import type { TransformerRegistry } from './transformer.js';
 import type { TaskClassification } from '../classification/index.js';
@@ -6,6 +6,8 @@ import type { ModelEndpoint } from '../model-routing/types.js';
 import type { CircuitBreakerV2 } from '../circuit-breaker/circuit-breaker-v2.js';
 import { LocalLLMError } from '../local-llm/client.js';
 import { logger } from './logger.js';
+import { isGenerationAbortError, throwIfGenerationAborted } from './generation-cancellation.js';
+import { readUsageProvenance } from './usage-provenance.js';
 
 type RecordUsageFn = (
   provider: string,
@@ -58,6 +60,7 @@ export interface ExecuteGenerateAttemptOptions {
   recordUsage: RecordUsageFn;
   recordModelFeedback: RecordModelFeedbackFn;
   logFailure?: LogGenerateFailureFn;
+  executionOptions?: GenerateExecutionOptions;
 }
 
 export interface TryProviderOptions {
@@ -76,6 +79,7 @@ export interface TryProviderOptions {
   ) => string;
   recordUsage: RecordUsageFn;
   recordModelFeedback: RecordModelFeedbackFn;
+  executionOptions?: GenerateExecutionOptions;
 }
 
 /**
@@ -139,6 +143,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     resolveFeedbackEndpointId,
     recordUsage,
     recordModelFeedback,
+    executionOptions,
   } = options;
 
   const outbound = registry.getOutbound(provider.id);
@@ -150,6 +155,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     typeof request.metadata?.['apiKeyId'] === 'string' ? request.metadata['apiKeyId'] : undefined;
   const userId =
     typeof request.metadata?.['userId'] === 'string' ? request.metadata['userId'] : undefined;
+  const tools = request.metadata?.['tools'] === 'none' ? 'none' : undefined;
 
   if (!outbound) {
     const cliOutbound = registry.getOutbound('cli');
@@ -160,13 +166,17 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         const prompt = (nativeRequest as Record<string, unknown>)['prompt'] as string;
         const system = (nativeRequest as Record<string, unknown>)['system'] as string | undefined;
 
+        throwIfGenerationAborted(executionOptions);
         const result = await provider.generate({
           prompt,
           system,
           model: attemptedModel,
           maxTokens: request.maxTokens,
-          project,
-        });
+           project,
+           ...(tools ? { tools } : {}),
+        }, executionOptions);
+
+        throwIfGenerationAborted(executionOptions);
 
         circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
         const response = cliOutbound.transformResponse(result);
@@ -191,6 +201,8 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         }
         return response;
       } catch (error) {
+        throwIfGenerationAborted(executionOptions);
+        if (isGenerationAbortError(error)) throw error;
         circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
         const message = error instanceof Error ? error.message : String(error);
         const latencyMs = Date.now() - attemptStartTime;
@@ -223,13 +235,17 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
       project,
       ...(apiKeyId ? { apiKeyId } : {}),
       ...(userId ? { userId } : {}),
+      ...(tools ? { tools } : {}),
     };
 
-    const result = await provider.generate(adapterRequest);
+    throwIfGenerationAborted(executionOptions);
+    const result = await provider.generate(adapterRequest, executionOptions);
+    throwIfGenerationAborted(executionOptions);
     circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? model);
 
     const latencyMs = Date.now() - attemptStartTime;
     const usage = typeof result.tokensUsed === 'number' ? { totalTokens: result.tokensUsed } : {};
+    const usageProvenance = readUsageProvenance(result.usageProvenance);
 
     const response: InternalLLMResponse = {
       content: result.text,
@@ -242,6 +258,8 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         latencyMs,
         resolvedProvider: result.provider,
         resolvedModel: result.model,
+        ...(usageProvenance ? { usageProvenance } : {}),
+        ...(result.toolEvidence ? { toolEvidence: result.toolEvidence } : {}),
       },
     };
 
@@ -261,6 +279,8 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     }
     return response;
   } catch (error) {
+    throwIfGenerationAborted(executionOptions);
+    if (isGenerationAbortError(error)) throw error;
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
     const message = error instanceof Error ? error.message : String(error);
     const latencyMs = Date.now() - attemptStartTime;
@@ -291,13 +311,16 @@ export async function executeGenerateAttempt(
     recordUsage,
     recordModelFeedback,
     logFailure,
+    executionOptions,
   } = options;
 
   const attemptedModel = request.model ?? defaultModel;
   const attemptStartTime = Date.now();
 
   try {
-    const result = await provider.generate(request);
+    throwIfGenerationAborted(executionOptions);
+    const result = await provider.generate(request, executionOptions);
+    throwIfGenerationAborted(executionOptions);
     circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
     const latencyMs = Date.now() - attemptStartTime;
     const resolvedModel = result.model ?? attemptedModel;
@@ -323,6 +346,8 @@ export async function executeGenerateAttempt(
     }
     return result;
   } catch (error) {
+    throwIfGenerationAborted(executionOptions);
+    if (isGenerationAbortError(error)) throw error;
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
     const message = error instanceof Error ? error.message : String(error);
     const latencyMs = Date.now() - attemptStartTime;

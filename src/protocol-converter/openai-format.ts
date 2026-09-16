@@ -90,8 +90,8 @@ export function validateOpenAIResponse(response: unknown): CanonicalResponse {
   return resp;
 }
 
-function validateRole(role: string): 'system' | 'user' | 'assistant' {
-  if (role === 'system' || role === 'user' || role === 'assistant') {
+function validateRole(role: string): 'system' | 'user' | 'assistant' | 'developer' | 'tool' | 'function' {
+  if (role === 'system' || role === 'user' || role === 'assistant' || role === 'developer' || role === 'tool' || role === 'function') {
     return role;
   }
   // Map alternate roles

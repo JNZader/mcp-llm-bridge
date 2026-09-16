@@ -229,8 +229,9 @@ export function resolveExecutableCandidates(
   circuitBreaker: CircuitBreakerV2,
   model: string,
   strict: boolean,
+  requireProvider = false,
 ): ExecutableCandidatesResolution {
-  if (strict) {
+  if (strict || requireProvider) {
     const selectedCandidate = candidates[0] ?? null;
     if (!selectedCandidate) {
       return {

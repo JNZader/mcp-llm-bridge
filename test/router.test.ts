@@ -8,6 +8,10 @@ import { beforeEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { getCircuitBreakerV2, resetCircuitBreakerV2, Router } from '../src/core/router.js';
+import { FreeModelRouter } from '../src/free-models/router.js';
+import { createGenerationAbortError } from '../src/core/generation-cancellation.js';
+import { executeGenerateAttempt } from '../src/core/router-executor.js';
+import { CircuitBreakerV2 } from '../src/circuit-breaker/circuit-breaker-v2.js';
 import type {
   LLMProvider,
   GenerateRequest,
@@ -656,5 +660,194 @@ describe('Router provider ordering', () => {
     const result = await router.generate({ prompt: 'test' });
     assert.equal(result.provider, 'api-second', 'API provider should be tried before CLI');
     assert.equal(result.fallbackUsed, false);
+  });
+});
+
+type RequiredProviderRequest = GenerateRequest & { requireProvider: boolean };
+
+function requiredRequest(provider: string, requireProvider = true): RequiredProviderRequest {
+  return { prompt: 'test', provider, requireProvider };
+}
+
+function countedProvider(id: string, options: { available?: boolean; failure?: string } = {}) {
+  const isAvailable = mock.fn(async () => options.available ?? true);
+  const generate = mock.fn(async (request: GenerateRequest): Promise<GenerateResponse> => {
+    if (options.failure) throw new Error(options.failure);
+    return { text: `from-${id}`, provider: id, model: request.model ?? `${id}-model`, resolvedProvider: id, resolvedModel: request.model ?? `${id}-model`, fallbackUsed: false };
+  });
+  return {
+    provider: { id, name: id, type: 'api' as const, models: [{ id: `${id}-model`, name: id, provider: id, maxTokens: 4096 }], isAvailable, generate } satisfies LLMProvider,
+    isAvailable,
+    generate,
+  };
+}
+
+describe('Router requireProvider', () => {
+  beforeEach(() => resetCircuitBreakerV2());
+
+  it('pins the requested provider and rejects every substitution path', async () => {
+    const unregistered = new Router();
+    const idle = countedProvider('idle');
+    unregistered.register(idle.provider);
+    await assert.rejects(() => unregistered.generate(requiredRequest('missing')), /provider/i);
+    assert.equal(idle.isAvailable.mock.callCount(), 0);
+    assert.equal(idle.generate.mock.callCount(), 0);
+
+    const unavailable = new Router();
+    const target = countedProvider('target', { available: false });
+    const backup = countedProvider('backup');
+    unavailable.register(target.provider);
+    unavailable.register(backup.provider);
+    await assert.rejects(() => unavailable.generate(requiredRequest('target')), /target|available/i);
+    assert.equal(target.isAvailable.mock.callCount(), 1);
+    assert.equal(backup.isAvailable.mock.callCount(), 0);
+    assert.equal(target.generate.mock.callCount(), 0);
+    assert.equal(backup.generate.mock.callCount(), 0);
+
+    const aliasRouter = new Router();
+    const openCode = countedProvider('opencode-cli');
+    const aliasBackup = countedProvider('alias-backup');
+    aliasRouter.register(openCode.provider);
+    aliasRouter.register(aliasBackup.provider);
+    const aliased = await aliasRouter.generate(requiredRequest('opencode'));
+    assert.equal(aliased.provider, 'opencode-cli');
+    assert.equal(openCode.generate.mock.callCount(), 1);
+    assert.equal(aliasBackup.generate.mock.callCount(), 0);
+
+    const failingRouter = new Router();
+    const failing = countedProvider('failing', { failure: 'target failed' });
+    const failingBackup = countedProvider('failing-backup');
+    const freeGenerate = mock.fn(async (): Promise<GenerateResponse> => ({ text: 'free', provider: 'free', model: 'free', resolvedProvider: 'free', resolvedModel: 'free', fallbackUsed: false }));
+    const freeModelRouter = new FreeModelRouter({ enabled: false });
+    Object.defineProperty(freeModelRouter, 'isAvailable', { value: true });
+    mock.method(freeModelRouter, 'generate', freeGenerate);
+    failingRouter.register(failing.provider);
+    failingRouter.register(failingBackup.provider);
+    failingRouter.setFreeModelRouter(freeModelRouter);
+    await assert.rejects(() => failingRouter.generate(requiredRequest('failing')), /target failed/);
+    assert.equal(failing.generate.mock.callCount(), 1);
+    assert.equal(failingBackup.generate.mock.callCount(), 0);
+    assert.equal(freeGenerate.mock.callCount(), 0);
+
+    const breakerRouter = new Router();
+    const blocked = countedProvider('blocked');
+    const breakerBackup = countedProvider('breaker-backup');
+    breakerRouter.register(blocked.provider);
+    breakerRouter.register(breakerBackup.provider);
+    const oldFlag = process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+    process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = 'true';
+    try {
+      for (let index = 0; index < 5; index++) getCircuitBreakerV2().recordFailure('blocked', 'default', 'blocked-model');
+      await assert.rejects(
+        () => breakerRouter.generate({ ...requiredRequest('blocked'), model: 'blocked-model' }),
+        /blocked|circuit/i,
+      );
+      assert.equal(blocked.generate.mock.callCount(), 0);
+      assert.equal(breakerBackup.generate.mock.callCount(), 0);
+    } finally {
+      if (oldFlag === undefined) delete process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'];
+      else process.env['LLM_GATEWAY_CIRCUIT_BREAKER_ENABLED'] = oldFlag;
+    }
+
+    const legacyRouter = new Router();
+    const legacyFailed = countedProvider('legacy-failed', { failure: 'legacy failure' });
+    const legacyBackup = countedProvider('legacy-backup');
+    legacyRouter.register(legacyFailed.provider);
+    legacyRouter.register(legacyBackup.provider);
+    assert.equal((await legacyRouter.generate(requiredRequest('legacy-failed', false))).provider, 'legacy-backup');
+    assert.equal(legacyBackup.generate.mock.callCount(), 1);
+  });
+});
+
+describe('Router cancellation', () => {
+  beforeEach(() => resetCircuitBreakerV2());
+
+  it('propagates one signal and never falls back after provider cancellation', async () => {
+    const router = new Router();
+    const controller = new AbortController();
+    const receivedSignals: Array<AbortSignal | undefined> = [];
+    const primaryGenerate = mock.fn(async (_request: GenerateRequest, options?: { signal?: AbortSignal }) => {
+      receivedSignals.push(options?.signal);
+      controller.abort();
+      throw createGenerationAbortError();
+    });
+    const backupGenerate = mock.fn(async (_request: GenerateRequest): Promise<GenerateResponse> => {
+      assert.fail('must not invoke backup after cancellation');
+    });
+    const freeGenerate = mock.fn(async (): Promise<GenerateResponse> => {
+      assert.fail('must not invoke free fallback after cancellation');
+    });
+    const freeModelRouter = new FreeModelRouter({ enabled: false });
+    Object.defineProperty(freeModelRouter, 'isAvailable', { value: true });
+    mock.method(freeModelRouter, 'generate', freeGenerate);
+
+    router.register({
+      ...countedProvider('primary').provider,
+      generate: primaryGenerate,
+    });
+    router.register({
+      ...countedProvider('backup').provider,
+      generate: backupGenerate,
+    });
+    router.setFreeModelRouter(freeModelRouter);
+
+    await assert.rejects(
+      () => router.generate({ prompt: 'cancel me' }, { signal: controller.signal }),
+      (error: unknown) => error instanceof Error && error.name === 'AbortError',
+    );
+    assert.deepEqual(receivedSignals, [controller.signal]);
+    assert.equal(backupGenerate.mock.callCount(), 0);
+    assert.equal(freeGenerate.mock.callCount(), 0);
+  });
+
+  it('treats an ordinary provider rejection after signal abort as cancellation before fallback', async () => {
+    const router = new Router();
+    const controller = new AbortController();
+    const primaryGenerate = mock.fn(async () => {
+      controller.abort();
+      throw new Error('connection closed');
+    });
+    const backupGenerate = mock.fn(async (_request: GenerateRequest): Promise<GenerateResponse> => {
+      assert.fail('must not invoke backup after an aborted signal');
+    });
+    router.register({ ...countedProvider('primary-after-abort').provider, generate: primaryGenerate });
+    router.register({ ...countedProvider('backup-after-abort').provider, generate: backupGenerate });
+
+    await assert.rejects(
+      () => router.generate({ prompt: 'cancel then reject' }, { signal: controller.signal }),
+      (error: unknown) => error instanceof Error && error.name === 'AbortError',
+    );
+    assert.equal(backupGenerate.mock.callCount(), 0);
+  });
+
+  it('does not record a failure or model feedback when a provider rejects after signal abort', async () => {
+    const controller = new AbortController();
+    const recordUsage = mock.fn();
+    const recordModelFeedback = mock.fn();
+    const provider: LLMProvider = {
+      ...countedProvider('telemetry-after-abort').provider,
+      generate: async () => {
+        controller.abort();
+        throw new Error('connection closed');
+      },
+    };
+
+    await assert.rejects(
+      () => executeGenerateAttempt({
+        provider,
+        request: { prompt: 'cancel during provider' },
+        circuitBreaker: new CircuitBreakerV2(),
+        defaultModel: 'telemetry-after-abort-model',
+        classification: {} as never,
+        attempt: 1,
+        resolveFeedbackEndpointId: () => 'endpoint',
+        recordUsage,
+        recordModelFeedback,
+        executionOptions: { signal: controller.signal },
+      }),
+      (error: unknown) => error instanceof Error && error.name === 'AbortError',
+    );
+    assert.equal(recordUsage.mock.callCount(), 0);
+    assert.equal(recordModelFeedback.mock.callCount(), 0);
   });
 });

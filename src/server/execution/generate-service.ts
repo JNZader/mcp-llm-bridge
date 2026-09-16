@@ -5,6 +5,7 @@ import type { Router } from "../../core/router.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import { prepareGenerateRequest } from "../http-helpers/generate-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
+import { estimateZeroCostEvidence } from "../../core/usage-provenance.js";
 
 function withConsumerStopReason(result: GenerateResponse): GenerateResponse {
 	const stopReason =
@@ -29,7 +30,8 @@ export interface ExecuteGenerateRequestInput {
 	validated: ValidatedGenerateRequest;
 	scope: RequestScope;
 	router: Router;
-	requestLogger?: RequestLogger;
+  requestLogger?: RequestLogger;
+  abortSignal?: AbortSignal;
 	now?: () => number;
 }
 
@@ -40,7 +42,8 @@ export async function executeGenerateRequest(
 		validated,
 		scope,
 		router,
-		requestLogger,
+    requestLogger,
+    abortSignal,
 		now = Date.now,
 	} = input;
 	const logCtx = requestLogger?.captureStart({
@@ -52,7 +55,7 @@ export async function executeGenerateRequest(
 
 	try {
 		const result = withConsumerStopReason(
-			await router.generate(prepareGenerateRequest(validated, scope)),
+			await router.generate(prepareGenerateRequest(validated, scope), { signal: abortSignal }),
 		);
 
 		if (logCtx && requestLogger) {
@@ -65,7 +68,8 @@ export async function executeGenerateRequest(
 			});
 		}
 
-		return result;
+		const costEvidence = estimateZeroCostEvidence(result.resolvedModel, result.usageProvenance);
+		return costEvidence ? { ...result, costEvidence } : result;
 	} catch (error) {
 		if (logCtx && requestLogger) {
 			await requestLogger.captureEnd(logCtx, {

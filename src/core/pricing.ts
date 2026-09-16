@@ -14,6 +14,8 @@ import { logger } from './logger.js';
 export interface ModelPrice {
   inputPerMTok: number;
   outputPerMTok: number;
+  cacheReadPerMTok?: number;
+  cacheWritePerMTok?: number;
 }
 
 /**
@@ -23,6 +25,13 @@ export interface ModelPrice {
  * Keys are lowercase, normalized model names.
  */
 const PRICE_TABLE: Record<string, ModelPrice> = {
+  // OpenCode contributor-free catalog entry. This is an estimate, not billing attestation.
+  'muse-spark-1.3-contributor-free': {
+    inputPerMTok: 0,
+    outputPerMTok: 0,
+    cacheReadPerMTok: 0,
+    cacheWritePerMTok: 0,
+  },
   // ── Anthropic ─────────────────────────────────────────
   'claude-sonnet-4-20250514':    { inputPerMTok: 3.00,   outputPerMTok: 15.00 },
   'claude-opus-4-20250514':      { inputPerMTok: 15.00,  outputPerMTok: 75.00 },

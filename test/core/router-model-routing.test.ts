@@ -12,7 +12,7 @@
  * - generateFromInternal integration
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { getCircuitBreakerV2, Router, resetCircuitBreakerV2 } from '../../src/core/router.js';
@@ -1987,5 +1987,23 @@ describe('Router + ModelRouter integration', () => {
     assert.ok(resolved);
     assert.equal(resolved?.provider.id, 'local-llm');
     assert.equal(resolved?.request.metadata?.provider, 'local-llm');
+  });
+
+  it('keeps requireProvider through the internal compatibility transformer path', async () => {
+    const router = new Router();
+    const registry = new TransformerRegistry();
+    const targetGenerate = mock.fn(async () => { throw new Error('compat target failed'); });
+    const backupGenerate = mock.fn(async () => ({ text: 'backup', provider: 'compat-backup', model: 'backup-model', resolvedProvider: 'compat-backup', resolvedModel: 'backup-model', fallbackUsed: false }));
+    router.register({ ...createMockProvider({ id: 'compat-target', name: 'Target', type: 'api', models: [{ id: 'target-model', name: 'Target', provider: 'compat-target', maxTokens: 4096 }] }), generate: targetGenerate });
+    router.register({ ...createMockProvider({ id: 'compat-backup', name: 'Backup', type: 'api', models: [{ id: 'backup-model', name: 'Backup', provider: 'compat-backup', maxTokens: 4096 }] }), generate: backupGenerate });
+    router.setTransformerRegistry(registry);
+    registerPassthroughOutbound(registry, 'compat-target');
+    registerPassthroughOutbound(registry, 'compat-backup');
+    await assert.rejects(
+      () => router.generate({ prompt: 'test', provider: 'compat-target', requireProvider: true }),
+      /compat target failed/,
+    );
+    assert.equal(targetGenerate.mock.callCount(), 1);
+    assert.equal(backupGenerate.mock.callCount(), 0);
   });
 });
