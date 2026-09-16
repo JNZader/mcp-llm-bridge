@@ -9,6 +9,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
+const AUTH_TAG_BYTES = 16;
 
 export interface EncryptedData {
   encrypted: Buffer;
@@ -25,7 +26,7 @@ export interface EncryptedData {
  */
 export function encrypt(plaintext: string, masterKey: Buffer): EncryptedData {
   const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGORITHM, masterKey, iv);
+  const cipher = createCipheriv(ALGORITHM, masterKey, iv, { authTagLength: AUTH_TAG_BYTES });
   const encrypted = Buffer.concat([
     cipher.update(plaintext, 'utf8'),
     cipher.final(),
@@ -43,7 +44,11 @@ export function encrypt(plaintext: string, masterKey: Buffer): EncryptedData {
  * @throws If the auth tag verification fails (wrong key or tampered data)
  */
 export function decrypt(data: EncryptedData, masterKey: Buffer): string {
-  const decipher = createDecipheriv(ALGORITHM, masterKey, data.iv);
+  if (data.authTag.length !== AUTH_TAG_BYTES) {
+    throw new RangeError(`AES-GCM authentication tag must be exactly ${AUTH_TAG_BYTES} bytes`);
+  }
+
+  const decipher = createDecipheriv(ALGORITHM, masterKey, data.iv, { authTagLength: AUTH_TAG_BYTES });
   decipher.setAuthTag(data.authTag);
   return Buffer.concat([
     decipher.update(data.encrypted),

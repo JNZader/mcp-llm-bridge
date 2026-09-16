@@ -36,11 +36,11 @@
     "@opentelemetry/instrumentation-http": "^0.213.0",
     "@opentelemetry/instrumentation-pino": "^0.59.0",
     "@opentelemetry/resources": "^2.6.0",
-    "@opentelemetry/sdk-node": "^0.213.0",
+    "@opentelemetry/sdk-node": "^0.222.0",
     "@opentelemetry/sdk-trace-node": "^2.6.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "better-sqlite3": "^12.8.0",
-    "hono": "^4.12.8",
+    "hono": "^4.13.8",
     "minisearch": "^7.1.0",
     "@xenova/transformers": "^2.17.2",
     "openai": "^6.32.0",
@@ -55,7 +55,14 @@
       "esbuild"
     ],
     "overrides": {
-      "sharp": "0.34.5"
+      "fast-uri": "3.1.6",
+      "ip-address": "10.7.2",
+      "path-to-regexp": "8.4.2",
+      "picomatch": "4.0.4",
+      "protobufjs": "7.6.1",
+      "sharp": "0.35.4",
+      "@grpc/grpc-js": "1.14.4",
+      "@opentelemetry/propagator-jaeger": "2.9.0"
     }
   },
   "devDependencies": {
