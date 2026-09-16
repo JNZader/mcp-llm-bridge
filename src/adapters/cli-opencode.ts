@@ -38,6 +38,7 @@ import {
 } from '../core/constants.js';
 import { DynamicModelCache } from './model-cache.js';
 import { isGenerationAbortError, throwIfGenerationAborted } from '../core/generation-cancellation.js';
+import { sanitizeErrorMessage } from '../security/sanitize.js';
 
 /**
  * Parse OpenCode's newline-delimited JSON output into text + token usage.
@@ -236,7 +237,9 @@ export function extractOpenCodeError(raw: string): string | undefined {
       const data = err?.['data'] as Record<string, unknown> | undefined;
       const message = (data?.['message'] as string | undefined) ?? 'no message';
       const ref = data?.['ref'] as string | undefined;
-      return `OpenCode backend error: ${name} — ${message}${ref ? ` (ref: ${ref})` : ''}`;
+      return sanitizeErrorMessage(
+        `OpenCode backend error: ${name} — ${message}${ref ? ` (ref: ${ref})` : ''}`,
+      );
     } catch {
       /* skip malformed lines */
     }
@@ -498,7 +501,7 @@ export class CliOpenCodeAdapter implements LLMProvider {
         if (backendError) throw new Error(backendError);
       }
       throw new Error(
-        `OpenCode CLI failed: ${execError.message ?? String(error)}`,
+        sanitizeErrorMessage(`OpenCode CLI failed: ${execError.message ?? String(error)}`),
       );
     } finally {
       if (temporaryAuthRoot !== undefined) {

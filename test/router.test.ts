@@ -754,8 +754,12 @@ describe('Router requireProvider', () => {
     const legacyBackup = countedProvider('legacy-backup');
     legacyRouter.register(legacyFailed.provider);
     legacyRouter.register(legacyBackup.provider);
-    assert.equal((await legacyRouter.generate(requiredRequest('legacy-failed', false))).provider, 'legacy-backup');
-    assert.equal(legacyBackup.generate.mock.callCount(), 1);
+    await assert.rejects(
+      () => legacyRouter.generate(requiredRequest('legacy-failed', false)),
+      /legacy failure/,
+    );
+    assert.equal(legacyFailed.generate.mock.callCount(), 1);
+    assert.equal(legacyBackup.generate.mock.callCount(), 0, 'a named provider is already a pin without requireProvider');
   });
 });
 

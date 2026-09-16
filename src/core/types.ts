@@ -121,13 +121,21 @@ export interface ReportedUsageProvenance {
   outputTokens: number;
 }
 
-export interface PartialUsageProvenance {
-  status: typeof USAGE_PROVENANCE_STATUS.PARTIAL;
-  origin: 'cli-output';
-  eventCount: 1;
-  inputTokens?: number;
-  outputTokens?: number;
-}
+export type PartialUsageProvenance =
+  | {
+    status: typeof USAGE_PROVENANCE_STATUS.PARTIAL;
+    origin: 'cli-output';
+    eventCount: 1;
+    inputTokens: number;
+    outputTokens?: never;
+  }
+  | {
+    status: typeof USAGE_PROVENANCE_STATUS.PARTIAL;
+    origin: 'cli-output';
+    eventCount: 1;
+    outputTokens: number;
+    inputTokens?: never;
+  };
 
 export interface UnknownUsageProvenance {
   status: typeof USAGE_PROVENANCE_STATUS.UNKNOWN;

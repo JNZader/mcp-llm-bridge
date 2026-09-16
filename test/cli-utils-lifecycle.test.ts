@@ -117,7 +117,7 @@ describe('execCliAsync lifecycle', () => {
     }
   });
 
-  it('retains cancellation through exit, removes its listener on close, and never signals an exited child', async () => {
+  it('retains cancellation through exit, removes its listener on close, and still SIGTERMs the tree', async () => {
     const { execCliAsync } = await import('../src/adapters/cli-utils.js');
     const child = new FakeCliChild();
     installChild(child);
@@ -144,7 +144,7 @@ describe('execCliAsync lifecycle', () => {
     });
     child.emitExit(0);
     abortListener?.();
-    assert.deepEqual(child.killCalls, [], 'exit makes the direct child ineligible for signalling');
+    assert.deepEqual(child.killCalls, ['SIGTERM'], 'abort still signals the tree after the direct child exits');
     child.emitClose(0);
 
     await rejected;
@@ -295,13 +295,42 @@ describe('execCliAsync lifecycle', () => {
       t.mock.timers.tick(10);
       exitedDuringGrace.emitExit(0, 'SIGTERM');
       t.mock.timers.tick(1_000);
-      assert.deepEqual(exitedDuringGrace.killCalls, ['SIGTERM']);
+      assert.deepEqual(exitedDuringGrace.killCalls, ['SIGTERM', 'SIGKILL']);
       let settled = false;
       void grace.finally(() => { settled = true; }).catch(() => undefined);
       await Promise.resolve();
       assert.equal(settled, false, 'exit alone must not settle before close');
       exitedDuringGrace.emitClose(0, 'SIGTERM');
       await graceRejected;
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('escalates SIGKILL after abort-exit and settles without waiting for close', async (t) => {
+    const { execCliAsync } = await import('../src/adapters/cli-utils.js');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      const child = new FakeCliChild();
+      installChild(child);
+      const controller = new AbortController();
+      const pending = execCliAsync('mock', [], { signal: controller.signal, timeout: 0 });
+      const rejected = assert.rejects(pending, (error: unknown) => {
+        const value = failure(error);
+        assert.equal(value.kind, 'aborted');
+        assert.equal(value.code, 'ABORT_ERR');
+        return true;
+      });
+      controller.abort();
+      assert.deepEqual(child.killCalls, ['SIGTERM']);
+      child.emitExit(0);
+      let settled = false;
+      void pending.finally(() => { settled = true; }).catch(() => undefined);
+      await Promise.resolve();
+      assert.equal(settled, false, 'exit alone must not settle');
+      t.mock.timers.tick(1_000);
+      await rejected;
+      assert.deepEqual(child.killCalls, ['SIGTERM', 'SIGKILL']);
     } finally {
       t.mock.timers.reset();
     }
@@ -333,7 +362,7 @@ describe('execCliAsync lifecycle', () => {
       });
       t.mock.timers.tick(10);
       t.mock.timers.tick(1_000);
-      assert.deepEqual(noEscalation.killCalls, ['SIGTERM']);
+      assert.deepEqual(noEscalation.killCalls, ['SIGTERM', 'SIGKILL']);
       noEscalation.emitClose(0);
       await falseKillRejected;
 

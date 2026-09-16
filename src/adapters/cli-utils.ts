@@ -245,32 +245,46 @@ export async function execCliAsync(
       return;
     }
 
-    const directChildIsLive = (): boolean => (
-      !closed
-      && !directChildExited
-      && (child.exitCode === null || child.exitCode === undefined)
-      && (child.signalCode === null || child.signalCode === undefined)
-    );
-
-    const terminateDirectChild = (cause: CliTerminationCause): void => {
-      if (terminationCause) return;
-      terminationCause = cause;
-      if (!directChildIsLive()) return;
-
+    const killProcessTree = (signal: NodeJS.Signals): void => {
       try {
-        if (child.kill('SIGTERM')) {
-          forceKillTimer = setTimeout(() => {
-            if (!directChildIsLive()) return;
-            try {
-              child.kill('SIGKILL');
-            } catch (error) {
-              recordProcessError(error instanceof Error ? error : new Error(String(error)));
-            }
-          }, CLI_TERMINATION_GRACE_MS);
-        }
+        child.kill(signal);
       } catch (error) {
         recordProcessError(error instanceof Error ? error : new Error(String(error)));
       }
+      const pid = child.pid;
+      if (typeof pid === 'number' && pid > 0) {
+        try {
+          process.kill(pid, signal);
+        } catch {
+          /* Direct child may already be gone; grandchildren can outlive it. */
+        }
+      }
+    };
+
+    const terminateDirectChild = (cause: CliTerminationCause): void => {
+      if (terminationCause) return;
+      if (cause === CLI_TERMINATION_CAUSE.DEADLINE && directChildExited && !closed) {
+        return;
+      }
+      terminationCause = cause;
+
+      killProcessTree('SIGTERM');
+      if (forceKillTimer !== undefined || closed) return;
+      forceKillTimer = setTimeout(() => {
+        killProcessTree('SIGKILL');
+        if (closed) return;
+        closed = true;
+        clearDeadlineTimers();
+        options.signal?.removeEventListener('abort', abortHandler);
+        rejectWithFailure(
+          cause === CLI_TERMINATION_CAUSE.CALLER_ABORT
+            ? CLI_FAILURE_KIND.ABORTED
+            : CLI_FAILURE_KIND.TERMINATION,
+          cause === CLI_TERMINATION_CAUSE.CALLER_ABORT
+            ? 'Generation cancelled'
+            : 'Process terminated before completion',
+        );
+      }, CLI_TERMINATION_GRACE_MS);
     };
 
     if (child.stdout) {
@@ -283,7 +297,10 @@ export async function execCliAsync(
     child.on('error', recordProcessError);
     child.on('exit', () => {
       directChildExited = true;
-      clearDeadlineTimers();
+      if (deadlineTimer !== undefined) {
+        clearTimeout(deadlineTimer);
+        deadlineTimer = undefined;
+      }
     });
     child.on('close', (code, signal) => {
       if (closed) return;

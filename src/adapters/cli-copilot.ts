@@ -66,20 +66,28 @@ export class CopilotCliAdapter implements LLMProvider {
         `Copilot CLI refuses prompts over ${MAX_COPILOT_ARGV_PROMPT_CHARS} characters on argv; use a stdin-capable provider such as opencode-cli`,
       );
     }
-    const env: Record<string, string> = { ...process.env as Record<string, string> };
+    const env: Record<string, string> = {};
+    if (process.env.PATH) env.PATH = process.env.PATH;
+    if (process.env.LANG) env.LANG = process.env.LANG;
+    if (process.env.LC_ALL) env.LC_ALL = process.env.LC_ALL;
 
     try {
       const token = this.vault.getDecrypted('copilot', 'default', request.project);
-      env['COPILOT_GITHUB_TOKEN'] = token;
-      env['GH_TOKEN'] = token;
-      env['GITHUB_TOKEN'] = token;
+      env.COPILOT_GITHUB_TOKEN = token;
+      env.GH_TOKEN = token;
+      env.GITHUB_TOKEN = token;
     } catch {
-      // Fall back to any local environment auth already present.
+      for (const key of ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'] as const) {
+        const value = process.env[key];
+        if (value) env[key] = value;
+      }
     }
 
     throwIfGenerationAborted(executionOptions);
     const promptDir = mkdtempSync(join(tmpdir(), 'mcp-copilot-prompt-'));
+    const homeDir = mkdtempSync(join(tmpdir(), 'mcp-copilot-home-'));
     const promptPath = join(promptDir, 'prompt.txt');
+    env.HOME = homeDir;
     try {
       writeFileSync(promptPath, fullPrompt, { mode: 0o600 });
       const args = buildCopilotGenerateArgs(model, promptPath);
@@ -92,6 +100,7 @@ export class CopilotCliAdapter implements LLMProvider {
       return { text: stdout.trim(), provider: this.id, model, tokensUsed: 0, resolvedProvider: this.id, resolvedModel: model, fallbackUsed: false };
     } finally {
       rmSync(promptDir, { recursive: true, force: true });
+      rmSync(homeDir, { recursive: true, force: true });
     }
   }
 

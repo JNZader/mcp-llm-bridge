@@ -247,9 +247,9 @@ Request body:
 | `maxTokens` | number | No | Max output tokens |
 | `project` | string | No | Credential scope |
 | `strict` | boolean | No | Strict routing behavior when supported |
-| `requireProvider` | boolean | No | When `true`, require the named provider: aliases are normalized, no other provider or free-model fallback is used, and unavailable or breaker-blocked providers fail immediately. Requires a non-blank `provider`. |
+| `requireProvider` | boolean | No | Opt-in extra pin for `POST /v1/generate`. Requires a non-blank `provider`. |
 
-`requireProvider` is supported only by `POST /v1/generate`. `POST /v1/chat/completions` and the `llm_generate` MCP tool reject it. It pins adapter identity only; it does not guarantee model identity, usage, cost, isolation, or timeout behavior. `strict` controls routing attempt behavior, while `requireProvider` additionally forbids provider and free-model substitution.
+A non-blank `provider` already selects only that adapter (aliases are normalized; other paid adapters are not probed). `requireProvider: true` additionally fails immediately when that adapter is unavailable or breaker-blocked, and skips free-model substitution. `strict` controls attempt behavior on the already-selected candidate. Chat completions and the `llm_generate` MCP tool reject `requireProvider`. It does not guarantee model identity, usage, cost, isolation, or timeout behavior.
 
 Response:
 
