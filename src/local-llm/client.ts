@@ -90,7 +90,7 @@ export async function callLocalLLM(
       body: JSON.stringify({
         model: model.id,
         messages,
-        temperature: 0.3, // low temperature for deterministic tasks
+        temperature: responseFormat === 'json' ? 0 : 0.3,
         stream: false,
         ...(responseFormat === 'json'
           ? { response_format: { type: 'json_object' } }

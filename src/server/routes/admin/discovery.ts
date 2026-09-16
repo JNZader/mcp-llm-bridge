@@ -1,7 +1,7 @@
 import type { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 
-import { getLocalLLMUrls, resolveHfToken } from '../../../core/local-llm-env.js';
+import { getLocalLLMConfig, resolveHfToken } from '../../../core/local-llm-env.js';
 import { localLLMEnabled } from '../../../core/runtime-flags.js';
 import type { FreeModelRouter } from '../../../free-models/router.js';
 import { loadCatalog, importCatalog } from '../../../free-models/registry.js';
@@ -52,7 +52,7 @@ export function registerAdminDiscoveryRoutes(
       const hfToken = resolveHfToken(body['hfToken'] as string | undefined);
       const enabled = body['enabled'] === undefined ? true : body['enabled'] !== false;
       const localLLMStatus = await getSlimLocalLLMStatus(
-        { enabled: localLLMEnabled(), ...getLocalLLMUrls() },
+        { enabled: localLLMEnabled(), ...getLocalLLMConfig() },
         localLLMEnabled()
           ? { forceRefresh: true }
           : { skipDetectionWhenDisabled: true },
@@ -63,7 +63,7 @@ export function registerAdminDiscoveryRoutes(
           hfToken,
           enabled,
         },
-        getLocalLLMUrls(),
+        getLocalLLMConfig(),
         deps.db,
         { forceRefreshLocalDetection: true },
       );

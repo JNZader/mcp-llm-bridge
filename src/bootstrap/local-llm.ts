@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 
 import { logger } from "../core/logger.js";
-import { getLocalLLMUrls, resolveHfToken } from "../core/local-llm-env.js";
+import { getLocalLLMConfig, resolveHfToken } from "../core/local-llm-env.js";
 import {
 	autoDiscoverModelsEnabled,
 	localLLMEnabled,
@@ -19,7 +19,7 @@ export async function bootstrapLocalLLM(
 	if (localLLMRuntimeEnabled) {
 		const localLLMProvider = new LocalLLMProvider({
 			enabled: true,
-			...getLocalLLMUrls(),
+			...getLocalLLMConfig(),
 		});
 
 		// Register as normal provider so it participates in routing + circuit breakers
@@ -45,7 +45,7 @@ export async function bootstrapLocalLLM(
 				hfToken: resolveHfToken(),
 				enabled: true,
 			},
-			getLocalLLMUrls(),
+			getLocalLLMConfig(),
 			db,
 		)
 			.then((discoveryResult) => {
