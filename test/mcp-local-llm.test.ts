@@ -105,6 +105,7 @@ describe('local_llm_generate MCP tool', () => {
 
   it('returns cloud fallback when no local models available', async () => {
     process.env['LOCAL_LLM_ENABLED'] = 'true';
+    mock.method(globalThis, 'fetch', async () => jsonResponse({ models: [], data: [] }));
     const result = await callTool('local_llm_generate', { prompt: 'hello' });
     assert.equal(result.isError, undefined);
     const text = JSON.parse(result.content[0]!.text);
