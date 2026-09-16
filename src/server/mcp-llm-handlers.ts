@@ -7,6 +7,7 @@ import { getSlimLocalLLMStatus, toSlimLocalLLMStatus } from '../local-llm/status
 import { discoverModels } from '../model-discovery/discovery.js';
 import { getLocalLLMUrls, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
+import type { GenerateRequest } from '../core/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
 
 function jsonResult(payload: unknown, isError?: boolean): McpToolResult {
@@ -44,6 +45,8 @@ export async function handleLlmGenerateTool(
     model: args['model'] as string | undefined,
     maxTokens: args['maxTokens'] as number | undefined,
     strict: args['strict'] === true ? true : undefined,
+    routingMode: args['routingMode'] as GenerateRequest['routingMode'],
+    responseFormat: args['responseFormat'] as GenerateRequest['responseFormat'],
     project: args['project'] as string | undefined,
   };
 
