@@ -13,6 +13,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { calculateCost } from './pricing.js';
+import { sanitizeErrorMessage } from './error-sanitizer.js';
 import { logger } from './logger.js';
 import { GLOBAL_PROJECT } from './constants.js';
 import { initializeDb } from '../vault/schema.js';
@@ -283,7 +284,7 @@ export class CostTracker {
           costUsd: entry.costUsd ?? null,
           latencyMs: entry.latencyMs,
           success: entry.success ? 1 : 0,
-          errorMessage: entry.errorMessage ?? null,
+          errorMessage: entry.errorMessage ? sanitizeErrorMessage(entry.errorMessage) : null,
         });
       }
     });

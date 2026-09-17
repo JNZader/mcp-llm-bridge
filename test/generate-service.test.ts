@@ -124,7 +124,6 @@ describe("generate-service", () => {
 				totalTokens: 9,
 				attempts: 2,
 				responseData: JSON.stringify({
-					text: "Strict mode catches more bugs.",
 					provider: "mock-provider",
 					model: "gpt-4o-mini",
 					tokensUsed: 9,
