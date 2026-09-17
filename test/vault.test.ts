@@ -193,6 +193,31 @@ describe('Vault destroy (key zeroing)', () => {
     }
   });
 
+  it('retries db.close() on a later destroy() if the previous close threw', () => {
+    const config = createTestConfig();
+    const v = new Vault(config);
+    const db = v.getDb();
+    const originalClose = db.close.bind(db);
+    let closeCalls = 0;
+    db.close = () => {
+      closeCalls += 1;
+      if (closeCalls === 1) {
+        throw new Error('close failed');
+      }
+      originalClose();
+    };
+
+    assert.throws(() => v.destroy(), /close failed/);
+    assert.equal(v.destroyed, true);
+    assert.doesNotThrow(() => v.destroy());
+    assert.equal(closeCalls, 2);
+
+    for (const suffix of ['', '-wal', '-shm']) {
+      const filePath = config.dbPath + suffix;
+      if (existsSync(filePath)) unlinkSync(filePath);
+    }
+  });
+
   it('close() also zeroes the master key (backward compat)', () => {
     const config = createTestConfig();
     const v = new Vault(config);
