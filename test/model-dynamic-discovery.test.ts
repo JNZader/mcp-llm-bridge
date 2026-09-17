@@ -78,7 +78,7 @@ describe('mergeModels', () => {
   });
 
   it('prunes declared ids absent from a non-empty discovery when asked', () => {
-    const result = mergeModels([m('a'), m('b', 'CURATED')], [m('b', 'LIVE'), m('c')], {
+    const result = mergeModels([m('a'), m('b', 'CURATED')], [m('b', 'LIVE'), m('c', 'LIVE')], {
       pruneMissingDeclared: true,
     });
     assert.deepEqual(
