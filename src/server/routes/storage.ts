@@ -10,6 +10,7 @@ import {
 	getValidationIssue,
 	resolveRequestProject,
 } from "../http-helpers/request-validation.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface StorageRouteDeps {
 	vault: Vault;
@@ -77,7 +78,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 				201,
 			);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -87,7 +88,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 			const credentials = vault.listMasked(getScopedProject(c));
 			return c.json({ credentials });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -103,7 +104,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 			vault.delete(id, getScopedProject(c));
 			return c.json({ ok: true });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return jsonDeleteError(c, message);
 		}
 	});
@@ -149,7 +150,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 				201,
 			);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -159,7 +160,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 			const files = vault.listFiles(getScopedProject(c));
 			return c.json({ files });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -175,7 +176,7 @@ export function registerStorageRoutes(app: Hono, deps: StorageRouteDeps): void {
 			vault.deleteFile(id, getScopedProject(c));
 			return c.json({ ok: true });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return jsonDeleteError(c, message);
 		}
 	});

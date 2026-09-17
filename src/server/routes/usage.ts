@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 
 import type { CostTracker } from "../../core/cost-tracker.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface UsageRouteDeps {
 	costTracker?: CostTracker;
@@ -42,7 +43,7 @@ export function registerUsageRoutes(app: Hono, deps: UsageRouteDeps): void {
 
 			return c.json({ records, count: records.length });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -73,7 +74,7 @@ export function registerUsageRoutes(app: Hono, deps: UsageRouteDeps): void {
 
 			return c.json(summary);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});

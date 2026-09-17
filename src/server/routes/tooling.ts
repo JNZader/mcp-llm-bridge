@@ -5,6 +5,7 @@ import { localLLMEnabled } from "../../core/runtime-flags.js";
 import { getLocalLLMStatus } from "../../local-llm/detector.js";
 import { createCatalogFromMcpTools, type ToolSource } from "../../tool-catalog/index.js";
 import { getRuntimeMcpTools } from "../mcp.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 function getToolCatalog() {
 	return createCatalogFromMcpTools(getRuntimeMcpTools());
@@ -29,7 +30,7 @@ export function registerToolingRoutes(app: Hono): void {
 				})),
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -54,7 +55,7 @@ export function registerToolingRoutes(app: Hono): void {
 				})),
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -68,7 +69,7 @@ export function registerToolingRoutes(app: Hono): void {
 			}, enabled ? undefined : { skipDetectionWhenDisabled: true });
 			return c.json(status);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -78,7 +79,7 @@ export function registerToolingRoutes(app: Hono): void {
 			const { getAllLoadBalanceModes } = await import("../../balancer/index.js");
 			return c.json({ strategies: getAllLoadBalanceModes() });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});

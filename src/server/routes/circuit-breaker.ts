@@ -6,13 +6,14 @@ import {
 	getCircuitBreakerAdminStats,
 	updateCircuitBreakerAdminConfig,
 } from "../../circuit-breaker/admin-compat.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export function registerCircuitBreakerRoutes(app: Hono): void {
 	app.get("/v1/circuit-breaker/config", (c) => {
 		try {
 			return c.json(getCircuitBreakerAdminConfig());
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -65,7 +66,7 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 				config: updateCircuitBreakerAdminConfig(update),
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -78,7 +79,7 @@ export function registerCircuitBreakerRoutes(app: Hono): void {
 				breakers: getCircuitBreakerAdminStats(),
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});

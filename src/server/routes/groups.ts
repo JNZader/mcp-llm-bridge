@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 
 import type { GroupStore } from "../../core/groups.js";
 import { CreateGroupSchema, UpdateGroupSchema } from "../../core/groups.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface GroupsRouteDeps {
 	groupStore?: GroupStore;
@@ -33,7 +34,7 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 			const groups = groupStore.list();
 			return c.json({ groups });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -63,7 +64,7 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 			const group = groupStore.create(validated);
 			return c.json(group, 201);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -101,7 +102,7 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 
 			return c.json(updated);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -119,7 +120,7 @@ export function registerGroupRoutes(app: Hono, deps: GroupsRouteDeps): void {
 
 			return c.json({ ok: true });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
