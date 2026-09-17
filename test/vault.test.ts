@@ -204,7 +204,7 @@ describe('Vault destroy (key zeroing)', () => {
       if (closeCalls === 1) {
         throw new Error('close failed');
       }
-      originalClose();
+      return originalClose();
     };
 
     assert.throws(() => v.destroy(), /close failed/);
