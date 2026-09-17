@@ -2,16 +2,29 @@ import type { InternalLLMRequest } from "../../core/internal-model.js";
 import type { ChatCompletionsRequest } from "../../core/schemas.js";
 import type { GenerateRequest } from "../../core/types.js";
 import { optimizeMessages } from "../../transformers/three-part-prompt.js";
-import type {
-	CanonicalMessage,
-	CanonicalRequest,
-} from "../../protocol-converter/types.js";
+import type { CanonicalRequest } from "../../protocol-converter/types.js";
 import type { RequestScope } from "./request-scope.js";
 
 export const CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED =
 	"At least one user message is required";
 
-export type ChatGenerateMessage = Pick<CanonicalMessage, "role" | "content">;
+const CHAT_GENERATE_ROLE = {
+	SYSTEM: "system",
+	USER: "user",
+	ASSISTANT: "assistant",
+} as const;
+
+type ChatGenerateRole =
+	(typeof CHAT_GENERATE_ROLE)[keyof typeof CHAT_GENERATE_ROLE];
+
+export interface ChatGenerateMessage {
+	role: ChatGenerateRole;
+	content: string;
+}
+
+export interface ChatGenerateCanonicalRequest extends CanonicalRequest {
+	messages: ChatGenerateMessage[];
+}
 
 export function assertChatMessagesContainUserMessage(
 	messages: readonly ChatGenerateMessage[],

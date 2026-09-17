@@ -16,21 +16,27 @@ export const generateRequestSchema = z.object({
   instruction: z.string().optional(),
   model: z.string().optional(),
   provider: z.string().optional(),
+  requireProvider: z.boolean().optional(),
   system: z.string().optional(),
   maxTokens: z.number().int().positive().optional(),
   /** Consorcio / OpenAI-style alias; mapped to maxTokens in prepareGenerateRequest. */
   max_tokens: z.number().int().positive().optional(),
   strict: z.boolean().optional(),
   project: z.string().optional(),
-}).refine(
-  (data) => data.prompt || data.context || data.instruction || data.system,
-  { message: 'At least one of prompt, context, instruction, or system must be provided' },
-);
+  tools: z.literal('none').optional(),
+}).superRefine((data, ctx) => {
+  if (!data.prompt && !data.context && !data.instruction && !data.system) {
+    ctx.addIssue({ code: 'custom', message: 'At least one of prompt, context, instruction, or system must be provided' });
+  }
+  if (data.requireProvider && !data.provider?.trim()) {
+    ctx.addIssue({ code: 'custom', message: 'provider must be a non-blank string when requireProvider is true' });
+  }
+});
 
 /** Chat message schema. */
 export const chatMessageSchema = z.object({
-  role: z.enum(['system', 'user', 'assistant']),
-  content: z.string(),
+  role: z.enum(['system', 'user', 'assistant', 'developer', 'tool', 'function']),
+  content: z.any(),
 });
 
 /** Chat completions request schema. */
@@ -45,6 +51,10 @@ export const chatCompletionsSchema = z.object({
   strict: z.boolean().optional(),
   clientId: z.string().optional(),
   project: z.string().optional(),
+}).passthrough().superRefine((data, ctx) => {
+  if (Object.prototype.hasOwnProperty.call(data, 'requireProvider')) {
+    ctx.addIssue({ code: 'custom', message: 'requireProvider is only supported by /v1/generate' });
+  }
 });
 
 /** Credential store schema. */

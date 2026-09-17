@@ -70,6 +70,51 @@ function createProvider(id: string, modelId = "test-model"): LLMProvider {
 }
 
 describe("createStreamExecutor", () => {
+	it("forwards cancellation to the zero-stream fallback and writes neither fallback nor done after abort", async () => {
+		const controller = new AbortController();
+		let receivedSignal: AbortSignal | undefined;
+		let releaseGenerate: (() => void) | undefined;
+		let markGenerateStarted: (() => void) | undefined;
+		const generateStarted = new Promise<void>((resolve) => {
+			markGenerateStarted = resolve;
+		});
+		const generateRelease = new Promise<void>((resolve) => {
+			releaseGenerate = resolve;
+		});
+		const executor = createStreamExecutor({
+			canonical: createCanonicalRequest(),
+			router: {
+				resolveStreamingProviders: async () => [],
+				generate: async (_request: unknown, options?: { signal?: AbortSignal }) => {
+					receivedSignal = options?.signal;
+					markGenerateStarted?.();
+					await generateRelease;
+					return {
+						text: "must-not-write", provider: "mock", model: "test-model",
+						resolvedProvider: "mock", resolvedModel: "test-model", fallbackUsed: false,
+					};
+				},
+			} as never,
+			scope: {},
+			abortSignal: controller.signal,
+		});
+		const output: string[] = [];
+		const execution = executor.execute({
+			writeChunk: async () => { assert.fail("should not write stream chunks"); },
+			writeFallbackResult: async () => { output.push("fallback"); },
+			writeTerminalError: async () => { assert.fail("should not write terminal error on abort"); },
+			writeDone: async () => { output.push("done"); },
+		});
+
+		await generateStarted;
+		controller.abort();
+		releaseGenerate?.();
+		await execution;
+
+		assert.strictEqual(receivedSignal, controller.signal);
+		assert.deepEqual(output, []);
+	});
+
 	it("falls back cleanly with a bare Router and no transformer registry", async () => {
 		const router = new Router();
 		const logged: Array<{ error?: Error; responseData?: unknown }> = [];

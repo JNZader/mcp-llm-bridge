@@ -1,9 +1,16 @@
 import type { TaskClassification } from '../classification/index.js';
 import type { RoutingDecision } from '../model-routing/types.js';
-import type { GenerateRequest, GenerateResponse, LLMProvider, RoutingMetadata } from './types.js';
+import {
+  readToolEvidence,
+  type GenerateRequest,
+  type GenerateResponse,
+  type LLMProvider,
+  type RoutingMetadata,
+} from './types.js';
 import type { InternalLLMRequest, InternalLLMResponse } from './internal-model.js';
 import type { ModelEndpoint } from '../model-routing/types.js';
 import { resolveProviderModel } from './router-candidate-planner.js';
+import { readUsageProvenance } from './usage-provenance.js';
 
 export interface RoutingMetadataOptions {
   strategy: string;
@@ -133,6 +140,10 @@ export function buildInternalRequestFromGenerate(request: GenerateRequest): Inte
     metadata['strict'] = true;
   }
 
+  if (request.requireProvider !== undefined) {
+    metadata['requireProvider'] = request.requireProvider;
+  }
+
   if (request.project) {
     metadata['project'] = request.project;
   }
@@ -143,6 +154,10 @@ export function buildInternalRequestFromGenerate(request: GenerateRequest): Inte
 
   if (request.userId) {
     metadata['userId'] = request.userId;
+  }
+
+  if (request.tools) {
+    metadata['tools'] = request.tools;
   }
 
   return {
@@ -171,6 +186,14 @@ export function buildGenerateResponseFromInternal(
     metadata['routing'] && typeof metadata['routing'] === 'object'
       ? (metadata['routing'] as RoutingMetadata)
       : undefined;
+  const usageProvenance = readUsageProvenance(metadata['usageProvenance']);
+  const rawToolEvidence = metadata['toolEvidence'];
+  const toolEvidence = request.tools === 'none' && resolvedProvider === 'opencode-cli'
+    ? readToolEvidence(rawToolEvidence)
+    : undefined;
+  if (request.tools === 'none' && !toolEvidence) {
+    throw new Error('tools=none requires valid tool evidence before public success');
+  }
 
   return {
     text: response.content,
@@ -185,6 +208,8 @@ export function buildGenerateResponseFromInternal(
     fallbackUsed: metadata['fallbackUsed'] === true,
     latencyMs: typeof metadata['latencyMs'] === 'number' ? metadata['latencyMs'] : undefined,
     routing,
+    ...(usageProvenance ? { usageProvenance } : {}),
+    ...(toolEvidence ? { toolEvidence } : {}),
   };
 }
 

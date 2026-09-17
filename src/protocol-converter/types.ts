@@ -7,7 +7,7 @@ export type ProtocolType = 'openai' | 'anthropic' | 'gemini';
 
 // Canonical internal format (OpenAI-style)
 export interface CanonicalMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'developer' | 'tool' | 'function';
   content: string;
 }
 

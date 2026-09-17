@@ -247,6 +247,9 @@ Request body:
 | `maxTokens` | number | No | Max output tokens |
 | `project` | string | No | Credential scope |
 | `strict` | boolean | No | Strict routing behavior when supported |
+| `requireProvider` | boolean | No | Opt-in extra pin for `POST /v1/generate`. Requires a non-blank `provider`. |
+
+A non-blank `provider` already selects only that adapter (aliases are normalized; other paid adapters are not probed). `requireProvider: true` additionally fails immediately when that adapter is unavailable or breaker-blocked, and skips free-model substitution. `strict` controls attempt behavior on the already-selected candidate. Chat completions and the `llm_generate` MCP tool reject `requireProvider`. It does not guarantee model identity, usage, cost, isolation, or timeout behavior.
 
 Response:
 
@@ -269,6 +272,7 @@ Response:
 OpenAI-compatible chat endpoint. This is the drop-in path for tools that already speak OpenAI format.
 
 - Non-streaming and streaming requests are supported.
+- Request messages support the `system`, `user`, and `assistant` roles.
 - System messages are collapsed into the system prompt.
 - Conversation context is reconstructed from earlier messages.
 - Response stays OpenAI-compatible and adds `x_gateway` metadata.

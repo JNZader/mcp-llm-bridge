@@ -1,5 +1,9 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
+
+type ProviderFile = { fileName: string; content: string };
+
+type ProviderHomeMount = { homeDir: string; targetDir: string; cleanup: () => void };
 
 function assertSafeFileName(fileName: string): string {
   const normalized = normalize(fileName).replace(/\\/g, '/');
@@ -31,6 +35,15 @@ function computeFilesHash(files: Array<{ fileName: string; content: string }>): 
   return Math.abs(hash).toString(36);
 }
 
+function writeProviderFiles(targetDir: string, files: ProviderFile[]): void {
+  for (const file of files) {
+    const safeFileName = assertSafeFileName(file.fileName);
+    const targetPath = join(targetDir, safeFileName);
+    mkdirSync(dirname(targetPath), { recursive: true, mode: 0o700 });
+    writeFileSync(targetPath, file.content, { mode: 0o600 });
+  }
+}
+
 /**
  * Cache for provider home directories to avoid recreating temp dirs on every request.
  * Key: `${provider}:${project || '_global'}`
@@ -52,9 +65,9 @@ const homeDirCache = new Map<string, { homeDir: string; targetDir: string; files
  */
 export function materializeProviderHome(
   providerDir: string,
-  files: Array<{ fileName: string; content: string }>,
+  files: ProviderFile[],
   project?: string,
-): { homeDir: string; targetDir: string; cleanup: () => void } {
+): ProviderHomeMount {
   const safeProvider = providerDir.replace(/^\.+/, '').replace(/[^a-zA-Z0-9-_]/g, '-');
   const cacheKey = `${safeProvider}:${project ?? '_global'}`;
   const newHash = computeFilesHash(files);
@@ -88,13 +101,7 @@ export function materializeProviderHome(
 
   mkdirSync(targetDir, { recursive: true, mode: 0o700 });
 
-  // Write all files
-  for (const file of files) {
-    const safeFileName = assertSafeFileName(file.fileName);
-    const targetPath = join(targetDir, safeFileName);
-    mkdirSync(dirname(targetPath), { recursive: true, mode: 0o700 });
-    writeFileSync(targetPath, file.content, { mode: 0o600 });
-  }
+  writeProviderFiles(targetDir, files);
 
   // Cache the result
   homeDirCache.set(cacheKey, { homeDir, targetDir, filesHash: newHash });
@@ -112,6 +119,47 @@ export function materializeProviderHome(
       }
     },
   };
+}
+
+/**
+ * Materialize a provider home that belongs to exactly one request.
+ *
+ * Unlike the cached provider home, each call creates a distinct temporary
+ * directory and its cleanup removes only that directory. This keeps one
+ * request's credential mount independent from overlapping requests.
+ */
+export function materializeRequestProviderHome(
+  providerDir: string,
+  files: ProviderFile[],
+  _project?: string,
+): ProviderHomeMount {
+  const safeProvider = providerDir.replace(/^\.+/, '').replace(/[^a-zA-Z0-9-_]/g, '-');
+  const providerRoot = '/tmp/llm-gw';
+
+  mkdirSync(providerRoot, { recursive: true, mode: 0o700 });
+  const homeDir = mkdtempSync(join(providerRoot, `${safeProvider}-request-`));
+  let cleaned = false;
+  const cleanup = (): void => {
+    if (cleaned) return;
+    cleaned = true;
+    try {
+      rmSync(homeDir, { recursive: true, force: true });
+    } catch {
+      // Cleanup is best-effort and affects only this request-owned directory.
+    }
+  };
+
+  try {
+    chmodSync(homeDir, 0o700);
+    const targetDir = join(homeDir, `.${safeProvider}`);
+    mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    chmodSync(targetDir, 0o700);
+    writeProviderFiles(targetDir, files);
+    return { homeDir, targetDir, cleanup };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
 /**

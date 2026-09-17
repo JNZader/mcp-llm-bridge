@@ -39,6 +39,11 @@ export interface ThreePartOptions {
   addLabels?: boolean;
 }
 
+interface OptimizableMessage {
+  role: string;
+  content?: unknown;
+}
+
 const DEFAULT_CONTEXT_MARKERS = [
   'context:', 'background:', 'given:', 'information:',
   'data:', 'document:', 'reference:', 'here is',
@@ -194,14 +199,24 @@ export function composeMessages(prompt: ThreePartPrompt, options?: ThreePartOpti
  * instructions mixed with actual content, and restructures into clean
  * system + user messages.
  *
- * @param messages - Existing InternalMessage array.
+ * @param messages - Existing messages with role and content fields.
  * @param options - Optimization options.
- * @returns Optimized message array with clear separation.
+ * @returns Optimized messages preserving the input type, or composed internal messages.
  */
 export function optimizeMessages(
   messages: InternalMessage[],
   options?: ThreePartOptions,
-): InternalMessage[] {
+): InternalMessage[];
+
+export function optimizeMessages<T extends OptimizableMessage>(
+  messages: T[],
+  options?: ThreePartOptions,
+): Array<T | InternalMessage>;
+
+export function optimizeMessages(
+  messages: OptimizableMessage[],
+  options?: ThreePartOptions,
+): Array<OptimizableMessage | InternalMessage> {
   // If there's already a well-structured set (system + user), return as-is
   const hasSystem = messages.some((m) => m.role === 'system');
   const hasMultipleUserMessages = messages.filter((m) => m.role === 'user').length > 1;

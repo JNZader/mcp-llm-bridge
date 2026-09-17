@@ -12,6 +12,11 @@ function createContext(headerProject?: string): RequestScope {
 }
 
 describe('prepareGenerateRequest', () => {
+  it('propagates the explicit tools none opt-in', () => {
+    const prepared = prepareGenerateRequest({ prompt: 'hello', tools: 'none' }, createContext());
+    assert.equal(prepared.tools, 'none');
+  });
+
 	it('prefers body project and preserves router.generate fields', () => {
 		const validated: GenerateRequestBody = {
 			prompt: 'hello',
@@ -92,5 +97,13 @@ describe('prepareGenerateRequest', () => {
 			preserved.prompt,
 			'You are a helpful assistant.\n\nTask: Explain useMemo.',
 		);
+	});
+
+	it('preserves the opt-in provider requirement without changing false', () => {
+		for (const requireProvider of [true, false]) {
+			const validated: GenerateRequestBody & { requireProvider: boolean } = { prompt: 'test', requireProvider };
+			const prepared = prepareGenerateRequest(validated, createContext('header-project'));
+			assert.equal(Reflect.get(prepared, 'requireProvider'), requireProvider);
+		}
 	});
 });

@@ -8,8 +8,6 @@ import { validateChatCompletions, validateGenerateRequest } from "../../core/sch
 import {
 	createOpenAIUsage,
 } from "../../protocol-converter/index.js";
-import type { CanonicalRequest } from "../../protocol-converter/types.js";
-import type { ProviderStreamVaultPort } from "../streaming/provider-stream-client.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
 import {
 	getValidationIssue,
@@ -19,6 +17,7 @@ import {
 } from "../http-helpers/request-validation.js";
 import {
 	CHAT_COMPLETIONS_USER_MESSAGE_REQUIRED,
+	type ChatGenerateCanonicalRequest,
 } from "../http-helpers/chat-request.js";
 import {
 	resolveRequestScope,
@@ -30,6 +29,7 @@ import {
 } from "../execution/chat-completions-service.js";
 import { executeGenerateRequest } from "../execution/generate-service.js";
 import { createStreamExecutor } from "../streaming/stream-executor.js";
+import type { ProviderStreamVaultPort } from "../streaming/provider-stream-client.js";
 import { buildSSEChunkEvent } from "../../transformers/streaming.js";
 
 export interface ExecutionRouteDeps {
@@ -75,7 +75,7 @@ export function buildStreamingFallbackChunkResponse(input: {
  */
 function handleStreamingRequest(
 	c: Context,
-	canonical: CanonicalRequest,
+	canonical: ChatGenerateCanonicalRequest,
 	scope: RequestScope,
 	router: Router,
 	costTracker?: CostTracker,
@@ -165,6 +165,7 @@ export function registerExecutionRoutes(
 					scope: resolveRequestScope(c, validated.project),
 					router,
 					requestLogger,
+					abortSignal: c.req.raw.signal,
 				}),
 			);
 		} catch (error) {
@@ -217,6 +218,7 @@ export function registerExecutionRoutes(
 						router,
 						scope,
 						requestLogger,
+						abortSignal: c.req.raw.signal,
 					}),
 				);
 			} catch (error) {

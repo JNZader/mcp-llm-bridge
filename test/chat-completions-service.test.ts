@@ -8,6 +8,32 @@ import {
 import { validateChatCompletions } from "../src/core/schemas.js";
 
 describe("chat-completions-service", () => {
+	it("forwards the optional execution signal separately from internal metadata", async () => {
+		const controller = new AbortController();
+		const prepared = prepareChatCompletionsRequest({
+			model: "test-model",
+			messages: [{ role: "user", content: "Hello" }],
+		});
+		let receivedSignal: AbortSignal | undefined;
+
+		await executeNonStreamingChatCompletions({
+			prepared,
+			scope: {},
+			abortSignal: controller.signal,
+			router: {
+				generateFromInternal: async (_request: unknown, options?: { signal?: AbortSignal }) => {
+					receivedSignal = options?.signal;
+					return {
+						content: "ok", model: "test-model", finishReason: "stop", usage: {},
+						metadata: { provider: "mock", resolvedProvider: "mock", resolvedModel: "test-model" },
+					};
+				},
+			} as never,
+		});
+
+		assert.strictEqual(receivedSignal, controller.signal);
+	});
+
 	it("prepares an optimized canonical request for the streaming handoff", () => {
 		const prepared = prepareChatCompletionsRequest({
 			messages: [
@@ -28,6 +54,86 @@ describe("chat-completions-service", () => {
 			{ role: "system", content: "You are a helpful assistant." },
 			{ role: "user", content: "[Instruction]\nTask: Explain strict mode." },
 		]);
+	});
+
+	it("keeps supported system, user, and assistant roles available to optimization", () => {
+		const prepared = prepareChatCompletionsRequest({
+			messages: [
+				{ role: "system", content: "System." },
+				{ role: "user", content: "User." },
+				{ role: "assistant", content: "Assistant." },
+			],
+		});
+
+		assert.deepEqual(prepared.canonicalRequest.messages, [
+			{ role: "system", content: "System." },
+			{ role: "user", content: "User." },
+			{ role: "assistant", content: "Assistant." },
+		]);
+		assert.deepEqual(prepared.optimizedCanonicalRequest.messages, [
+			{ role: "system", content: "System." },
+			{ role: "user", content: "User." },
+			{ role: "assistant", content: "Assistant." },
+		]);
+	});
+
+	it("rejects each unsupported role in mixed requests before optimization for either stream mode", () => {
+		const unsupportedRoles = ["developer", "tool", "function"] as const;
+		const streamModes = [false, true] as const;
+		const sentinelContent = "content-sentinel-must-not-appear";
+		const sentinelToolMetadata = "tool-metadata-sentinel-must-not-appear";
+
+		for (const role of unsupportedRoles) {
+			for (const stream of streamModes) {
+				const validated = validateChatCompletions({
+					stream,
+					messages: [
+						{ role: "system", content: "System." },
+						{ role: "user", content: "User." },
+						{
+							role,
+							content: sentinelContent,
+							name: sentinelToolMetadata,
+							tool_call_id: sentinelToolMetadata,
+						},
+					],
+				});
+
+				assert.throws(
+					() => prepareChatCompletionsRequest(validated),
+					(error: unknown) => {
+						assert.ok(error instanceof Error);
+						assert.equal(
+							error.message,
+							"Chat completions supports only system, user, and assistant message roles",
+						);
+						assert.equal(error.message.includes(sentinelContent), false);
+						assert.equal(error.message.includes(sentinelToolMetadata), false);
+						return true;
+					},
+				);
+			}
+		}
+	});
+
+	it("rejects unsupported-only requests before the user-message requirement for either stream mode", () => {
+		const unsupportedRoles = ["developer", "tool", "function"] as const;
+		const streamModes = [false, true] as const;
+
+		for (const role of unsupportedRoles) {
+			for (const stream of streamModes) {
+				assert.throws(
+					() =>
+						prepareChatCompletionsRequest({
+							stream,
+							messages: [{ role, content: "Unsupported-only message." }],
+						}),
+					new Error(
+						"Chat completions supports only system, user, and assistant message roles",
+					),
+				);
+			}
+		}
 	});
 
 	it("preserves provider, strict, clientId, and project through validation and preparation", () => {

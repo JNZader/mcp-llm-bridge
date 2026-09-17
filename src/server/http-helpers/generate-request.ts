@@ -45,10 +45,14 @@ export function prepareGenerateRequest(
 		system,
 		model: validated.model,
 		provider: validated.provider,
+		...(validated.requireProvider !== undefined
+			? { requireProvider: validated.requireProvider }
+			: {}),
 		maxTokens: validated.maxTokens ?? validated.max_tokens,
 		strict: validated.strict,
 		project,
 		apiKeyId: scope.apiKeyId,
 		userId: scope.userId,
+		...(validated.tools ? { tools: validated.tools } : {}),
 	};
 }

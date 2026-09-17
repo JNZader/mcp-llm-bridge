@@ -1,4 +1,4 @@
-import type { GenerateRequest, GenerateResponse, RoutingMetadata } from './types.js';
+import { readToolEvidence, type GenerateRequest, type GenerateResponse, type RoutingMetadata } from './types.js';
 import {
   buildRoutingMetadata,
   type InternalResolutionMetadataOptions,
@@ -103,10 +103,20 @@ export function buildGenerateExecutionResponse(
   },
 ): GenerateResponse {
   const snapshot = contract.snapshot(input.result.provider);
+  const toolEvidence = input.request.tools === 'none'
+    && input.result.provider === 'opencode-cli'
+    ? readToolEvidence(input.result.toolEvidence)
+    : undefined;
+  if (input.request.tools === 'none' && !toolEvidence) {
+    throw new Error('tools=none requires valid tool evidence before public success');
+  }
+  const result = { ...input.result };
+  delete result.toolEvidence;
+  if (toolEvidence) result.toolEvidence = toolEvidence;
 
   return withResolutionMetadata(
     input.request,
-    input.result,
+    result,
     snapshot.fallbackUsed,
     input.latencyMs,
     snapshot.routing,

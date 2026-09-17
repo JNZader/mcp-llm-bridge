@@ -4,6 +4,31 @@ import { describe, it } from "node:test";
 import { executeGenerateRequest } from "../src/server/execution/generate-service.js";
 
 describe("generate-service", () => {
+	it("forwards the optional execution signal without placing it in the request payload", async () => {
+		const controller = new AbortController();
+		const calls: unknown[][] = [];
+
+		await executeGenerateRequest({
+			validated: { prompt: "Hello" },
+			scope: {},
+			abortSignal: controller.signal,
+			router: {
+				generate: async (...args: unknown[]) => {
+					calls.push(args);
+					return {
+						text: "ok", provider: "mock", model: "mock-model", resolvedProvider: "mock",
+						resolvedModel: "mock-model", fallbackUsed: false,
+					};
+				},
+			} as never,
+		});
+
+		assert.deepEqual(calls, [[
+			{ prompt: "Hello", system: undefined, model: undefined, provider: undefined, maxTokens: undefined, strict: undefined, project: undefined, apiKeyId: undefined, userId: undefined },
+			{ signal: controller.signal },
+		]]);
+	});
+
 	it("prepares the generate request, executes it, and logs success", async () => {
 		const captured: Array<Record<string, unknown>> = [];
 		const logCtx = { provider: "", model: "", startTime: 0 };
@@ -191,5 +216,47 @@ describe("generate-service", () => {
 				error: "router blew up",
 			},
 		]);
+	});
+
+	it("adds catalog-derived zero-cost evidence only for complete zero-priced usage", async () => {
+		const result = await executeGenerateRequest({
+			validated: { prompt: "Hello", model: "opencode/muse-spark-1.3-contributor-free" },
+			scope: {},
+			router: {
+				generate: async () => ({
+					text: "ok", provider: "opencode-cli", model: "opencode/muse-spark-1.3-contributor-free",
+					resolvedProvider: "opencode-cli", resolvedModel: "opencode/muse-spark-1.3-contributor-free",
+					fallbackUsed: false,
+					usageProvenance: { status: "reported", origin: "cli-output", eventCount: 1, inputTokens: 4, outputTokens: 6 },
+				}),
+			} as never,
+		});
+
+		assert.deepEqual(result.costEvidence, {
+			status: "estimated_zero",
+			source: "catalog_estimate",
+			estimatedCost: 0,
+			currency: "USD",
+			inputTokens: 4,
+			outputTokens: 6,
+			providerChargeAttestation: false,
+			caveat: "Estimated from gateway model-price metadata; not provider charge attestation.",
+		});
+		assert.equal(result.resolvedProvider, "opencode-cli");
+		assert.equal(result.resolvedModel, "opencode/muse-spark-1.3-contributor-free");
+		assert.equal(result.fallbackUsed, false);
+	});
+
+	it("omits cost evidence when usage is missing or model pricing is non-zero", async () => {
+		const missing = await executeGenerateRequest({
+			validated: { prompt: "Hello" }, scope: {},
+			router: { generate: async () => ({ text: "ok", provider: "mock", model: "unknown", resolvedProvider: "mock", resolvedModel: "unknown", fallbackUsed: false }) } as never,
+		});
+		const nonZero = await executeGenerateRequest({
+			validated: { prompt: "Hello", model: "gpt-4o-mini" }, scope: {},
+			router: { generate: async () => ({ text: "ok", provider: "openai", model: "gpt-4o-mini", resolvedProvider: "openai", resolvedModel: "gpt-4o-mini", fallbackUsed: false, usageProvenance: { status: "reported", origin: "cli-output", eventCount: 1, inputTokens: 1, outputTokens: 1 } }) } as never,
+		});
+		assert.equal("costEvidence" in missing, false);
+		assert.equal("costEvidence" in nonZero, false);
 	});
 });

@@ -5,10 +5,9 @@
  * This transformer converts InternalLLMRequest into the format
  * that BaseCliAdapter expects: a prompt string + options.
  *
- * The "provider response" for CLI adapters is simply the raw text
- * output from the CLI process, so the response transformer wraps
- * it into an InternalLLMResponse with zero-value usage stats
- * (CLI tools don't report token counts).
+ * The provider response is raw CLI stdout or a generate() object.
+ * Token usage is forwarded only when `usageProvenance` is present and valid;
+ * otherwise usage stays unknown instead of a fabricated 0/0 split.
  */
 
 import type { OutboundTransformer } from '../../core/transformer.js';
@@ -18,6 +17,7 @@ import type {
   InternalLLMResponse,
   InternalMessage,
 } from '../../core/internal-model.js';
+import { readUsageProvenance } from '../../core/usage-provenance.js';
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -112,21 +112,29 @@ export const cliOutbound: OutboundTransformer = {
       throw new TransformError('CLI response must be a string or object with text', 'cli');
     }
 
-    // CLI tools don't report token counts or model info
     const model = isObject(providerResponse) && typeof providerResponse['model'] === 'string'
       ? providerResponse['model']
       : 'cli-unknown';
 
-    // CLI tools don't report token counts. Rather than fabricate a 0/0/0
-    // split (which billing/telemetry would read as a truthful "zero tokens
-    // consumed"), emit unknown usage. UsageSchema's both-or-neither refine
-    // permits an empty usage object, and recordUsage() skips the cost ledger
-    // when the split is unknown instead of persisting fabricated zeros.
+    // Forward validated CLI provenance when present. Otherwise leave usage
+    // unknown rather than persisting a fabricated 0/0 split.
+    const usageProvenance = isObject(providerResponse)
+      ? readUsageProvenance(providerResponse['usageProvenance'])
+      : undefined;
+
+    const metadata = {
+      ...(usageProvenance ? { usageProvenance } : {}),
+      ...(isObject(providerResponse) && providerResponse['toolEvidence']
+        ? { toolEvidence: providerResponse['toolEvidence'] }
+        : {}),
+    };
+
     return {
       content,
       model,
       finishReason: 'stop',
       usage: {},
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     };
   },
 };

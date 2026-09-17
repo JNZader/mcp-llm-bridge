@@ -12,6 +12,22 @@ import {
 } from '../../src/transformers/three-part-prompt.js';
 import type { ThreePartPrompt } from '../../src/transformers/three-part-prompt.js';
 import type { InternalMessage } from '../../src/core/internal-model.js';
+import type { CanonicalMessage } from '../../src/protocol-converter/types.js';
+
+const internalInput: InternalMessage[] = [{ role: 'user', content: 'Hello.' }];
+const internalOutput: InternalMessage[] = optimizeMessages(internalInput);
+const inlineInternalOutput: InternalMessage[] = optimizeMessages([
+  { role: 'user', content: 'Hello.' },
+]);
+const broaderInput: CanonicalMessage[] = [
+  { role: 'system', content: 'System.' },
+  { role: 'user', content: 'User.' },
+  { role: 'assistant', content: 'Assistant.' },
+  { role: 'developer', content: 'Developer.' },
+  { role: 'tool', content: 'Tool.' },
+  { role: 'function', content: 'Function.' },
+];
+const broaderOutput: Array<CanonicalMessage | InternalMessage> = optimizeMessages(broaderInput);
 
 describe('splitPrompt', () => {
   it('returns empty parts for empty input', () => {
@@ -182,6 +198,13 @@ describe('composeMessages', () => {
 });
 
 describe('optimizeMessages', () => {
+  it('characterizes the system-present six-role input as a same-reference pass-through', () => {
+    assert.strictEqual(optimizeMessages(broaderInput as unknown as InternalMessage[]), broaderInput);
+    assert.equal(internalOutput, internalInput);
+    assert.equal(inlineInternalOutput.length, 1);
+    assert.equal(broaderOutput, broaderInput);
+  });
+
   it('splits a single user message into system + user', () => {
     const messages: InternalMessage[] = [
       {

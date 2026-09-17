@@ -41,6 +41,7 @@ export interface InternalRoutingPlan {
   routedModel: string;
   requestedProvider?: string;
   strict: boolean;
+  requireProvider: boolean;
   stickySession: StickySessionRoutingIntent | null;
 }
 
@@ -57,6 +58,7 @@ export async function buildInternalRoutingPlan(
       ? optimizedRequest.metadata['provider']
       : undefined;
   const strict = optimizedRequest.metadata?.['strict'] === true;
+  const requireProvider = optimizedRequest.metadata?.['requireProvider'] === true;
   const sharedPlan = await buildRoutingPolicyPlan({
     providers: options.providers,
     request: {
@@ -64,6 +66,7 @@ export async function buildInternalRoutingPlan(
       model: optimizedRequest.model,
       provider: requestedProvider,
       strict,
+      requireProvider,
       clientId:
         typeof optimizedRequest.metadata?.['clientId'] === 'string'
           ? optimizedRequest.metadata['clientId']
@@ -93,6 +96,7 @@ export async function buildInternalRoutingPlan(
     routedModel: sharedPlan.routedModel,
     requestedProvider: sharedPlan.requestedProvider,
     strict: sharedPlan.strict,
+    requireProvider: sharedPlan.requireProvider,
     stickySession: sharedPlan.stickySession,
   };
 }
