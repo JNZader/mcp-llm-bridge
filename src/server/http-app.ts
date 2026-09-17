@@ -9,7 +9,7 @@ import { SQLiteAnalyticsReader, type AnalyticsAggregator } from "../analytics/in
 import type { ApprovalStore } from "../approval/index.js";
 import { apiKeyAuth } from "../auth/middleware.js";
 import type { ComparisonService } from "../comparison/service.js";
-import { GENERATE_HTTP_TIMEOUT_MS, MAX_BODY_SIZE } from "../core/constants.js";
+import { MAX_BODY_SIZE, resolveGenerateHttpTimeoutMs } from "../core/constants.js";
 import type { CostTracker } from "../core/cost-tracker.js";
 import type { GroupStore } from "../core/groups.js";
 import {
@@ -17,7 +17,6 @@ import {
 	getTrustedProxyIps,
 	isMultiTenantEnabled,
 } from "../core/http-runtime-config.js";
-import { logger } from "../core/logger.js";
 import { startHttpTimer } from "../core/metrics.js";
 import type { Router } from "../core/router.js";
 import type { GatewayConfig, TrustLevel } from "../core/types.js";
@@ -157,29 +156,44 @@ function getClientIp(c: Context): string {
 	return directIp;
 }
 
-async function requestTimeout(
-	_c: Context,
+const GENERATE_DEADLINE_PATHS = new Set(["/v1/generate", "/v1/chat/completions"]);
+
+export async function requestTimeout(
+	c: Context,
 	next: Next,
 ): Promise<Response | void> {
-	let timedOut = false;
+	if (!GENERATE_DEADLINE_PATHS.has(c.req.path)) {
+		return next();
+	}
+
+	const timeoutMs = resolveGenerateHttpTimeoutMs();
+	const deadline = new AbortController();
+	const clientSignal = c.req.raw.signal;
+	const onClientAbort = () => {
+		if (!deadline.signal.aborted) {
+			deadline.abort(clientSignal.reason);
+		}
+	};
+	if (clientSignal.aborted) {
+		onClientAbort();
+	} else {
+		clientSignal.addEventListener("abort", onClientAbort, { once: true });
+	}
 
 	const timeoutId = setTimeout(() => {
-		timedOut = true;
-	}, GENERATE_HTTP_TIMEOUT_MS);
+		c.set("httpDeadlineExceeded", true);
+		if (!deadline.signal.aborted) {
+			deadline.abort();
+		}
+	}, timeoutMs);
+
+	c.set("abortSignal", deadline.signal);
 
 	try {
 		await next();
 	} finally {
 		clearTimeout(timeoutId);
-	}
-
-	if (timedOut) {
-		// next() already finished. Replacing a 200 with 408 here double-bills
-		// Consorcio after a successful generate (R3-002). Keep the completed body.
-		logger.warn(
-			{ timeoutMs: GENERATE_HTTP_TIMEOUT_MS },
-			"HTTP generate exceeded timeout budget but completed; keeping response",
-		);
+		clientSignal.removeEventListener("abort", onClientAbort);
 	}
 }
 

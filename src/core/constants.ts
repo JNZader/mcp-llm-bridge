@@ -48,6 +48,13 @@ export const GENERATE_HTTP_HEADROOM_MS = 20_000;
 export const GENERATE_HTTP_TIMEOUT_MS =
   DEFAULT_CLI_GENERATE_TIMEOUT_MS + GENERATE_HTTP_HEADROOM_MS;
 
+/** HTTP generate/chat deadline. CI/tests set `GENERATE_HTTP_TIMEOUT_MS`. */
+export function resolveGenerateHttpTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  return resolvePositiveIntEnv(env, 'GENERATE_HTTP_TIMEOUT_MS', GENERATE_HTTP_TIMEOUT_MS);
+}
+
 /** Parse a positive integer env override; invalid/absent → `fallback`. */
 export function resolvePositiveIntEnv(
   env: Record<string, string | undefined>,

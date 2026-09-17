@@ -20,6 +20,8 @@ import {
 	type ChatGenerateCanonicalRequest,
 } from "../http-helpers/chat-request.js";
 import {
+	getRequestAbortSignal,
+	isHttpGenerateDeadlineExceeded,
 	resolveRequestScope,
 	type RequestScope,
 } from "../http-helpers/request-scope.js";
@@ -86,6 +88,7 @@ function handleStreamingRequest(
 	const chatId = `chatcmpl-${randomUUID()}`;
 	const model = canonical.model ?? "";
 
+	const abortSignal = getRequestAbortSignal(c) ?? c.req.raw.signal;
 	return streamSSE(c, async (stream) => {
 		const executor = createStreamExecutor({
 			canonical,
@@ -94,14 +97,14 @@ function handleStreamingRequest(
 			vault,
 			requestLogger,
 			scope,
-			abortSignal: c.req.raw.signal,
+			abortSignal,
 		});
 
 		const abortHandler = () => {
 			void executor.abort();
 		};
 
-		c.req.raw.signal.addEventListener("abort", abortHandler, { once: true });
+		abortSignal.addEventListener("abort", abortHandler, { once: true });
 
 		try {
 			await executor.execute({
@@ -138,7 +141,7 @@ function handleStreamingRequest(
 				},
 			});
 		} finally {
-			c.req.raw.signal.removeEventListener("abort", abortHandler);
+			abortSignal.removeEventListener("abort", abortHandler);
 		}
 	});
 }
@@ -170,11 +173,14 @@ export function registerExecutionRoutes(
 					scope: resolveRequestScope(c, validated.project),
 					router,
 					requestLogger,
-					abortSignal: c.req.raw.signal,
+					abortSignal: getRequestAbortSignal(c) ?? c.req.raw.signal,
 				}),
 			);
 		} catch (error) {
 			const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
+			if (isHttpGenerateDeadlineExceeded(c)) {
+				return c.json({ error: message }, 408);
+			}
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -235,7 +241,7 @@ export function registerExecutionRoutes(
 						router,
 						scope,
 						requestLogger,
-						abortSignal: c.req.raw.signal,
+						abortSignal: getRequestAbortSignal(c) ?? c.req.raw.signal,
 					}),
 				);
 			} catch (error) {
@@ -247,16 +253,17 @@ export function registerExecutionRoutes(
 			}
 		} catch (error) {
 			const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
+			const status = isHttpGenerateDeadlineExceeded(c) ? 408 : 500;
 			return c.json(
 				{
 					error: {
 						message,
-						type: "server_error",
+						type: status === 408 ? "timeout" : "server_error",
 						param: null,
 						code: null,
 					},
 				},
-				500,
+				status,
 			);
 		}
 	});

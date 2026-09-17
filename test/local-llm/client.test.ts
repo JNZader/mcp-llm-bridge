@@ -132,6 +132,47 @@ describe('callLocalLLM timer cleanup', () => {
   });
 });
 
+describe('callLocalLLM caller abort', () => {
+  it('aborts in-flight fetch when the caller signal fires', async () => {
+    mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+      await new Promise<never>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) {
+          reject(new Error('missing abort signal'));
+          return;
+        }
+        if (signal.aborted) {
+          reject(new DOMException('aborted', 'AbortError'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'));
+        }, { once: true });
+      });
+      return undefined as never;
+    });
+
+    const controller = new AbortController();
+    const pending = callLocalLLM(
+      TEST_MODEL,
+      'hello',
+      undefined,
+      { requestTimeoutMs: 30_000 },
+      undefined,
+      controller.signal,
+    );
+    queueMicrotask(() => controller.abort());
+    await assert.rejects(
+      pending,
+      (error: unknown) => {
+        assert.ok(error instanceof LocalLLMError);
+        assert.equal(error.message, 'Request timed out');
+        return true;
+      },
+    );
+  });
+});
+
 describe('pingBackend timer cleanup', () => {
   it('clears the abort timer when ping fails', async () => {
     const timerToken = createFakeTimeoutHandle('ping-timer');
