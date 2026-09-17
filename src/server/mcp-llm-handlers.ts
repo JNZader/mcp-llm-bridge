@@ -127,7 +127,12 @@ export async function handleLocalLlmGenerateTool(
     // Local pin failed; fall through to unpinned cloud generate.
   }
 
-  const result = await router.generate({ prompt, system, maxTokens });
+  const result = await router.generate({
+    prompt,
+    system,
+    maxTokens,
+    excludeProviders: ['local-llm'],
+  });
   return jsonResult({
     ...result,
     backend: 'cloud',

@@ -44,6 +44,8 @@ export interface GenerateRequest {
   apiKeyId?: string;
   userId?: string;
   tools?: 'none';
+  /** Internal planning hint: skip these providers while resolving candidates. */
+  excludeProviders?: string[];
 }
 
 export interface ToolEvidence {

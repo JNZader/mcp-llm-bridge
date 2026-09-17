@@ -28,6 +28,7 @@ export interface RoutingPolicyPlanRequest {
   requireProvider: boolean;
   clientId?: string;
   routingMode?: RoutingMode;
+  excludeProviders?: readonly string[];
 }
 
 export interface BuildRoutingPolicyPlanOptions {
@@ -75,15 +76,19 @@ export async function buildRoutingPolicyPlan(
   const strict = options.request.strict;
   const requireProvider = options.request.requireProvider;
   const contractual = options.request.routingMode === 'contractual';
+  const excludedProviders = new Set(options.request.excludeProviders ?? []);
+  const providers = excludedProviders.size === 0
+    ? options.providers
+    : options.providers.filter((candidate) => !excludedProviders.has(candidate.id));
 
   if (contractual) {
     if (!requestedProvider || !requestModel) {
       throw new Error('Contractual routing requires explicit provider and model');
     }
 
-    const provider = options.providers.find((candidate) => candidate.id === requestedProvider);
+    const provider = providers.find((candidate) => candidate.id === requestedProvider);
     if (!provider) {
-      throw new Error(`Contractual provider ${requestedProvider} is unavailable`);
+      throw new Error(`Contractual provider ${requestedProvider} is unknown`);
     }
 
     if (!(await provider.isAvailable())) {
@@ -124,7 +129,7 @@ export async function buildRoutingPolicyPlan(
     matchedGroup = options.groupStore.findByModel(requestModel);
     if (matchedGroup) {
       orderedCandidates = resolveGroupCandidates(
-        options.providers,
+        providers,
         matchedGroup,
         (providerId, candidateModel) =>
           options.circuitBreaker.canExecute(providerId, 'default', candidateModel).allowed,
@@ -135,12 +140,13 @@ export async function buildRoutingPolicyPlan(
 
   if (!orderedCandidates) {
     orderedCandidates = await resolveCandidates(
-      options.providers,
+      providers,
       {
         prompt: options.request.prompt,
         model: requestModel,
         provider: requestedProvider,
         requireProvider,
+        excludeProviders: options.request.excludeProviders ? [...options.request.excludeProviders] : undefined,
       },
       (candidates) =>
         reorderByLatency(candidates, options.latencyMeasurer, options.explorationRate),

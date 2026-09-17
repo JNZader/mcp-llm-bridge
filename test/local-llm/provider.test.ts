@@ -91,7 +91,6 @@ describe('LocalLLMProvider', () => {
       prompt: 'Explain this arbitrary production architecture.',
       provider: 'local-llm',
       model: 'granite3.2:2b',
-      strict: true,
       routingMode: 'contractual',
       responseFormat: 'json',
     });
