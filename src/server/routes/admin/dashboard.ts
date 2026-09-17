@@ -11,6 +11,7 @@ import type { GroupStore } from '../../../core/groups.js';
 import type { Router } from '../../../core/router.js';
 import type { SessionManager } from '../../../session/index.js';
 import { SESSION_ENTRY_KIND } from '../../../session/types.js';
+import { publicErrorMessage } from '../../../core/error-sanitizer.js';
 
 export interface AdminDashboardRouteDeps {
   router: Router;
@@ -89,7 +90,7 @@ export function registerAdminDashboardRoutes(
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -113,7 +114,7 @@ export function registerAdminDashboardRoutes(
 
       return c.json({ providers: detailed });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -142,7 +143,7 @@ export function registerAdminDashboardRoutes(
         },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({
         status: 'error',
         error: message,
@@ -213,7 +214,7 @@ export function registerAdminDashboardRoutes(
         groupSessions,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -233,7 +234,7 @@ export function registerAdminDashboardRoutes(
         },
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });

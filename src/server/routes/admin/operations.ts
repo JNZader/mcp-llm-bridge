@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 
 import { resetProviderCircuitBreakers } from '../../../circuit-breaker/admin-compat.js';
 import type { CostTracker } from '../../../core/cost-tracker.js';
+import { publicErrorMessage } from '../../../core/error-sanitizer.js';
 
 export interface AdminOperationsRouteDeps {
   costTracker?: CostTracker;
@@ -27,7 +28,7 @@ export function registerAdminOperationsRoutes(
         message: `Circuit breaker for ${provider} has been reset`,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -49,7 +50,7 @@ export function registerAdminOperationsRoutes(
         remainingBuffer: bufferAfter,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });

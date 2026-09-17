@@ -13,6 +13,10 @@ export function sanitizeErrorMessage(message: string): string {
 }
 
 export function sanitizeError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  return new Error(sanitizeErrorMessage(message));
+  return new Error(publicErrorMessage(error));
+}
+
+/** Client-facing error text: bounded and credential-redacted. */
+export function publicErrorMessage(error: unknown): string {
+  return sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
 }

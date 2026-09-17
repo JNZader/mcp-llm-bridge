@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { createApiKey, revokeApiKey, listApiKeys } from '../../../auth/keys.js';
 import { TrustLevelSchema } from '../../../security/profiles.js';
+import { publicErrorMessage } from '../../../core/error-sanitizer.js';
 
 export interface AdminApiKeysRouteDeps {
   db?: Database.Database;
@@ -59,7 +60,7 @@ export function registerAdminApiKeyRoutes(
         createdAt: apiKey.createdAt,
       }, 201);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -94,7 +95,7 @@ export function registerAdminApiKeyRoutes(
 
       return c.json({ keys: masked });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -119,7 +120,7 @@ export function registerAdminApiKeyRoutes(
 
       return c.json({ ok: true, id, message: `API key ${id} revoked` });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
