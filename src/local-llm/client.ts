@@ -70,12 +70,27 @@ export async function callLocalLLM(
   system?: string,
   config?: Partial<LocalLLMConfig>,
   responseFormat?: ResponseFormat,
+  signal?: AbortSignal,
 ): Promise<LocalLLMResponse> {
   const cfg = { ...DEFAULT_LOCAL_LLM_CONFIG, ...config };
   const url = buildCompletionUrl(model.backend, cfg);
   const startTime = Date.now();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cfg.requestTimeoutMs);
+  const onExternalAbort = () => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+  if (signal?.aborted) {
+    onExternalAbort();
+  } else {
+    signal?.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  const timer = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  }, cfg.requestTimeoutMs);
 
   const messages: Array<{ role: string; content: string }> = [];
   if (system) {
@@ -137,6 +152,7 @@ export async function callLocalLLM(
     );
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', onExternalAbort);
   }
 }
 

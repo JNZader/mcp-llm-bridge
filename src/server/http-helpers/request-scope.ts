@@ -16,6 +16,15 @@ export function getRequestCorrelationId(context: Context): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
+export function getRequestAbortSignal(context: Context): AbortSignal | undefined {
+	const value = (context as { get: (key: string) => unknown }).get("abortSignal");
+	return value instanceof AbortSignal ? value : undefined;
+}
+
+export function isHttpGenerateDeadlineExceeded(context: Context): boolean {
+	return (context as { get: (key: string) => unknown }).get("httpDeadlineExceeded") === true;
+}
+
 export function resolveRequestScope(
 	context: Context,
 	bodyProject?: string,

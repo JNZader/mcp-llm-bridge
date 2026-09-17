@@ -5,7 +5,7 @@
  * provider interface that the Router can use for offloading.
  */
 
-import type { LLMProvider, ModelInfo, GenerateRequest, GenerateResponse } from '../core/types.js';
+import type { GenerateExecutionOptions, LLMProvider, ModelInfo, GenerateRequest, GenerateResponse } from '../core/types.js';
 import type { LocalLLMConfig, LocalModel } from './types.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from './types.js';
 import { detectLocalLLMs, pickBestLocalModel } from './detector.js';
@@ -103,7 +103,7 @@ export class LocalLLMProvider implements LLMProvider {
    * Throws `LocalLLMError` on failure so the Router can catch it and
    * fall back to the next candidate.
    */
-  async generate(request: GenerateRequest): Promise<GenerateResponse> {
+  async generate(request: GenerateRequest, options?: GenerateExecutionOptions): Promise<GenerateResponse> {
     if (!this.config.enabled) {
       throw new LocalLLMError('Local LLM is disabled', 'ollama');
     }
@@ -175,6 +175,7 @@ export class LocalLLMProvider implements LLMProvider {
       request.system,
       this.config,
       request.responseFormat,
+      options?.signal,
     );
 
     return {
