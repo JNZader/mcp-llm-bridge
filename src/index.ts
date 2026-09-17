@@ -42,7 +42,7 @@ initTracing();
 import { cleanupAllProviderHomes } from "./adapters/cli-home.js";
 import { createRuntimeContext } from "./bootstrap/runtime-context.js";
 import { startConfiguredMode } from "./bootstrap/server-startup.js";
-import { setupGracefulShutdown } from "./bootstrap/shutdown.js";
+import { setupGracefulShutdown, type TransportHandles } from "./bootstrap/shutdown.js";
 import { initMetrics } from "./core/metrics.js";
 
 // Populate the transformer registry with all inbound/outbound transformers
@@ -52,8 +52,8 @@ import "./transformers/index.js";
 initMetrics();
 
 const runtime = await createRuntimeContext();
+const transports: TransportHandles = {};
 
-// Setup graceful shutdown
 await setupGracefulShutdown({
 	compressor: runtime.compressor,
 	latencyMeasurer: runtime.latencyMeasurer,
@@ -66,6 +66,7 @@ await setupGracefulShutdown({
 	vault: runtime.vault,
 	cleanupAllProviderHomes,
 	shutdownTracing,
+	transports,
 });
 
-await startConfiguredMode(runtime, mode);
+Object.assign(transports, await startConfiguredMode(runtime, mode));

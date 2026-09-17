@@ -84,6 +84,49 @@ describe("setupGracefulShutdown", () => {
 		]);
 	});
 
+	it("closes HTTP and MCP transports before destroying services", async () => {
+		const events: string[] = [];
+		const listeners = new Map<string, () => void | Promise<void>>();
+		const transports = {
+			httpServer: {
+				close: (callback?: (error?: Error) => void) => {
+					events.push("httpServer.close");
+					callback?.();
+				},
+			},
+			mcpServer: {
+				close: async () => {
+					events.push("mcpServer.close");
+				},
+			},
+		};
+
+		await setupGracefulShutdown({
+			compressor: { destroy: () => void events.push("compressor.destroy") },
+			latencyMeasurer: { stopBackgroundTask: () => undefined },
+			freeModelRouter: { destroy: () => undefined },
+			costTracker: { destroy: () => undefined },
+			analyticsAggregator: { destroy: () => undefined },
+			groupStore: { close: () => undefined },
+			sessionManager: { destroy: () => undefined },
+			vault: { destroy: () => undefined },
+			cleanupAllProviderHomes: () => undefined,
+			shutdownTracing: async () => undefined,
+			transports,
+			processOn: (signal, listener) => {
+				listeners.set(signal, listener);
+			},
+			processExit: () => undefined,
+		});
+
+		await listeners.get("SIGTERM")?.();
+		assert.deepEqual(events.slice(0, 3), [
+			"httpServer.close",
+			"mcpServer.close",
+			"compressor.destroy",
+		]);
+	});
+
 	it("does not re-run teardown when shutdown is triggered more than once", async () => {
 		const events: string[] = [];
 		const listeners = new Map<string, () => void | Promise<void>>();

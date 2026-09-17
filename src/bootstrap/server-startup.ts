@@ -7,6 +7,7 @@ import {
 	type StartMcpServerDeps,
 } from "../server/mcp.js";
 import type { RuntimeContext } from "./runtime-context.js";
+import type { TransportHandles } from "./shutdown.js";
 
 export interface ServerStartupDeps {
 	startHttpServerWithDeps: typeof startHttpServerWithDeps;
@@ -79,36 +80,37 @@ export function buildMcpServerDeps(
 export function startServeMode(
 	runtime: ServerStartupRuntime,
 	deps: ServerStartupDeps = DEFAULT_SERVER_STARTUP_DEPS,
-): void {
-	deps.startHttpServerWithDeps(buildHttpServerDeps(runtime));
+): TransportHandles {
+	return { httpServer: deps.startHttpServerWithDeps(buildHttpServerDeps(runtime)) };
 }
 
 export function startHttpOnlyMode(
 	runtime: ServerStartupRuntime,
 	deps: ServerStartupDeps = DEFAULT_SERVER_STARTUP_DEPS,
-): void {
-	deps.startHttpServerWithDeps(buildHttpServerDeps(runtime));
+): TransportHandles {
+	return startServeMode(runtime, deps);
 }
 
 export async function startDefaultMcpMode(
 	runtime: ServerStartupRuntime,
 	deps: ServerStartupDeps = DEFAULT_SERVER_STARTUP_DEPS,
-): Promise<void> {
-	await deps.startMcpServer(buildMcpServerDeps(runtime));
+): Promise<TransportHandles> {
+	const mcpServer = await deps.startMcpServer(buildMcpServerDeps(runtime));
+	return { mcpServer };
 }
 
 export async function startConfiguredMode(
 	runtime: ServerStartupRuntime,
 	mode: string | undefined,
 	deps: ServerStartupDeps = DEFAULT_SERVER_STARTUP_DEPS,
-): Promise<void> {
+): Promise<TransportHandles> {
 	if (mode === "serve") {
-		startServeMode(runtime, deps);
-		return;
+		return startServeMode(runtime, deps);
 	}
 
-	await startDefaultMcpMode(runtime, deps);
+	const mcp = await startDefaultMcpMode(runtime, deps);
 	if (mode === "--http") {
-		startHttpOnlyMode(runtime, deps);
+		return { ...mcp, ...startHttpOnlyMode(runtime, deps) };
 	}
+	return mcp;
 }

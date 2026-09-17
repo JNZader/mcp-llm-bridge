@@ -20,6 +20,19 @@ interface VaultLike {
 	destroy(): void;
 }
 
+export interface HttpServerHandle {
+	close(callback?: (error?: Error) => void): void;
+}
+
+export interface McpServerHandle {
+	close(): void | Promise<void>;
+}
+
+export interface TransportHandles {
+	httpServer?: HttpServerHandle;
+	mcpServer?: McpServerHandle;
+}
+
 type ProcessOn = (
 	event: ShutdownSignal,
 	listener: () => void | Promise<void>,
@@ -39,6 +52,7 @@ export interface ShutdownDeps {
 	vault: VaultLike;
 	cleanupAllProviderHomes: () => void;
 	shutdownTracing: () => Promise<void>;
+	transports?: TransportHandles;
 	processOn?: ProcessOn;
 	processExit?: ProcessExit;
 }
@@ -46,6 +60,21 @@ export interface ShutdownDeps {
 interface ShutdownFailure {
 	step: string;
 	error: unknown;
+}
+
+function closeHttpServer(server?: HttpServerHandle): Promise<void> {
+	if (!server) {
+		return Promise.resolve();
+	}
+	return new Promise((resolve, reject) => {
+		server.close((error) => {
+			if (error) {
+				reject(error);
+				return;
+			}
+			resolve();
+		});
+	});
 }
 
 /**
@@ -63,6 +92,7 @@ export async function setupGracefulShutdown({
 	vault,
 	cleanupAllProviderHomes,
 	shutdownTracing,
+	transports,
 	processOn = process.on.bind(process) as ProcessOn,
 	processExit = process.exit.bind(process) as ProcessExit,
 }: ShutdownDeps): Promise<void> {
@@ -86,6 +116,12 @@ export async function setupGracefulShutdown({
 			};
 
 			logger.info({ signal }, "Shutting down");
+			if (transports?.httpServer) {
+				await runStep("httpServer.close", () => closeHttpServer(transports.httpServer));
+			}
+			if (transports?.mcpServer) {
+				await runStep("mcpServer.close", () => transports.mcpServer?.close());
+			}
 			await runStep("compressor.destroy", () => compressor.destroy());
 			await runStep("latencyMeasurer.stopBackgroundTask", () =>
 				latencyMeasurer.stopBackgroundTask(),
