@@ -6,26 +6,26 @@ import { describe, it } from 'node:test';
 import type { Vault } from '../src/vault/vault.js';
 import { FakeCliChild } from './helpers/fake-cli-child.js';
 
-const originalExecFile = childProcess.execFile;
+const originalSpawn = childProcess.spawn;
 const originalExecFileSync = childProcess.execFileSync;
 const TOKEN_KEYS = ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'] as const;
 
 type ChildPlan = (child: FakeCliChild) => void;
 
-function replaceExecFile(value: unknown): void {
-  Object.defineProperty(childProcess, 'execFile', { configurable: true, value, writable: true });
+function replaceSpawn(value: unknown): void {
+  Object.defineProperty(childProcess, 'spawn', { configurable: true, value, writable: true });
   syncBuiltinESMExports();
 }
 
-function replaceExecFileSync(value: unknown): void {
+function replaceSpawnSync(value: unknown): void {
   Object.defineProperty(childProcess, 'execFileSync', { configurable: true, value, writable: true });
   syncBuiltinESMExports();
 }
 
 function restoreChildProcess(): void {
-  replaceExecFile(originalExecFile);
-  replaceExecFileSync(originalExecFileSync);
-  assert.strictEqual(childProcess.execFile, originalExecFile);
+  replaceSpawn(originalSpawn);
+  replaceSpawnSync(originalExecFileSync);
+  assert.strictEqual(childProcess.spawn, originalSpawn);
   assert.strictEqual(childProcess.execFileSync, originalExecFileSync);
 }
 
@@ -52,7 +52,7 @@ function makeVault(getDecrypted: () => string): Vault {
 function installPlans(plans: ChildPlan[]): { calls: unknown[][]; childCount: () => number } {
   const calls: unknown[][] = [];
   let count = 0;
-  replaceExecFile((...args: unknown[]) => {
+  replaceSpawn((...args: unknown[]) => {
     count += 1;
     calls.push(args);
     const plan = plans.shift();
@@ -74,8 +74,8 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
     let vaultCalls = 0;
     let asyncChildCalls = 0;
     let syncChildCalls = 0;
-    replaceExecFile(() => { asyncChildCalls += 1; return new FakeCliChild(); });
-    replaceExecFileSync(() => { syncChildCalls += 1; return ''; });
+    replaceSpawn(() => { asyncChildCalls += 1; return new FakeCliChild(); });
+    replaceSpawnSync(() => { syncChildCalls += 1; return ''; });
     try {
       const adapter = await makeAdapter(makeVault(() => { vaultCalls += 1; return 'synthetic-token'; }));
       const controller = new AbortController();
@@ -92,8 +92,8 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
   it('does not spawn after cancellation occurs during Vault return or Vault failure', async () => {
     const controller = new AbortController();
     let childCalls = 0;
-    replaceExecFile(() => { childCalls += 1; return new FakeCliChild(); });
-    replaceExecFileSync(() => { throw new Error('Copilot must not use synchronous execution'); });
+    replaceSpawn(() => { childCalls += 1; return new FakeCliChild(); });
+    replaceSpawnSync(() => { throw new Error('Copilot must not use synchronous execution'); });
     try {
       const returnAdapter = await makeAdapter(makeVault(() => {
         controller.abort('caller-secret');
@@ -115,8 +115,8 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
 
   it('keeps caller cancellation pending through close and never returns partial stdout', async () => {
     const child = new FakeCliChild();
-    replaceExecFile(() => child);
-    replaceExecFileSync(() => { throw new Error('Copilot must not use synchronous execution'); });
+    replaceSpawn(() => child);
+    replaceSpawnSync(() => { throw new Error('Copilot must not use synchronous execution'); });
     try {
       const adapter = await makeAdapter(makeVault(() => 'synthetic-token'));
       const controller = new AbortController();
@@ -141,8 +141,8 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
 
   it('checks cancellation after close before returning a successful response', async () => {
     const child = new FakeCliChild();
-    replaceExecFile(() => child);
-    replaceExecFileSync(() => { throw new Error('Copilot must not use synchronous execution'); });
+    replaceSpawn(() => child);
+    replaceSpawnSync(() => { throw new Error('Copilot must not use synchronous execution'); });
     try {
       const adapter = await makeAdapter(makeVault(() => 'synthetic-token'));
       const controller = new AbortController();
@@ -160,7 +160,7 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
   it('preserves exact arguments, defaults, environment aliases, and response metadata on success', async () => {
     for (const key of TOKEN_KEYS) assert.equal(process.env[key], undefined, `clean test environment must not predefine ${key}`);
     for (const [index, key] of TOKEN_KEYS.entries()) process.env[key] = `preinstalled-${index}`;
-    replaceExecFileSync(() => { throw new Error('Copilot must not use synchronous execution'); });
+    replaceSpawnSync(() => { throw new Error('Copilot must not use synchronous execution'); });
     const { calls, childCount } = installPlans([
       child => { child.emitStdout(' selected answer '); child.emitClose(0); },
       child => { child.emitStdout('default answer'); child.emitClose(0); },
@@ -203,7 +203,7 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
   it('keeps preinstalled synthetic aliases when Vault authentication fails', async () => {
     for (const key of TOKEN_KEYS) assert.equal(process.env[key], undefined, `clean test environment must not predefine ${key}`);
     for (const [index, key] of TOKEN_KEYS.entries()) process.env[key] = `preinstalled-${index}`;
-    replaceExecFileSync(() => { throw new Error('Copilot must not use synchronous execution'); });
+    replaceSpawnSync(() => { throw new Error('Copilot must not use synchronous execution'); });
     const { calls } = installPlans([child => { child.emitStdout('fallback answer'); child.emitClose(0); }]);
     try {
       const adapter = await makeAdapter(makeVault(() => { throw new Error('synthetic Vault failure'); }));
@@ -220,9 +220,9 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
   });
 
   it('preserves helper lifecycle classifications for deadline, external termination, and process errors', async (t) => {
-    replaceExecFileSync(() => { throw new Error('Copilot must not use synchronous execution'); });
+    replaceSpawnSync(() => { throw new Error('Copilot must not use synchronous execution'); });
     const timeoutChild = new FakeCliChild();
-    replaceExecFile(() => timeoutChild);
+    replaceSpawn(() => timeoutChild);
     t.mock.timers.enable({ apis: ['setTimeout'] });
     try {
       const adapter = await makeAdapter(makeVault(() => 'synthetic-token'));
@@ -235,7 +235,7 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
       await timeoutRejected;
 
       const externalChild = new FakeCliChild();
-      replaceExecFile(() => externalChild);
+      replaceSpawn(() => externalChild);
       const externallyTerminated = adapter.generate({ prompt: 'external termination' });
       const externalRejected = assert.rejects(externallyTerminated, (error: unknown) => assertFailure(error, 'termination'));
       externalChild.emitStdout('partial external stdout');
@@ -243,7 +243,7 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
       await externalRejected;
 
       const processErrorChild = new FakeCliChild();
-      replaceExecFile(() => processErrorChild);
+      replaceSpawn(() => processErrorChild);
       const processFailed = adapter.generate({ prompt: 'process error' });
       const processRejected = assert.rejects(processFailed, (error: unknown) => assertFailure(error, 'process_error', 'EPIPE'));
       processErrorChild.emitStdout('partial process stdout');

@@ -5,19 +5,19 @@ import { afterEach, describe, it } from 'node:test';
 
 import { FakeCliChild } from './helpers/fake-cli-child.js';
 
-const originalExecFile = childProcess.execFile;
+const originalSpawn = childProcess.spawn;
 const mutableChildProcess = childProcess as unknown as {
-  execFile: (...args: unknown[]) => unknown;
+  spawn: (...args: unknown[]) => unknown;
 };
 
 afterEach(() => {
-  mutableChildProcess.execFile = originalExecFile as unknown as (...args: unknown[]) => unknown;
+  mutableChildProcess.spawn = originalSpawn as unknown as (...args: unknown[]) => unknown;
   syncBuiltinESMExports();
-  assert.strictEqual(childProcess.execFile, originalExecFile);
+  assert.strictEqual(childProcess.spawn, originalSpawn);
 });
 
 function installChild(child: FakeCliChild): void {
-  mutableChildProcess.execFile = () => child;
+  mutableChildProcess.spawn = () => child;
   syncBuiltinESMExports();
 }
 
@@ -30,7 +30,7 @@ describe('execCliAsync lifecycle', () => {
   it('rejects caller cancellation without spawning an already-aborted command', async () => {
     const { execCliAsync } = await import('../src/adapters/cli-utils.js');
     let spawnCount = 0;
-    mutableChildProcess.execFile = () => {
+    mutableChildProcess.spawn = () => {
       spawnCount += 1;
       return new FakeCliChild();
     };
@@ -341,7 +341,7 @@ describe('execCliAsync lifecycle', () => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     try {
       let spawnCount = 0;
-      mutableChildProcess.execFile = () => {
+      mutableChildProcess.spawn = () => {
         spawnCount += 1;
         return new FakeCliChild();
       };
@@ -406,5 +406,23 @@ describe('execCliAsync lifecycle', () => {
     } finally {
       t.mock.timers.reset();
     }
+  });
+
+  it('spawns a detached process group off Windows', async () => {
+    const { execCliAsync } = await import('../src/adapters/cli-utils.js');
+    const calls: unknown[][] = [];
+    mutableChildProcess.spawn = (...args: unknown[]) => {
+      calls.push(args);
+      const child = new FakeCliChild();
+      queueMicrotask(() => child.emitClose(0));
+      return child;
+    };
+    syncBuiltinESMExports();
+    await execCliAsync('mock', ['--flag']);
+    assert.equal(calls[0]?.[0], 'mock');
+    assert.deepEqual(calls[0]?.[1], ['--flag']);
+    const options = calls[0]?.[2] as { detached?: boolean; stdio?: unknown };
+    assert.equal(options.detached, process.platform !== 'win32');
+    assert.deepEqual(options.stdio, ['pipe', 'pipe', 'pipe']);
   });
 });

@@ -6,16 +6,16 @@ import { describe, it } from 'node:test';
 import { DEFAULT_CLI_GENERATE_TIMEOUT_MS } from '../src/core/constants.js';
 import { FakeCliChild } from './helpers/fake-cli-child.js';
 
-const originalExecFile = childProcess.execFile;
+const originalSpawn = childProcess.spawn;
 
-function setExecFile(value: unknown): void {
-  Object.defineProperty(childProcess, 'execFile', { configurable: true, value, writable: true });
+function setSpawn(value: unknown): void {
+  Object.defineProperty(childProcess, 'spawn', { configurable: true, value, writable: true });
   syncBuiltinESMExports();
 }
 
-function restoreExecFile(): void {
-  setExecFile(originalExecFile);
-  assert.strictEqual(childProcess.execFile, originalExecFile);
+function restoreSpawn(): void {
+  setSpawn(originalSpawn);
+  assert.strictEqual(childProcess.spawn, originalSpawn);
 }
 
 async function adapters() {
@@ -50,7 +50,7 @@ describe('Base and OpenCode asynchronous recovery boundaries', () => {
   it('rejects an OpenCode pre-abort before Vault or child execution', async () => {
     let vaultCalls = 0;
     let childCalls = 0;
-    setExecFile(() => { childCalls += 1; return new FakeCliChild(); });
+    setSpawn(() => { childCalls += 1; return new FakeCliChild(); });
     try {
       const { CliOpenCodeAdapter } = await import('../src/adapters/cli-opencode.js');
       const vault = Object.create(null);
@@ -67,14 +67,14 @@ describe('Base and OpenCode asynchronous recovery boundaries', () => {
       assert.equal(vaultCalls, 0);
       assert.equal(childCalls, 0);
     } finally {
-      restoreExecFile();
+      restoreSpawn();
     }
   });
 
   it('uses a real helper deadline for Base timeout and preserves OpenCode legacy ETIMEDOUT behavior', async (t) => {
     const { base, openCode } = await adapters();
     const timeoutChild = new FakeCliChild();
-    setExecFile(() => timeoutChild);
+    setSpawn(() => timeoutChild);
     t.mock.timers.enable({ apis: ['setTimeout'] });
     try {
       const timedOut = base.generate({ prompt: 'deadline' });
@@ -89,7 +89,7 @@ describe('Base and OpenCode asynchronous recovery boundaries', () => {
       timeoutChild.emitClose(0);
       await timeoutRejected;
 
-      setExecFile(makeSpawner([child => {
+      setSpawn(makeSpawner([child => {
         child.emitStdout('{"type":"text","part":{"text":"OPEN_PARTIAL_SENTINEL"}}\n');
         child.emitProcessError(Object.assign(new Error('source-message-sentinel argv-secret env-secret'), { code: 'ETIMEDOUT' }));
         child.emitClose(1);
@@ -103,13 +103,13 @@ describe('Base and OpenCode asynchronous recovery boundaries', () => {
       await legacyRejected;
     } finally {
       t.mock.timers.reset();
-      restoreExecFile();
+      restoreSpawn();
     }
   });
 
   it('keeps Base generic for process errors even when their original code is ETIMEDOUT', async () => {
     const { base, openCode } = await adapters();
-    setExecFile(makeSpawner([
+    setSpawn(makeSpawner([
       child => {
         child.emitStdout('BASE_PROCESS_PARTIAL');
         child.emitProcessError(Object.assign(new Error('base process sentinel'), { code: 'ETIMEDOUT' }));
@@ -135,13 +135,13 @@ describe('Base and OpenCode asynchronous recovery boundaries', () => {
         return true;
       });
     } finally {
-      restoreExecFile();
+      restoreSpawn();
     }
   });
 
   it('retains exact success, ordinary EXIT recovery, message-only behavior, generic failure, and parser diagnostics', async () => {
     const { base, openCode } = await adapters();
-    setExecFile(makeSpawner([
+    setSpawn(makeSpawner([
       child => { child.emitStdout('BASE_SUCCESS_SENTINEL'); child.emitClose(0); },
       child => { child.emitStdout('{"type":"text","part":{"text":"OPEN_SUCCESS_SENTINEL"}}\n'); child.emitClose(0); },
       child => { child.emitStdout('BASE_RECOVERED_SENTINEL'); child.emitClose(1); },
@@ -181,7 +181,7 @@ describe('Base and OpenCode asynchronous recovery boundaries', () => {
       await assert.rejects(openCode.generate({ prompt: 'open generic' }), { message: 'OpenCode CLI failed: CLI process error' });
       await assert.rejects(base.generate({ prompt: 'structured failure' }), /Test Base CLI failed: structured parser failure sentinel/);
     } finally {
-      restoreExecFile();
+      restoreSpawn();
     }
   });
 });

@@ -21,8 +21,10 @@ function completeFakeChild(child: FakeCliChild, signal: NodeJS.Signals): void {
 
 describe('HTTP generate deadline cancellation', () => {
   it('kills the CLI child when the HTTP deadline fires and returns 408', async () => {
+    const originalSpawn = childProcess.spawn;
     const originalExecFile = childProcess.execFile;
     const mutableChildProcess = childProcess as unknown as {
+      spawn: (...args: unknown[]) => unknown;
       execFile: (...args: unknown[]) => unknown;
     };
     const originalNodeEnv = process.env.NODE_ENV;
@@ -42,7 +44,7 @@ describe('HTTP generate deadline cancellation', () => {
       return result;
     };
 
-    mutableChildProcess.execFile = (command: unknown, args: unknown) => {
+    const fakeOpenCode = (command: unknown, args: unknown) => {
       const isOpenCodeProbe = command === 'opencode'
         && Array.isArray(args)
         && args[0] === '--version';
@@ -54,6 +56,8 @@ describe('HTTP generate deadline cancellation', () => {
       markChildStarted?.();
       return child;
     };
+    mutableChildProcess.execFile = fakeOpenCode;
+    mutableChildProcess.spawn = fakeOpenCode;
     process.env.NODE_ENV = 'production';
     process.env.LOG_LEVEL = 'silent';
     process.env.GENERATE_HTTP_TIMEOUT_MS = '80';
@@ -137,6 +141,7 @@ describe('HTTP generate deadline cancellation', () => {
           server?.close((error) => error ? reject(error) : resolve());
         });
       }
+      mutableChildProcess.spawn = originalSpawn as unknown as (...args: unknown[]) => unknown;
       mutableChildProcess.execFile = originalExecFile as unknown as (...args: unknown[]) => unknown;
       syncBuiltinESMExports();
       if (originalNodeEnv === undefined) delete process.env.NODE_ENV;

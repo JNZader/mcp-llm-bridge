@@ -33,7 +33,7 @@ describe('request-owned CLI homes', () => {
     const originalExistsSync = fs.existsSync;
     const originalReaddirSync = fs.readdirSync;
     const originalExecFileSync = childProcess.execFileSync;
-    const originalExecFile = childProcess.execFile;
+    const originalSpawn = childProcess.spawn;
     const supervisorTmp = process.env.TMPDIR ?? tmpdir();
     const suiteRoot = originalMkdtempSync(join(supervisorTmp, 'cli-home-request-ownership-'));
     const routedRoot = join(suiteRoot, 'llm-gw');
@@ -161,7 +161,7 @@ describe('request-owned CLI homes', () => {
       Object.defineProperty(childProcess, 'execFileSync', { configurable: true, writable: true, value: () => {
         throw new Error('Base must not use sync execution');
       } });
-      Object.defineProperty(childProcess, 'execFile', { configurable: true, writable: true, value: (...args: unknown[]) => {
+      Object.defineProperty(childProcess, 'spawn', { configurable: true, writable: true, value: (...args: unknown[]) => {
         const options = args[2];
         assert.ok(typeof options === 'object' && options !== null);
         const env = Reflect.get(options, 'env');
@@ -283,7 +283,7 @@ describe('request-owned CLI homes', () => {
       for (const cleanup of cleanupActions.reverse()) cleanup();
       cleanupAllProviderHomes();
       Object.defineProperty(childProcess, 'execFileSync', { configurable: true, value: originalExecFileSync, writable: true });
-      Object.defineProperty(childProcess, 'execFile', { configurable: true, value: originalExecFile, writable: true });
+      Object.defineProperty(childProcess, 'spawn', { configurable: true, value: originalSpawn, writable: true });
       Object.defineProperty(fs, 'mkdirSync', { configurable: true, value: originalMkdirSync, writable: true });
       Object.defineProperty(fs, 'mkdtempSync', { configurable: true, value: originalMkdtempSync, writable: true });
       Object.defineProperty(fs, 'chmodSync', { configurable: true, value: originalChmodSync, writable: true });

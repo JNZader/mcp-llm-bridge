@@ -41,8 +41,10 @@ describe('HTTP request cancellation', () => {
   });
 
   it('terminates the controlled OpenCode child and does not fall back after a real client disconnect', async () => {
+    const originalSpawn = childProcess.spawn;
     const originalExecFile = childProcess.execFile;
     const mutableChildProcess = childProcess as unknown as {
+      spawn: (...args: unknown[]) => unknown;
       execFile: (...args: unknown[]) => unknown;
     };
     const originalNodeEnv = process.env.NODE_ENV;
@@ -69,7 +71,7 @@ describe('HTTP request cancellation', () => {
       return result;
     };
 
-    mutableChildProcess.execFile = (command: unknown, args: unknown) => {
+    const fakeOpenCode = (command: unknown, args: unknown) => {
       const isOpenCodeProbe = command === 'opencode'
         && Array.isArray(args)
         && args.length === 1
@@ -96,6 +98,8 @@ describe('HTTP request cancellation', () => {
       markChildStarted?.();
       return child;
     };
+    mutableChildProcess.execFile = fakeOpenCode;
+    mutableChildProcess.spawn = fakeOpenCode;
     process.env.NODE_ENV = 'production';
     process.env.LOG_LEVEL = 'silent';
     syncBuiltinESMExports();
@@ -188,6 +192,7 @@ describe('HTTP request cancellation', () => {
           server?.close((error) => error ? reject(error) : resolve());
         });
       }
+      mutableChildProcess.spawn = originalSpawn as unknown as (...args: unknown[]) => unknown;
       mutableChildProcess.execFile = originalExecFile as unknown as (...args: unknown[]) => unknown;
       syncBuiltinESMExports();
       if (originalNodeEnv === undefined) delete process.env.NODE_ENV;

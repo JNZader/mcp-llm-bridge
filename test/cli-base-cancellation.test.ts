@@ -7,23 +7,23 @@ import { describe, it } from 'node:test';
 import { DEFAULT_CLI_GENERATE_TIMEOUT_MS } from '../src/core/constants.js';
 import { FakeCliChild } from './helpers/fake-cli-child.js';
 
-const originalExecFile = childProcess.execFile;
+const originalSpawn = childProcess.spawn;
 const originalExecFileSync = childProcess.execFileSync;
 
-function replaceExecFile(value: unknown): void {
-  Object.defineProperty(childProcess, 'execFile', { configurable: true, value, writable: true });
+function replaceSpawn(value: unknown): void {
+  Object.defineProperty(childProcess, 'spawn', { configurable: true, value, writable: true });
   syncBuiltinESMExports();
 }
 
-function replaceExecFileSync(value: unknown): void {
+function replaceSpawnSync(value: unknown): void {
   Object.defineProperty(childProcess, 'execFileSync', { configurable: true, value, writable: true });
   syncBuiltinESMExports();
 }
 
 function restoreChildProcess(): void {
-  replaceExecFile(originalExecFile);
-  replaceExecFileSync(originalExecFileSync);
-  assert.strictEqual(childProcess.execFile, originalExecFile);
+  replaceSpawn(originalSpawn);
+  replaceSpawnSync(originalExecFileSync);
+  assert.strictEqual(childProcess.spawn, originalSpawn);
   assert.strictEqual(childProcess.execFileSync, originalExecFileSync);
 }
 
@@ -55,7 +55,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
   it('rejects a pre-aborted request before Vault and child execution', async () => {
     let vaultCalls = 0;
     let childCalls = 0;
-    replaceExecFile(() => { childCalls += 1; return new FakeCliChild(); });
+    replaceSpawn(() => { childCalls += 1; return new FakeCliChild(); });
     try {
       const adapter = await makeAdapter(() => { vaultCalls += 1; return []; });
       const controller = new AbortController();
@@ -88,7 +88,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
       }
       return Reflect.apply(original, fs, args);
     };
-    replaceExecFile(() => { childCalls += 1; return new FakeCliChild(); });
+    replaceSpawn(() => { childCalls += 1; return new FakeCliChild(); });
     Object.defineProperty(fs, 'mkdirSync', { configurable: true, value: denyProviderRoot(originals.mkdirSync), writable: true });
     Object.defineProperty(fs, 'mkdtempSync', { configurable: true, value: denyProviderRoot(originals.mkdtempSync), writable: true });
     Object.defineProperty(fs, 'chmodSync', { configurable: true, value: denyProviderRoot(originals.chmodSync), writable: true });
@@ -116,7 +116,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
 
   it('keeps an active cancellation pending until close and never recovers partial stdout', async () => {
     const child = new FakeCliChild();
-    replaceExecFile(() => child);
+    replaceSpawn(() => child);
     try {
       const adapter = await makeAdapter();
       const controller = new AbortController();
@@ -141,7 +141,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
 
   it('checks the caller signal again after async close before parsing output', async () => {
     const child = new FakeCliChild();
-    replaceExecFile(() => child);
+    replaceSpawn(() => child);
     try {
       const adapter = await makeAdapter();
       const controller = new AbortController();
@@ -158,7 +158,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
 
   it('maps only the internal default deadline to the exact timeout message', async (t) => {
     const child = new FakeCliChild();
-    replaceExecFile(() => child);
+    replaceSpawn(() => child);
     t.mock.timers.enable({ apis: ['setTimeout'] });
     try {
       const adapter = await makeAdapter();
@@ -176,7 +176,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
       await timeoutRejected;
 
       const external = new FakeCliChild();
-      replaceExecFile(() => external);
+      replaceSpawn(() => external);
       const externalPending = adapter.generate({ prompt: 'external termination' });
       const externalRejected = assert.rejects(externalPending, (error: unknown) => {
         assert.ok(error instanceof Error);
@@ -196,7 +196,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
   it('preserves commands, system prompts, supplied environment, and response metadata on success', async () => {
     const child = new FakeCliChild();
     const calls: unknown[][] = [];
-    replaceExecFile((...args: unknown[]) => { calls.push(args); queueMicrotask(() => { child.emitStdout('answer'); child.emitClose(0); }); return child; });
+    replaceSpawn((...args: unknown[]) => { calls.push(args); queueMicrotask(() => { child.emitStdout('answer'); child.emitClose(0); }); return child; });
     try {
       const adapter = await makeAdapter();
       const response = await adapter.generate({ prompt: 'user', system: 'system', model: 'chosen-model' });
@@ -219,7 +219,7 @@ describe('BaseCliAdapter asynchronous cancellation', () => {
 
   it('lets all inherited concrete adapters reject pre-abort without Vault or child execution', async () => {
     let childCalls = 0;
-    replaceExecFile(() => { childCalls += 1; return new FakeCliChild(); });
+    replaceSpawn(() => { childCalls += 1; return new FakeCliChild(); });
     try {
       const [{ ClaudeCliAdapter }, { CodexCliAdapter }, { QwenCliAdapter }, { AntigravityCliAdapter }] = await Promise.all([
         import('../src/adapters/cli-claude.js'), import('../src/adapters/cli-codex.js'),

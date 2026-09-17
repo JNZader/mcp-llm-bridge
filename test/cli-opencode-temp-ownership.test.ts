@@ -36,7 +36,7 @@ function rejectedMessage(outcome: Outcome): string {
 describe('OpenCode temporary auth directory ownership', () => {
   it('keeps request-owned roots until each async child reaches a classified close', async () => {
     const originals = {
-      execFile: childProcess.execFile,
+      spawn: childProcess.spawn,
       execFileSync: childProcess.execFileSync,
       mkdtempSync: fs.mkdtempSync,
       mkdirSync: fs.mkdirSync,
@@ -45,7 +45,7 @@ describe('OpenCode temporary auth directory ownership', () => {
       xdgDataHome: process.env.XDG_DATA_HOME,
     };
     const mutableChildProcess = childProcess as unknown as {
-      execFile: (...args: unknown[]) => unknown;
+      spawn: (...args: unknown[]) => unknown;
       execFileSync: (...args: unknown[]) => unknown;
     };
     const mutableFs = fs as unknown as {
@@ -80,7 +80,7 @@ describe('OpenCode temporary auth directory ownership', () => {
     mutableChildProcess.execFileSync = () => {
       throw new Error('OpenCode must not execute synchronously');
     };
-    mutableChildProcess.execFile = (...args: unknown[]) => {
+    mutableChildProcess.spawn = (...args: unknown[]) => {
       calls.exec.push(args);
       const child = new FakeCliChild();
       children.push(child);
@@ -222,7 +222,7 @@ describe('OpenCode temporary auth directory ownership', () => {
       assert.equal((await settle(() => terminated)).status, 'rejected');
       assert.deepEqual(calls.remove, [['/memory/terminated', { recursive: true, force: true }]]);
     } finally {
-      mutableChildProcess.execFile = originals.execFile as unknown as (...args: unknown[]) => unknown;
+      mutableChildProcess.spawn = originals.spawn as unknown as (...args: unknown[]) => unknown;
       mutableChildProcess.execFileSync = originals.execFileSync as unknown as (...args: unknown[]) => unknown;
       mutableFs.mkdtempSync = originals.mkdtempSync as unknown as (...args: unknown[]) => unknown;
       mutableFs.mkdirSync = originals.mkdirSync as unknown as (...args: unknown[]) => unknown;
@@ -231,7 +231,7 @@ describe('OpenCode temporary auth directory ownership', () => {
       if (originals.xdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originals.xdgDataHome;
       syncBuiltinESMExports();
-      assert.strictEqual(childProcess.execFile, originals.execFile);
+      assert.strictEqual(childProcess.spawn, originals.spawn);
       assert.strictEqual(childProcess.execFileSync, originals.execFileSync);
       assert.strictEqual(fs.mkdtempSync, originals.mkdtempSync);
       assert.strictEqual(fs.mkdirSync, originals.mkdirSync);
