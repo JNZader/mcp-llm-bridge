@@ -176,10 +176,10 @@ describe('CopilotCliAdapter asynchronous cancellation', () => {
       assert.equal(selectedArgs[0], '-p');
       assert.equal(typeof selectedArgs[1], 'string');
       assert.match(selectedArgs[1] as string, /^@\S*mcp-copilot-prompt-/);
-      assert.deepEqual(selectedArgs.slice(2), ['--model', 'chosen-model', '--allow-all-tools']);
+      assert.deepEqual(selectedArgs.slice(2), ['--model', 'chosen-model', '--allow-all-tools', '--deny-tool=shell', '--deny-tool=write', '--disable-builtin-mcps']);
       assert.equal(defaultArgs[0], '-p');
       assert.match(defaultArgs[1] as string, /^@\S*mcp-copilot-prompt-/);
-      assert.deepEqual(defaultArgs.slice(2), ['--model', 'gpt-4.1', '--allow-all-tools']);
+      assert.deepEqual(defaultArgs.slice(2), ['--model', 'gpt-4.1', '--allow-all-tools', '--deny-tool=shell', '--deny-tool=write', '--disable-builtin-mcps']);
       const options = calls[0]?.[2];
       assert.ok(typeof options === 'object' && options !== null);
       const env = Reflect.get(options, 'env');

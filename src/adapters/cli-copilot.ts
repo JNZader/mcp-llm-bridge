@@ -22,7 +22,17 @@ import {
 } from './cli-utils.js';
 
 export function buildCopilotGenerateArgs(model: string, promptFilePath: string): string[] {
-  return ['-p', `@${promptFilePath}`, '--model', model, '--allow-all-tools'];
+  // `--allow-all-tools` is required for non-interactive `-p` (otherwise Copilot
+  // waits on a TTY). Deny shell/write and disable built-in MCPs so generate
+  // cannot run host commands or GitHub MCP tools with the injected token.
+  return [
+    '-p', `@${promptFilePath}`,
+    '--model', model,
+    '--allow-all-tools',
+    '--deny-tool=shell',
+    '--deny-tool=write',
+    '--disable-builtin-mcps',
+  ];
 }
 
 export class CopilotCliAdapter implements LLMProvider {
