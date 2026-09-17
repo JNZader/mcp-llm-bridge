@@ -2,7 +2,7 @@
  * CLI utility helpers for subprocess execution.
  */
 
-import { execFileSync, execFile } from 'node:child_process';
+import childProcess, { execFileSync, execFile, type ChildProcess } from 'node:child_process';
 import { sanitizeErrorMessage } from '../security/sanitize.js';
 import { createGenerationAbortError } from '../core/generation-cancellation.js';
 
@@ -161,7 +161,7 @@ type CliTerminationCause = (typeof CLI_TERMINATION_CAUSE)[keyof typeof CLI_TERMI
 export type CliFailureKind = (typeof CLI_FAILURE_KIND)[keyof typeof CLI_FAILURE_KIND];
 
 /**
- * Execute a CLI command asynchronously using execFile.
+ * Execute a CLI command asynchronously using spawn (detached process group).
  * Uses array accumulation to avoid O(n²) string concatenation.
  *
  * @param command - The CLI binary name
@@ -230,12 +230,12 @@ export async function execCliAsync(
       forceKillTimer = undefined;
     };
 
-    let child: ReturnType<typeof execFile>;
+    let child: ChildProcess;
     try {
-      child = execFile(command, args, {
-        maxBuffer,
-        encoding: 'utf8',
+      child = childProcess.spawn(command, args, {
         env: env ?? process.env as Record<string, string>,
+        detached: process.platform !== 'win32',
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (error) {
       recordProcessError(error instanceof Error ? error : new Error(String(error)));
@@ -246,18 +246,19 @@ export async function execCliAsync(
     }
 
     const killProcessTree = (signal: NodeJS.Signals): void => {
+      const pid = child.pid;
+      if (typeof pid === 'number' && pid > 0 && process.platform !== 'win32') {
+        try {
+          process.kill(-pid, signal);
+          return;
+        } catch {
+          /* Not a process-group leader (tests, already reaped). */
+        }
+      }
       try {
         child.kill(signal);
       } catch (error) {
         recordProcessError(error instanceof Error ? error : new Error(String(error)));
-      }
-      const pid = child.pid;
-      if (typeof pid === 'number' && pid > 0) {
-        try {
-          process.kill(pid, signal);
-        } catch {
-          /* Direct child may already be gone; grandchildren can outlive it. */
-        }
       }
     };
 
@@ -288,7 +289,12 @@ export async function execCliAsync(
     };
 
     if (child.stdout) {
-      child.stdout.on('data', (data: Buffer) => stdoutParts.push(data.toString()));
+      child.stdout.on('data', (data: Buffer) => {
+        stdoutParts.push(data.toString());
+        if (stdoutParts.join('').length > maxBuffer) {
+          killProcessTree('SIGKILL');
+        }
+      });
     }
     if (child.stderr) {
       child.stderr.on('data', (data: Buffer) => stderrParts.push(data.toString()));

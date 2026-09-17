@@ -6,27 +6,27 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import type { Vault } from '../src/vault/vault.js';
 import { FakeCliChild } from './helpers/fake-cli-child.js';
 
-const originalExecFile = childProcess.execFile;
+const originalSpawn = childProcess.spawn;
 const originalExecFileSync = childProcess.execFileSync;
 
-function replaceExecFile(value: unknown): void {
-  Object.defineProperty(childProcess, 'execFile', { configurable: true, value, writable: true });
+function replaceSpawn(value: unknown): void {
+  Object.defineProperty(childProcess, 'spawn', { configurable: true, value, writable: true });
   syncBuiltinESMExports();
 }
 
-function replaceExecFileSync(value: unknown): void {
+function replaceSpawnSync(value: unknown): void {
   Object.defineProperty(childProcess, 'execFileSync', { configurable: true, value, writable: true });
   syncBuiltinESMExports();
 }
 
 function restoreChildProcess(): void {
-  replaceExecFile(originalExecFile);
-  replaceExecFileSync(originalExecFileSync);
+  replaceSpawn(originalSpawn);
+  replaceSpawnSync(originalExecFileSync);
 }
 
 const children: FakeCliChild[] = [];
-replaceExecFileSync(() => { throw new Error('OpenCode must not execute synchronously'); });
-replaceExecFile(() => {
+replaceSpawnSync(() => { throw new Error('OpenCode must not execute synchronously'); });
+replaceSpawn(() => {
   const child = new FakeCliChild();
   children.push(child);
   return child;
