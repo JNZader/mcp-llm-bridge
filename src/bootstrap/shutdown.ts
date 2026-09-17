@@ -20,8 +20,11 @@ interface VaultLike {
 	destroy(): void;
 }
 
+const DEFAULT_SHUTDOWN_DRAIN_MS = 5_000;
+
 export interface HttpServerHandle {
 	close(callback?: (error?: Error) => void): void;
+	closeAllConnections?(): void;
 }
 
 export interface McpServerHandle {
@@ -53,6 +56,7 @@ export interface ShutdownDeps {
 	cleanupAllProviderHomes: () => void;
 	shutdownTracing: () => Promise<void>;
 	transports?: TransportHandles;
+	drainMs?: number;
 	processOn?: ProcessOn;
 	processExit?: ProcessExit;
 }
@@ -62,19 +66,62 @@ interface ShutdownFailure {
 	error: unknown;
 }
 
-function closeHttpServer(server?: HttpServerHandle): Promise<void> {
-	if (!server) {
-		return Promise.resolve();
+export function resolveShutdownDrainMs(
+	raw: string | undefined = process.env.SHUTDOWN_DRAIN_MS,
+): number {
+	if (raw === undefined || raw === "") {
+		return DEFAULT_SHUTDOWN_DRAIN_MS;
 	}
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		return DEFAULT_SHUTDOWN_DRAIN_MS;
+	}
+	return parsed;
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+}
+
+function closeHttpServer(server: HttpServerHandle, drainMs: number): Promise<void> {
 	return new Promise((resolve, reject) => {
-		server.close((error) => {
+		let settled = false;
+		const done = (error?: Error) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			clearTimeout(timer);
 			if (error) {
 				reject(error);
 				return;
 			}
 			resolve();
+		};
+		const timer = setTimeout(() => {
+			logger.warn({ drainMs }, "HTTP drain exceeded; closing remaining connections");
+			server.closeAllConnections?.();
+			done();
+		}, drainMs);
+		server.close((error) => {
+			done(error);
 		});
 	});
+}
+
+async function closeMcpServer(server: McpServerHandle, drainMs: number): Promise<void> {
+	let timedOut = false;
+	await Promise.race([
+		Promise.resolve(server.close()),
+		delay(drainMs).then(() => {
+			timedOut = true;
+		}),
+	]);
+	if (timedOut) {
+		logger.warn({ drainMs }, "MCP drain exceeded; continuing shutdown");
+	}
 }
 
 /**
@@ -93,6 +140,7 @@ export async function setupGracefulShutdown({
 	cleanupAllProviderHomes,
 	shutdownTracing,
 	transports,
+	drainMs = resolveShutdownDrainMs(),
 	processOn = process.on.bind(process) as ProcessOn,
 	processExit = process.exit.bind(process) as ProcessExit,
 }: ShutdownDeps): Promise<void> {
@@ -117,10 +165,14 @@ export async function setupGracefulShutdown({
 
 			logger.info({ signal }, "Shutting down");
 			if (transports?.httpServer) {
-				await runStep("httpServer.close", () => closeHttpServer(transports.httpServer));
+				await runStep("httpServer.close", () =>
+					closeHttpServer(transports.httpServer as HttpServerHandle, drainMs),
+				);
 			}
 			if (transports?.mcpServer) {
-				await runStep("mcpServer.close", () => transports.mcpServer?.close());
+				await runStep("mcpServer.close", () =>
+					closeMcpServer(transports.mcpServer as McpServerHandle, drainMs),
+				);
 			}
 			await runStep("compressor.destroy", () => compressor.destroy());
 			await runStep("latencyMeasurer.stopBackgroundTask", () =>

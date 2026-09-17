@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 
-import { setupGracefulShutdown } from "../../src/bootstrap/shutdown.js";
+import {
+	resolveShutdownDrainMs,
+	setupGracefulShutdown,
+} from "../../src/bootstrap/shutdown.js";
 
 describe("setupGracefulShutdown", () => {
 	it("registers SIGINT and SIGTERM handlers", async () => {
@@ -125,6 +128,121 @@ describe("setupGracefulShutdown", () => {
 			"mcpServer.close",
 			"compressor.destroy",
 		]);
+	});
+
+	it("force-closes hanging HTTP connections after the drain window", async () => {
+		const events: string[] = [];
+		const listeners = new Map<string, () => void | Promise<void>>();
+
+		await setupGracefulShutdown({
+			compressor: { destroy: () => void events.push("compressor.destroy") },
+			latencyMeasurer: { stopBackgroundTask: () => undefined },
+			freeModelRouter: { destroy: () => undefined },
+			costTracker: { destroy: () => undefined },
+			analyticsAggregator: { destroy: () => undefined },
+			groupStore: { close: () => undefined },
+			sessionManager: { destroy: () => undefined },
+			vault: { destroy: () => undefined },
+			cleanupAllProviderHomes: () => undefined,
+			shutdownTracing: async () => undefined,
+			drainMs: 20,
+			transports: {
+				httpServer: {
+					close: () => {
+						events.push("httpServer.close");
+					},
+					closeAllConnections: () => {
+						events.push("httpServer.closeAllConnections");
+					},
+				},
+			},
+			processOn: (signal, listener) => {
+				listeners.set(signal, listener);
+			},
+			processExit: () => undefined,
+		});
+
+		await listeners.get("SIGTERM")?.();
+		assert.deepEqual(events, [
+			"httpServer.close",
+			"httpServer.closeAllConnections",
+			"compressor.destroy",
+		]);
+	});
+
+	it("does not force-close HTTP when close finishes inside the drain window", async () => {
+		const events: string[] = [];
+		const listeners = new Map<string, () => void | Promise<void>>();
+
+		await setupGracefulShutdown({
+			compressor: { destroy: () => void events.push("compressor.destroy") },
+			latencyMeasurer: { stopBackgroundTask: () => undefined },
+			freeModelRouter: { destroy: () => undefined },
+			costTracker: { destroy: () => undefined },
+			analyticsAggregator: { destroy: () => undefined },
+			groupStore: { close: () => undefined },
+			sessionManager: { destroy: () => undefined },
+			vault: { destroy: () => undefined },
+			cleanupAllProviderHomes: () => undefined,
+			shutdownTracing: async () => undefined,
+			drainMs: 50,
+			transports: {
+				httpServer: {
+					close: (callback?: (error?: Error) => void) => {
+						events.push("httpServer.close");
+						callback?.();
+					},
+					closeAllConnections: () => {
+						events.push("httpServer.closeAllConnections");
+					},
+				},
+			},
+			processOn: (signal, listener) => {
+				listeners.set(signal, listener);
+			},
+			processExit: () => undefined,
+		});
+
+		await listeners.get("SIGTERM")?.();
+		assert.deepEqual(events, ["httpServer.close", "compressor.destroy"]);
+	});
+
+	it("continues shutdown when MCP close exceeds the drain window", async () => {
+		const events: string[] = [];
+		const listeners = new Map<string, () => void | Promise<void>>();
+
+		await setupGracefulShutdown({
+			compressor: { destroy: () => void events.push("compressor.destroy") },
+			latencyMeasurer: { stopBackgroundTask: () => undefined },
+			freeModelRouter: { destroy: () => undefined },
+			costTracker: { destroy: () => undefined },
+			analyticsAggregator: { destroy: () => undefined },
+			groupStore: { close: () => undefined },
+			sessionManager: { destroy: () => undefined },
+			vault: { destroy: () => undefined },
+			cleanupAllProviderHomes: () => undefined,
+			shutdownTracing: async () => undefined,
+			drainMs: 20,
+			transports: {
+				mcpServer: {
+					close: () => new Promise(() => undefined),
+				},
+			},
+			processOn: (signal, listener) => {
+				listeners.set(signal, listener);
+			},
+			processExit: () => undefined,
+		});
+
+		await listeners.get("SIGTERM")?.();
+		assert.deepEqual(events, ["compressor.destroy"]);
+	});
+
+	it("resolveShutdownDrainMs defaults to 5000 and rejects invalid env", () => {
+		assert.equal(resolveShutdownDrainMs(undefined), 5_000);
+		assert.equal(resolveShutdownDrainMs("2500"), 2_500);
+		assert.equal(resolveShutdownDrainMs("-1"), 5_000);
+		assert.equal(resolveShutdownDrainMs("nope"), 5_000);
 	});
 
 	it("does not re-run teardown when shutdown is triggered more than once", async () => {
