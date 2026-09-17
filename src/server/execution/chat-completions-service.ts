@@ -198,11 +198,7 @@ async function finalizeNonStreamingSuccess(
 	logger: ReturnType<typeof createNonStreamingLogger>,
 	result: NonStreamingChatResult,
 ) {
-	if (!logger.logCtx || !logger.requestLogger) {
-		return;
-	}
-
-	await logger.requestLogger.captureEnd(logger.logCtx, {
+	await captureEndSafely(logger, {
 		provider: result.resolvedProvider,
 		model: result.resolvedModel,
 		totalTokens: result.tokensUsed,
@@ -217,14 +213,25 @@ async function finalizeNonStreamingFailure(
 	logger: ReturnType<typeof createNonStreamingLogger>,
 	error: unknown,
 ) {
+	await captureEndSafely(logger, {
+		attempts: 1,
+		error: sanitizeError(error),
+	});
+}
+
+async function captureEndSafely(
+	logger: ReturnType<typeof createNonStreamingLogger>,
+	input: Parameters<NonNullable<RequestLogger["captureEnd"]>>[1],
+) {
 	if (!logger.logCtx || !logger.requestLogger) {
 		return;
 	}
 
-	await logger.requestLogger.captureEnd(logger.logCtx, {
-		attempts: 1,
-		error: sanitizeError(error),
-	});
+	try {
+		await logger.requestLogger.captureEnd(logger.logCtx, input);
+	} catch {
+		// Logging must not fail a successful chat response or replace the original error.
+	}
 }
 
 function buildNonStreamingChatResponse(input: {

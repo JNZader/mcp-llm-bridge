@@ -510,6 +510,66 @@ describe("chat-completions-service", () => {
 		assert.match(loggedError.message, /Bearer \[REDACTED\]/);
 	});
 
+	it("returns the chat result even if captureEnd throws after success", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+
+		const response = await executeNonStreamingChatCompletions({
+			prepared,
+			scope: {},
+			createChatCompletionId: () => "chatcmpl-test",
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "gpt-4o-mini", startTime: 0 }) as never,
+				captureEnd: async () => {
+					throw new Error("log failed");
+				},
+			} as never,
+			router: {
+				generateFromInternal: async () => ({
+					content: "ok",
+					model: "gpt-4o-mini",
+					usage: { totalTokens: 1 },
+					metadata: {
+						provider: "mock-provider",
+						resolvedProvider: "mock-provider",
+						resolvedModel: "gpt-4o-mini",
+					},
+				}),
+			} as never,
+		});
+
+		assert.equal(response.choices[0]?.message.content, "ok");
+	});
+
+	it("rethrows the router error when captureEnd fails on the error path", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+		const failure = new Error("chat blew up");
+
+		await assert.rejects(
+			() => executeNonStreamingChatCompletions({
+				prepared,
+				scope: {},
+				requestLogger: {
+					captureStart: () => ({}) as never,
+					captureEnd: async () => {
+						throw new Error("log failed");
+					},
+				} as never,
+				router: {
+					generateFromInternal: async () => {
+						throw failure;
+					},
+				} as never,
+			}),
+			failure,
+		);
+	});
+
 	it("bounds large responses in the request log without changing the API result", async () => {
 		const prepared = prepareChatCompletionsRequest({
 			model: "gpt-4o-mini",

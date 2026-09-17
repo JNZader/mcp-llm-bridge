@@ -60,26 +60,38 @@ export async function executeGenerateRequest(
 			await router.generate(prepareGenerateRequest(validated, scope), { signal: abortSignal }),
 		);
 
-		if (logCtx && requestLogger) {
-			await requestLogger.captureEnd(logCtx, {
-				provider: result.resolvedProvider,
-				model: result.resolvedModel,
-				totalTokens: result.tokensUsed,
-				attempts: resolveAttemptsFromRouting(result),
-				responseData: serializeLogPayload(result),
-			});
-		}
+		await captureEndSafely(requestLogger, logCtx, {
+			provider: result.resolvedProvider,
+			model: result.resolvedModel,
+			totalTokens: result.tokensUsed,
+			attempts: resolveAttemptsFromRouting(result),
+			responseData: serializeLogPayload(result),
+		});
 
 		const costEvidence = estimateZeroCostEvidence(result.resolvedModel, result.usageProvenance);
 		return costEvidence ? { ...result, costEvidence } : result;
 	} catch (error) {
-		if (logCtx && requestLogger) {
-			await requestLogger.captureEnd(logCtx, {
-				attempts: 1,
-				error: sanitizeError(error),
-			});
-		}
+		await captureEndSafely(requestLogger, logCtx, {
+			attempts: 1,
+			error: sanitizeError(error),
+		});
 
 		throw error;
+	}
+}
+
+async function captureEndSafely(
+	requestLogger: RequestLogger | undefined,
+	logCtx: ReturnType<RequestLogger["captureStart"]> | undefined,
+	input: Parameters<RequestLogger["captureEnd"]>[1],
+): Promise<void> {
+	if (!logCtx || !requestLogger) {
+		return;
+	}
+
+	try {
+		await requestLogger.captureEnd(logCtx, input);
+	} catch {
+		// Logging must not fail a successful generate or replace the original error.
 	}
 }

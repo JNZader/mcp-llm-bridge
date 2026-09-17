@@ -260,6 +260,55 @@ describe("generate-service", () => {
 		assert.equal("costEvidence" in nonZero, false);
 	});
 
+	it("returns the generate result even if captureEnd throws after success", async () => {
+		const result = await executeGenerateRequest({
+			validated: { prompt: "Hello world" },
+			scope: {},
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "unknown", startTime: 0 }) as never,
+				captureEnd: async () => {
+					throw new Error("log failed");
+				},
+			} as never,
+			router: {
+				generate: async () => ({
+					text: "ok",
+					provider: "mock-provider",
+					model: "mock-model",
+					resolvedProvider: "mock-provider",
+					resolvedModel: "mock-model",
+					tokensUsed: 1,
+				}) as never,
+			} as never,
+		});
+
+		assert.equal(result.text, "ok");
+	});
+
+	it("rethrows the router error when captureEnd fails on the error path", async () => {
+		const failure = new Error("router blew up");
+
+		await assert.rejects(
+			() =>
+				executeGenerateRequest({
+					validated: { prompt: "Hello world" },
+					scope: {},
+					requestLogger: {
+						captureStart: () => ({}) as never,
+						captureEnd: async () => {
+							throw new Error("log failed");
+						},
+					} as never,
+					router: {
+						generate: async () => {
+							throw failure;
+						},
+					} as never,
+				}),
+			failure,
+		);
+	});
+
 	it("bounds large responses in the request log without changing the API result", async () => {
 		const captured: Array<Record<string, unknown>> = [];
 		const text = "x".repeat(20_000);
