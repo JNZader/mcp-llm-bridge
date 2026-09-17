@@ -15,6 +15,7 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     statusText: status === 200 ? 'OK' : 'ERROR',
     json: async () => body,
+    text: async () => JSON.stringify(body),
   } as Response;
 }
 
@@ -59,6 +60,127 @@ describe('LocalLLMProvider', () => {
     const err = new LocalLLMError('test', 'ollama');
     assert.equal(err.name, 'LocalLLMError');
     assert.equal(err.backend, 'ollama');
+  });
+
+  it('contractual mode sends the exact model and bypasses the automatic classifier', async () => {
+    provider = new LocalLLMProvider({
+      enabled: true,
+      ollamaUrl: 'http://ollama.test',
+      lmStudioUrl: 'http://lm-studio.test',
+    });
+
+    const calls: string[] = [];
+    mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'granite3.2:2b', details: { parameter_size: '2B' } }] });
+      }
+      if (url.endsWith('/v1/models')) return jsonResponse({ data: [] });
+      assert.equal(url, 'http://ollama.test/v1/chat/completions');
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        response_format?: { type: string };
+      };
+      assert.equal(body.model, 'granite3.2:2b');
+      assert.deepEqual(body.response_format, { type: 'json_object' });
+      return jsonResponse({ choices: [{ message: { content: 'local result' }, finish_reason: 'stop' }] });
+    });
+
+    const result = await provider.generate({
+      prompt: 'Explain this arbitrary production architecture.',
+      provider: 'local-llm',
+      model: 'granite3.2:2b',
+      routingMode: 'contractual',
+      responseFormat: 'json',
+    });
+
+    assert.equal(result.text, 'local result');
+    assert.equal(result.resolvedProvider, 'local-llm');
+    assert.equal(result.resolvedModel, 'granite3.2:2b');
+    assert.equal(result.fallbackUsed, false);
+    assert.deepEqual(calls, [
+      'http://ollama.test/api/tags',
+      'http://lm-studio.test/v1/models',
+      'http://ollama.test/v1/chat/completions',
+    ]);
+  });
+
+  it('contractual mode rejects an unavailable exact model instead of selecting a preferred model', async () => {
+    provider = new LocalLLMProvider({ enabled: true, preferredModel: 'other-model' });
+    mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'other-model' }] });
+      }
+      return jsonResponse({ data: [] });
+    });
+
+    await assert.rejects(
+      provider.generate({
+        prompt: 'arbitrary task',
+        provider: 'local-llm',
+        model: 'granite3.2:2b',
+        routingMode: 'contractual',
+      }),
+      (error: unknown) =>
+        error instanceof LocalLLMError &&
+        error.message === 'Contractual model granite3.2:2b is unavailable from local-llm',
+    );
+  });
+
+  it('automatic mode retains preferred-model selection when the requested model is unavailable', async () => {
+    provider = new LocalLLMProvider({
+      enabled: true,
+      preferredModel: 'other-model',
+      ollamaUrl: 'http://ollama.test',
+      lmStudioUrl: 'http://lm-studio.test',
+    });
+    mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'other-model' }] });
+      }
+      if (url.endsWith('/v1/models')) return jsonResponse({ data: [] });
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        response_format?: unknown;
+      };
+      assert.equal(body.model, 'other-model');
+      assert.equal('response_format' in body, false);
+      return jsonResponse({ choices: [{ message: { content: 'automatic result' }, finish_reason: 'stop' }] });
+    });
+
+    const result = await provider.generate({
+      prompt: 'Summarize this text in one sentence.',
+      model: 'granite3.2:2b',
+    });
+
+    assert.equal(result.model, 'other-model');
+  });
+
+  it('sanitizes bearer tokens from local backend errors', async () => {
+    provider = new LocalLLMProvider({ enabled: true });
+    mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'granite3.2:2b' }] });
+      }
+      if (url.includes('/v1/models')) return jsonResponse({ data: [] });
+      return jsonResponse({ error: 'Bearer super-secret-token' }, 502);
+    });
+
+    await assert.rejects(
+      provider.generate({
+        prompt: 'arbitrary task',
+        model: 'granite3.2:2b',
+        routingMode: 'contractual',
+      }),
+      (error: unknown) =>
+        error instanceof LocalLLMError &&
+        error.message.includes('Bearer [REDACTED]') &&
+        !error.message.includes('super-secret-token'),
+    );
   });
 
   it('isAvailable reuses shared detection cache within the TTL', async () => {

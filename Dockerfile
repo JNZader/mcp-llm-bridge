@@ -50,12 +50,14 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false
 
-COPY . .
+COPY --chown=node:node . .
 
 # Copy built dashboard into docs/ (overrides source-committed docs/)
-COPY --from=dashboard-build /docs /app/docs
+COPY --from=dashboard-build --chown=node:node /docs /app/docs
 
 EXPOSE 3456
 ENV LLM_GATEWAY_PORT=3456
+
+USER node
 
 CMD ["pnpm", "run", "serve"]

@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 
 import { getCircuitBreakerV2, Router, resetCircuitBreakerV2 } from '../../src/core/router.js';
 import { TransformerRegistry } from '../../src/core/transformer.js';
+import { logger } from '../../src/core/logger.js';
 import { LocalLLMError } from '../../src/local-llm/client.js';
 import type {
   LLMProvider,
@@ -2005,5 +2006,158 @@ describe('Router + ModelRouter integration', () => {
     );
     assert.equal(targetGenerate.mock.callCount(), 1);
     assert.equal(backupGenerate.mock.callCount(), 0);
+  });
+});
+
+describe('contractual routing', () => {
+  it('rejects an unknown contractual provider with a distinct error', async () => {
+    const router = new Router();
+    router.register(createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+    }));
+
+    await assert.rejects(
+      router.generate({
+        prompt: 'evaluate this',
+        provider: 'missing-provider',
+        model: 'cloud-model',
+        routingMode: 'contractual',
+      }),
+      { message: 'Contractual provider missing-provider is unknown' },
+    );
+  });
+
+  it('rejects an unavailable contractual provider with a distinct error', async () => {
+    const router = new Router();
+    router.register(createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      available: false,
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+    }));
+
+    await assert.rejects(
+      router.generate({
+        prompt: 'evaluate this',
+        provider: 'cloud',
+        model: 'cloud-model',
+        routingMode: 'contractual',
+      }),
+      { message: 'Contractual provider cloud is unavailable' },
+    );
+  });
+
+  it('succeeds on the contractual happy path without strict', async () => {
+    const router = new Router();
+    router.register(createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      response: {
+        text: 'contractual-ok',
+        provider: 'local-llm',
+        model: 'local-model',
+        resolvedProvider: 'local-llm',
+        resolvedModel: 'local-model',
+        fallbackUsed: false,
+      },
+    }));
+
+    const result = await router.generate({
+      prompt: 'evaluate this',
+      provider: 'local-llm',
+      model: 'local-model',
+      routingMode: 'contractual',
+    });
+
+    assert.equal(result.text, 'contractual-ok');
+    assert.equal(result.resolvedProvider, 'local-llm');
+    assert.equal(result.fallbackUsed, false);
+  });
+
+  it('fail-closes under strict+contractual instead of falling back to another provider', async () => {
+    const router = new Router();
+    const callOrder: string[] = [];
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+      shouldFail: true,
+      failMessage: 'local pin failed',
+      onGenerate: () => {
+        callOrder.push('local-llm');
+      },
+    });
+    const cloudProvider = createMockProvider({
+      id: 'cloud',
+      name: 'Cloud',
+      type: 'api',
+      models: [{ id: 'cloud-model', name: 'Cloud Model', provider: 'cloud', maxTokens: 4096 }],
+      onGenerate: () => {
+        callOrder.push('cloud');
+      },
+    });
+    router.register(cloudProvider);
+    router.register(localProvider);
+
+    await assert.rejects(
+      router.generate({
+        prompt: 'evaluate this',
+        provider: 'local-llm',
+        model: 'local-model',
+        strict: true,
+        routingMode: 'contractual',
+      }),
+      /local pin failed/,
+    );
+    assert.deepEqual(callOrder, ['local-llm']);
+  });
+
+  it('does not log cloud fallback for LocalLLMError in contractual mode', async () => {
+    const router = new Router();
+    const warnings: string[] = [];
+    mock.method(logger, 'warn', (...args: unknown[]) => {
+      const message = args.find((arg) => typeof arg === 'string');
+      if (typeof message === 'string') {
+        warnings.push(message);
+      }
+      return logger;
+    });
+
+    const localProvider = createMockProvider({
+      id: 'local-llm',
+      name: 'Local LLM',
+      type: 'api',
+      models: [{ id: 'local-model', name: 'Local Model', provider: 'local-llm', maxTokens: 4096 }],
+    });
+    localProvider.generate = async () => {
+      throw new LocalLLMError('ollama unavailable', 'ollama');
+    };
+    router.register(localProvider);
+
+    try {
+      await assert.rejects(
+        router.generate({
+          prompt: 'evaluate this',
+          provider: 'local-llm',
+          model: 'local-model',
+          routingMode: 'contractual',
+        }),
+      );
+
+      assert.ok(warnings.some((message) => /Local LLM failed/i.test(message)));
+      assert.equal(
+        warnings.some((message) => /falling back to cloud/i.test(message)),
+        false,
+      );
+    } finally {
+      mock.restoreAll();
+    }
   });
 });

@@ -248,8 +248,29 @@ Request body:
 | `project` | string | No | Credential scope |
 | `strict` | boolean | No | Strict routing behavior when supported |
 | `requireProvider` | boolean | No | Opt-in extra pin for `POST /v1/generate`. Requires a non-blank `provider`. |
+| `routingMode` | `"contractual"` | No | Require the exact explicit provider/model and disable all fallback |
 
 A non-blank `provider` already selects only that adapter (aliases are normalized; other paid adapters are not probed). `requireProvider: true` additionally fails immediately when that adapter is unavailable or breaker-blocked, and skips free-model substitution. `strict` controls attempt behavior on the already-selected candidate. Chat completions and the `llm_generate` MCP tool reject `requireProvider`. It does not guarantee model identity, usage, cost, isolation, or timeout behavior.
+
+For deterministic local-model evaluation, use `routingMode: "contractual"` with both
+`provider` and `model` explicitly set. The supported route is `/v1/generate`; it
+preserves authentication, verifies the exact discovered model, and never falls back
+to another provider. Contractual mode also disables the automatic offload classifier,
+group matching, sticky sessions, and the model-router. An unknown provider, an
+unavailable provider, or a mismatched model returns a distinct error instead of
+selecting a different model. `strict` is independent: contractual already fail-closes
+on the pinned provider/model; combining `strict: true` still fail-closes and does not
+enable fallback. `/v1/chat/completions` intentionally rejects contractual mode because
+the local provider uses its native transport and no fake OpenAI transformer is provided.
+
+```json
+{
+  "prompt": "Evaluate this model contract.",
+  "provider": "local-llm",
+  "model": "granite3.2:2b",
+  "routingMode": "contractual"
+}
+```
 
 Response:
 

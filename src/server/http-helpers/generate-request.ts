@@ -50,6 +50,8 @@ export function prepareGenerateRequest(
 			: {}),
 		maxTokens: validated.maxTokens ?? validated.max_tokens,
 		strict: validated.strict,
+		...(validated.routingMode ? { routingMode: validated.routingMode } : {}),
+		...(validated.responseFormat ? { responseFormat: validated.responseFormat } : {}),
 		project,
 		apiKeyId: scope.apiKeyId,
 		userId: scope.userId,

@@ -6,6 +6,7 @@
  */
 
 import type { TaskClassification } from '../classification/index.js';
+import type { ResponseFormat, RoutingMode } from './schemas.js';
 
 export type ProviderType = 'api' | 'cli';
 
@@ -36,11 +37,15 @@ export interface GenerateRequest {
   requireProvider?: boolean;
   model?: string;
   strict?: boolean;
+  routingMode?: RoutingMode;
+  responseFormat?: ResponseFormat;
   maxTokens?: number;
   project?: string;
   apiKeyId?: string;
   userId?: string;
   tools?: 'none';
+  /** Internal planning hint: skip these providers while resolving candidates. */
+  excludeProviders?: string[];
 }
 
 export interface ToolEvidence {

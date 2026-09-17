@@ -90,6 +90,11 @@ export function buildChatInternalMetadata(
 		metadata["strict"] = true;
 	}
 
+	const routingMode = getOptionalCanonicalString(request, "routingMode");
+	if (routingMode) {
+		metadata["routingMode"] = routingMode;
+	}
+
 	if (scope?.project) {
 		metadata["project"] = scope.project;
 	}
@@ -148,6 +153,9 @@ export function buildChatGenerateRequestFromMessages(
 			: {}),
 		...(getOptionalCanonicalBoolean(canonicalRequest, "strict")
 			? { strict: true }
+			: {}),
+		...(typeof getOptionalCanonicalString(canonicalRequest, "routingMode") === "string"
+			? { routingMode: getOptionalCanonicalString(canonicalRequest, "routingMode") as "contractual" }
 			: {}),
 		project: scope?.project,
 		apiKeyId: scope?.apiKeyId,

@@ -5,8 +5,9 @@ import { getLocalLLMStatus, pickBestLocalModel } from '../local-llm/detector.js'
 import { classifyForOffload } from '../local-llm/router.js';
 import { getSlimLocalLLMStatus, toSlimLocalLLMStatus } from '../local-llm/status.js';
 import { discoverModels } from '../model-discovery/discovery.js';
-import { getLocalLLMUrls, resolveHfToken } from '../core/local-llm-env.js';
+import { getLocalLLMConfig, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
+import type { GenerateRequest } from '../core/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
 
 function jsonResult(payload: unknown, isError?: boolean): McpToolResult {
@@ -44,6 +45,8 @@ export async function handleLlmGenerateTool(
     model: args['model'] as string | undefined,
     maxTokens: args['maxTokens'] as number | undefined,
     strict: args['strict'] === true ? true : undefined,
+    routingMode: args['routingMode'] as GenerateRequest['routingMode'],
+    responseFormat: args['responseFormat'] as GenerateRequest['responseFormat'],
     project: args['project'] as string | undefined,
   };
 
@@ -65,7 +68,7 @@ export async function handleLocalLlmGenerateTool(
 
   if (!localLLMEnabled()) {
     const localLLMStatus = await getSlimLocalLLMStatus(
-      { enabled: false, ...getLocalLLMUrls() },
+      { enabled: false, ...getLocalLLMConfig() },
       { skipDetectionWhenDisabled: true },
     );
     const result = await router.generate({ prompt, system, maxTokens });
@@ -77,7 +80,7 @@ export async function handleLocalLlmGenerateTool(
     });
   }
 
-  const localLLMStatus = await getLocalLLMStatus({ enabled: true, ...getLocalLLMUrls() });
+  const localLLMStatus = await getLocalLLMStatus({ enabled: true, ...getLocalLLMConfig() });
   const localModel = pickBestLocalModel(localLLMStatus.backends, preferredModel);
   const slimLocalLLMStatus = toSlimLocalLLMStatus(localLLMStatus);
 
@@ -124,7 +127,12 @@ export async function handleLocalLlmGenerateTool(
     // Local pin failed; fall through to unpinned cloud generate.
   }
 
-  const result = await router.generate({ prompt, system, maxTokens });
+  const result = await router.generate({
+    prompt,
+    system,
+    maxTokens,
+    excludeProviders: ['local-llm'],
+  });
   return jsonResult({
     ...result,
     backend: 'cloud',
@@ -144,14 +152,14 @@ export async function handleDiscoverModelsTool(
   const enabled = args['enabled'] === undefined ? true : args['enabled'] !== false;
   try {
     const localLLMStatus = await getSlimLocalLLMStatus(
-      { enabled: localLLMEnabled(), ...getLocalLLMUrls() },
+      { enabled: localLLMEnabled(), ...getLocalLLMConfig() },
       localLLMEnabled()
         ? { forceRefresh: true }
         : { skipDetectionWhenDisabled: true },
     );
     const result = await discoverModels(
       { hfToken: resolveHfToken(hfToken), enabled },
-      getLocalLLMUrls(),
+      getLocalLLMConfig(),
       vault?.getDb(),
       { forceRefreshLocalDetection: true },
     );

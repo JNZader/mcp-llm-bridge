@@ -5,6 +5,7 @@ import type { Router } from "../../core/router.js";
 import type { UsageProvenance } from "../../core/types.js";
 import { readUsageProvenance } from "../../core/usage-provenance.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
+import { serializeLogPayload } from "../../logging/serialize-log-payload.js";
 import {
 	createOpenAIUsage,
 	normalizeOpenAIRequest,
@@ -18,6 +19,7 @@ import {
 	buildChatInternalRequestFromMessages,
 } from "../http-helpers/chat-request.js";
 import type { RequestScope } from "../http-helpers/request-scope.js";
+import { sanitizeError } from "../../core/error-sanitizer.js";
 
 const SUPPORTED_CHAT_MESSAGE_ROLES: ReadonlySet<string> = new Set([
 	"system",
@@ -196,18 +198,14 @@ async function finalizeNonStreamingSuccess(
 	logger: ReturnType<typeof createNonStreamingLogger>,
 	result: NonStreamingChatResult,
 ) {
-	if (!logger.logCtx || !logger.requestLogger) {
-		return;
-	}
-
-	await logger.requestLogger.captureEnd(logger.logCtx, {
+	await captureEndSafely(logger, {
 		provider: result.resolvedProvider,
 		model: result.resolvedModel,
 		totalTokens: result.tokensUsed,
 		inputTokens: result.inputTokens,
 		outputTokens: result.outputTokens,
 		attempts: resolveAttemptsFromRouting(result),
-		responseData: JSON.stringify(result),
+		responseData: serializeLogPayload(result),
 	});
 }
 
@@ -215,14 +213,25 @@ async function finalizeNonStreamingFailure(
 	logger: ReturnType<typeof createNonStreamingLogger>,
 	error: unknown,
 ) {
+	await captureEndSafely(logger, {
+		attempts: 1,
+		error: sanitizeError(error),
+	});
+}
+
+async function captureEndSafely(
+	logger: ReturnType<typeof createNonStreamingLogger>,
+	input: Parameters<NonNullable<RequestLogger["captureEnd"]>>[1],
+) {
 	if (!logger.logCtx || !logger.requestLogger) {
 		return;
 	}
 
-	await logger.requestLogger.captureEnd(logger.logCtx, {
-		attempts: 1,
-		error: error instanceof Error ? error : new Error(String(error)),
-	});
+	try {
+		await logger.requestLogger.captureEnd(logger.logCtx, input);
+	} catch {
+		// Logging must not fail a successful chat response or replace the original error.
+	}
 }
 
 function buildNonStreamingChatResponse(input: {

@@ -105,6 +105,7 @@ describe('local_llm_generate MCP tool', () => {
 
   it('returns cloud fallback when no local models available', async () => {
     process.env['LOCAL_LLM_ENABLED'] = 'true';
+    mock.method(globalThis, 'fetch', async () => jsonResponse({ models: [], data: [] }));
     const result = await callTool('local_llm_generate', { prompt: 'hello' });
     assert.equal(result.isError, undefined);
     const text = JSON.parse(result.content[0]!.text);
@@ -241,7 +242,7 @@ describe('local_llm_generate MCP tool', () => {
   it('falls back consistently when the shared local provider path fails', async () => {
     process.env['LOCAL_LLM_ENABLED'] = 'true';
 
-    mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+    const fetchMock = mock.fn(async (input: string | URL | Request) => {
       const url = String(input);
 
       if (url.includes('/api/tags')) {
@@ -260,6 +261,7 @@ describe('local_llm_generate MCP tool', () => {
 
       throw new Error(`Unexpected URL: ${url}`);
     });
+    mock.method(globalThis, 'fetch', fetchMock as typeof fetch);
 
     const localRouter = new Router();
     localRouter.register(
@@ -285,6 +287,13 @@ describe('local_llm_generate MCP tool', () => {
     assert.equal(text.attemptedLocalModelId, 'llama3.2:3b');
     assert.equal(typeof text.localLLMStatus.connectedBackendCount, 'number');
     assert.ok(Array.isArray(text.localLLMStatus.backends[0]?.models));
+    assert.equal(
+      fetchMock.mock.calls.filter((call) =>
+        String(call.arguments[0]).includes('/v1/chat/completions'),
+      ).length,
+      1,
+      'cloud fallback must not call local-llm a second time after the pin fails',
+    );
   });
 
   it('keeps short generic prompts on cloud even when a local model is available', async () => {
@@ -341,6 +350,24 @@ describe('local_llm_generate MCP tool', () => {
 // ── discover_models ──────────────────────────────────────
 
 describe('discover_models MCP tool', () => {
+  beforeEach(() => {
+    mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'llama3.2:3b', details: { parameter_size: '3.2B' } }] });
+      }
+      if (url.includes('/v1/models')) {
+        return jsonResponse({ data: [] });
+      }
+      return jsonResponse({ error: 'unexpected' }, 404);
+    });
+  });
+
+  afterEach(() => {
+    mock.restoreAll();
+    resetLocalLLMDetectionCache();
+  });
+
   it('returns discovery result with backends scanned', async () => {
     const result = await callTool('discover_models', {});
     assert.equal(result.isError, undefined);

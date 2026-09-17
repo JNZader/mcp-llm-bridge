@@ -350,6 +350,8 @@ export class Router {
         provider: normalizedRequest.provider,
         strict: normalizedRequest.strict === true,
         requireProvider: normalizedRequest.requireProvider === true,
+        routingMode: normalizedRequest.routingMode,
+        excludeProviders: normalizedRequest.excludeProviders,
       },
       groupStore: null,
       sessionManager: null,
@@ -459,6 +461,7 @@ export class Router {
         executionOptions,
         logFailure: ({ provider: failedProvider, attemptedModel, message, error }) => {
           if (error instanceof LocalLLMError) {
+            const contractual = normalizedRequest.routingMode === 'contractual';
             logger.warn(
               {
                 provider: failedProvider.id,
@@ -466,16 +469,20 @@ export class Router {
                 backend: error.backend,
                 error: message,
               },
-              'Local LLM failed — falling back to cloud provider',
+              contractual
+                ? 'Local LLM failed'
+                : 'Local LLM failed — falling back to cloud provider',
             );
-            recordLocalFallbackMetric(this.getTelemetryContext(), {
-              attemptedModel,
-              startTime,
-              project: normalizedRequest.project,
-              apiKeyId: normalizedRequest.apiKeyId,
-              userId: normalizedRequest.userId,
-              message,
-            });
+            if (!contractual) {
+              recordLocalFallbackMetric(this.getTelemetryContext(), {
+                attemptedModel,
+                startTime,
+                project: normalizedRequest.project,
+                apiKeyId: normalizedRequest.apiKeyId,
+                userId: normalizedRequest.userId,
+                message,
+              });
+            }
             return;
           }
 
@@ -497,6 +504,9 @@ export class Router {
     }
 
     throwIfGenerationAborted(executionOptions);
+    if (normalizedRequest.routingMode === 'contractual') {
+      throwAllProvidersFailed(providerErrors.errors);
+    }
 
     // Try free model fallback before giving up
     if (!normalizedRequest.requireProvider && this._freeModelRouter?.isAvailable) {

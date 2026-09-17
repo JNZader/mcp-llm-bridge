@@ -1,5 +1,6 @@
 import type { McpDefinitionAdapter } from '../mcp-builder/adapter.js';
 import { PAGEINDEX_TOOL_DEFINITIONS } from '../pageindex/tools.js';
+import { RESPONSE_FORMAT, ROUTING_MODE } from '../core/schemas.js';
 
 export type McpToolDefinition = {
   name: string;
@@ -47,6 +48,16 @@ export const TOOLS = [
         strict: {
           type: 'boolean',
           description: 'When true, only try the first resolved provider and disable fallback.',
+        },
+        routingMode: {
+          type: 'string',
+          enum: [ROUTING_MODE.CONTRACTUAL],
+          description: 'Routing mode. "contractual" disables fallback to other providers.',
+        },
+        responseFormat: {
+          type: 'string',
+          enum: [RESPONSE_FORMAT.JSON],
+          description: 'Requested response format. "json" is supported for contractual requests.',
         },
         project: {
           type: 'string',

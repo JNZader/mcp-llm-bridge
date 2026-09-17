@@ -72,6 +72,10 @@ export async function resolveCandidates(
   reorderCandidates: (candidates: LLMProvider[]) => LLMProvider[],
   options: ResolveCandidatesOptions = {},
 ): Promise<LLMProvider[]> {
+  const excludedProviders = new Set(request.excludeProviders ?? []);
+  if (excludedProviders.size > 0) {
+    providers = providers.filter((provider) => !excludedProviders.has(provider.id));
+  }
   const explicitFallbackAllowed = new Set(options.explicitFallbackOrder ?? []);
   // Explicit provider is a pin, not a preference. Probe only that adapter:
   // do not `copilot --version` / `qwen --version` the rest of the fleet, and

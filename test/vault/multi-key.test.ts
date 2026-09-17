@@ -48,7 +48,7 @@ describe('MultiKeyManager', () => {
   };
 
   beforeEach(() => {
-    testDbDir = mkdtempSync(join(tmpdir(), 'multi-key-test-'));
+    testDbDir = mkdtempSync(join(tmpdir(), 'mcp-llm-bridge-multi-key-'));
     testDbPath = join(testDbDir, 'multi-key-test.db');
 
     // Create fresh database with schema

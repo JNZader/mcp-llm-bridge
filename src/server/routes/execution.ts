@@ -31,6 +31,7 @@ import { executeGenerateRequest } from "../execution/generate-service.js";
 import { createStreamExecutor } from "../streaming/stream-executor.js";
 import type { ProviderStreamVaultPort } from "../streaming/provider-stream-client.js";
 import { buildSSEChunkEvent } from "../../transformers/streaming.js";
+import { sanitizeErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface ExecutionRouteDeps {
 	router: Router;
@@ -120,7 +121,11 @@ function handleStreamingRequest(
 					try {
 						await stream.writeSSE({
 							data: JSON.stringify({
-								error: { message: error.message, type: "server_error", code: null },
+								error: {
+									message: sanitizeErrorMessage(error.message),
+									type: "server_error",
+									code: null,
+								},
 							}),
 						});
 						await stream.writeSSE({ data: "[DONE]" });
@@ -169,7 +174,7 @@ export function registerExecutionRoutes(
 				}),
 			);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -187,6 +192,16 @@ export function registerExecutionRoutes(
 					return jsonChatValidationError(c, issue);
 				}
 				throw error;
+			}
+
+			if (validated.routingMode === "contractual") {
+				return c.json(
+					{
+						error:
+							"Contractual local routing is supported only by POST /v1/generate",
+					},
+					400,
+				);
 			}
 
 			let preparedRequest;
@@ -229,7 +244,7 @@ export function registerExecutionRoutes(
 				throw error;
 			}
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
 			return c.json(
 				{
 					error: {

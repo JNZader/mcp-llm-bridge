@@ -7,6 +7,16 @@
 import { z } from 'zod';
 import { MAX_PROMPT_LENGTH } from './constants.js';
 
+export const ROUTING_MODE = {
+  CONTRACTUAL: 'contractual',
+} as const;
+export type RoutingMode = (typeof ROUTING_MODE)[keyof typeof ROUTING_MODE];
+
+export const RESPONSE_FORMAT = {
+  JSON: 'json',
+} as const;
+export type ResponseFormat = (typeof RESPONSE_FORMAT)[keyof typeof RESPONSE_FORMAT];
+
 /** Generate request schema. */
 export const generateRequestSchema = z.object({
   prompt: z.string()
@@ -22,6 +32,8 @@ export const generateRequestSchema = z.object({
   /** Consorcio / OpenAI-style alias; mapped to maxTokens in prepareGenerateRequest. */
   max_tokens: z.number().int().positive().optional(),
   strict: z.boolean().optional(),
+  routingMode: z.enum([ROUTING_MODE.CONTRACTUAL]).optional(),
+  responseFormat: z.enum([RESPONSE_FORMAT.JSON]).optional(),
   project: z.string().optional(),
   tools: z.literal('none').optional(),
 }).superRefine((data, ctx) => {
@@ -30,6 +42,9 @@ export const generateRequestSchema = z.object({
   }
   if (data.requireProvider && !data.provider?.trim()) {
     ctx.addIssue({ code: 'custom', message: 'provider must be a non-blank string when requireProvider is true' });
+  }
+  if (data.responseFormat !== undefined && data.routingMode !== ROUTING_MODE.CONTRACTUAL) {
+    ctx.addIssue({ code: 'custom', message: 'responseFormat is supported only for contractual generate requests' });
   }
 });
 
@@ -49,6 +64,7 @@ export const chatCompletionsSchema = z.object({
   stream: z.boolean().optional(),
   provider: z.string().optional(),
   strict: z.boolean().optional(),
+  routingMode: z.enum([ROUTING_MODE.CONTRACTUAL]).optional(),
   clientId: z.string().optional(),
   project: z.string().optional(),
 }).passthrough().superRefine((data, ctx) => {

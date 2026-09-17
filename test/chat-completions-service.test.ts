@@ -478,4 +478,131 @@ describe("chat-completions-service", () => {
 			routing: undefined,
 		});
 	});
+
+	it("redacts provider secrets before persisting a failed request", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+		let loggedError: Error | undefined;
+
+		await assert.rejects(
+			() => executeNonStreamingChatCompletions({
+				prepared,
+				scope: {},
+				requestLogger: {
+					captureStart: () => ({}) as never,
+					captureEnd: async (_ctx: unknown, input?: { error?: Error }) => {
+						loggedError = input?.error;
+					},
+				} as never,
+				router: {
+					generateFromInternal: async () => {
+						throw new Error('chat failure {"api_key":"chat-secret","token":"chat-token"} Bearer chat-bearer');
+					},
+				} as never,
+			}),
+		);
+
+		assert.ok(loggedError);
+		assert.doesNotMatch(loggedError.message, /chat-secret|chat-token|chat-bearer/);
+		assert.match(loggedError.message, /api_key.*REDACTED/);
+		assert.match(loggedError.message, /Bearer \[REDACTED\]/);
+	});
+
+	it("returns the chat result even if captureEnd throws after success", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+
+		const response = await executeNonStreamingChatCompletions({
+			prepared,
+			scope: {},
+			createChatCompletionId: () => "chatcmpl-test",
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "gpt-4o-mini", startTime: 0 }) as never,
+				captureEnd: async () => {
+					throw new Error("log failed");
+				},
+			} as never,
+			router: {
+				generateFromInternal: async () => ({
+					content: "ok",
+					model: "gpt-4o-mini",
+					usage: { totalTokens: 1 },
+					metadata: {
+						provider: "mock-provider",
+						resolvedProvider: "mock-provider",
+						resolvedModel: "gpt-4o-mini",
+					},
+				}),
+			} as never,
+		});
+
+		assert.equal(response.choices[0]?.message.content, "ok");
+	});
+
+	it("rethrows the router error when captureEnd fails on the error path", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+		const failure = new Error("chat blew up");
+
+		await assert.rejects(
+			() => executeNonStreamingChatCompletions({
+				prepared,
+				scope: {},
+				requestLogger: {
+					captureStart: () => ({}) as never,
+					captureEnd: async () => {
+						throw new Error("log failed");
+					},
+				} as never,
+				router: {
+					generateFromInternal: async () => {
+						throw failure;
+					},
+				} as never,
+			}),
+			failure,
+		);
+	});
+
+	it("bounds large responses in the request log without changing the API result", async () => {
+		const prepared = prepareChatCompletionsRequest({
+			model: "gpt-4o-mini",
+			messages: [{ role: "user", content: "Explain strict mode" }],
+		});
+		const text = "x".repeat(20_000);
+		let loggedResponseData: string | undefined;
+
+		const response = await executeNonStreamingChatCompletions({
+			prepared,
+			scope: {},
+			requestLogger: {
+				captureStart: () => ({ provider: "unknown", model: "gpt-4o-mini", startTime: 0 }) as never,
+				captureEnd: async (_ctx: unknown, input?: { responseData?: string }) => {
+					loggedResponseData = input?.responseData;
+				},
+			} as never,
+			router: {
+				generateFromInternal: async () => ({
+					content: text,
+					model: "gpt-4o-mini",
+					usage: { totalTokens: 1 },
+					metadata: {
+						provider: "mock-provider",
+						resolvedProvider: "mock-provider",
+						resolvedModel: "gpt-4o-mini",
+					},
+				}),
+			} as never,
+		});
+
+		assert.equal(response.choices[0]?.message.content, text);
+		assert.ok(loggedResponseData);
+		assert.ok(loggedResponseData.length <= 10_000);
+	});
 });

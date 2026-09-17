@@ -82,6 +82,7 @@ export class Vault {
   private readonly db: Database.Database;
   private readonly masterKey: Buffer;
   private _destroyed = false;
+  private _dbClosed = false;
 
   /**
    * Expose the underlying database connection for modules that need direct access
@@ -767,6 +768,8 @@ export class Vault {
       this.masterKey.fill(0);
       this._destroyed = true;
     }
+    if (this._dbClosed) return;
     this.db.close();
+    this._dbClosed = true;
   }
 }

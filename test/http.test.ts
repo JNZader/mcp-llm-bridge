@@ -2,7 +2,7 @@
  * HTTP endpoint tests — verify REST API behavior.
  */
 
-import { describe, it, after, afterEach, before } from 'node:test';
+import { describe, it, after, afterEach, before, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { unlinkSync, existsSync, readFileSync } from 'node:fs';
@@ -17,6 +17,7 @@ import { TOOLS } from '../src/server/mcp.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import { getCircuitBreakerV2, resetCircuitBreakerV2 } from '../src/core/router.js';
 import { StubAdapter } from './helpers/stub-adapter.js';
+import { logger } from '../src/core/logger.js';
 
 // Read the expected version from package.json so /health assertions never go
 // stale on a version bump (they hardcoded 0.3.1 while the endpoint served 0.6.0).
@@ -76,6 +77,7 @@ after(() => {
 
 afterEach(() => {
   resetCircuitBreakerV2();
+  mock.restoreAll();
 });
 
 // Helper function to make HTTP requests
@@ -443,6 +445,34 @@ describe('POST /v1/generate', () => {
     const longPrompt = 'x'.repeat(MAX_PROMPT_LENGTH + 1);
     const res = await request('POST', '/v1/generate', { prompt: longPrompt });
     assert.equal(res.status, 400);
+  });
+
+  it('redacts backend credential values from HTTP errors', async () => {
+    const warning = mock.method(logger, 'warn', () => logger);
+    const leakyProvider = {
+      id: 'leaky-provider',
+      name: 'Leaky Provider',
+      type: 'api' as const,
+      models: [{ id: 'leaky-model', name: 'Leaky Model', provider: 'leaky-provider', maxTokens: 4096 }],
+      isAvailable: async () => true,
+      generate: async () => {
+        throw new Error('backend failure {"api_key":"http-secret","token":"http-token"} Bearer http-bearer');
+      },
+    };
+    router.register(leakyProvider);
+
+    const res = await request('POST', '/v1/generate', {
+      prompt: 'hello',
+      provider: 'leaky-provider',
+      model: 'leaky-model',
+      strict: true,
+    });
+
+    assert.equal(res.status, 500);
+    const body = JSON.stringify(res.data);
+    assert.doesNotMatch(body, /http-secret|http-token|http-bearer/);
+    assert.match(body, /api_key.*REDACTED/);
+    assert.doesNotMatch(JSON.stringify(warning.mock.calls), /http-secret|http-token|http-bearer/);
   });
 });
 

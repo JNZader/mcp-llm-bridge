@@ -14,6 +14,8 @@ import type {
   LocalModel,
 } from './types.js';
 import { DEFAULT_LOCAL_LLM_CONFIG } from './types.js';
+import type { ResponseFormat } from '../core/schemas.js';
+import { sanitizeErrorMessage } from '../core/error-sanitizer.js';
 
 /**
  * Error thrown when a local LLM request fails.
@@ -67,6 +69,7 @@ export async function callLocalLLM(
   prompt: string,
   system?: string,
   config?: Partial<LocalLLMConfig>,
+  responseFormat?: ResponseFormat,
 ): Promise<LocalLLMResponse> {
   const cfg = { ...DEFAULT_LOCAL_LLM_CONFIG, ...config };
   const url = buildCompletionUrl(model.backend, cfg);
@@ -87,14 +90,19 @@ export async function callLocalLLM(
       body: JSON.stringify({
         model: model.id,
         messages,
-        temperature: 0.3, // low temperature for deterministic tasks
+        temperature: responseFormat === 'json' ? 0 : 0.3,
         stream: false,
+        ...(responseFormat === 'json'
+          ? { response_format: { type: 'json_object' } }
+          : {}),
       }),
       signal: controller.signal,
     });
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => 'unknown error');
+      const errorText = sanitizeErrorMessage(
+        await response.text().catch(() => 'unknown error'),
+      );
       throw new LocalLLMError(
         `HTTP ${response.status}: ${errorText}`,
         model.backend,
@@ -119,7 +127,7 @@ export async function callLocalLLM(
   } catch (error) {
     if (error instanceof LocalLLMError) throw error;
 
-    const message = error instanceof Error ? error.message : String(error);
+    const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
     const isTimeout = message.includes('abort');
 
     throw new LocalLLMError(

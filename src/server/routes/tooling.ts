@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 
-import { getLocalLLMUrls } from "../../core/local-llm-env.js";
+import { getLocalLLMConfig } from "../../core/local-llm-env.js";
 import { localLLMEnabled } from "../../core/runtime-flags.js";
 import { getLocalLLMStatus } from "../../local-llm/detector.js";
 import { createCatalogFromMcpTools, type ToolSource } from "../../tool-catalog/index.js";
@@ -64,7 +64,7 @@ export function registerToolingRoutes(app: Hono): void {
 			const enabled = localLLMEnabled();
 			const status = await getLocalLLMStatus({
 				enabled,
-				...getLocalLLMUrls(),
+				...getLocalLLMConfig(),
 			}, enabled ? undefined : { skipDetectionWhenDisabled: true });
 			return c.json(status);
 		} catch (error) {

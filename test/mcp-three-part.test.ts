@@ -13,6 +13,8 @@ import { Vault } from '../src/vault/vault.js';
 import { Router } from '../src/core/router.js';
 import { createAllAdapters } from '../src/adapters/index.js';
 import type { GatewayConfig, GenerateRequest, GenerateResponse } from '../src/core/types.js';
+import type { BridgeOrchestrator } from '../src/bridge/orchestrator.js';
+import type { BridgeResponse } from '../src/bridge/types.js';
 import { handleToolCall, TOOLS } from '../src/server/mcp.js';
 
 const config: GatewayConfig = {
@@ -78,6 +80,8 @@ describe('MCP llm_generate tool schema', () => {
     assert.equal(schema.properties.instruction.type, 'string');
     assert.ok(schema.properties.strict, 'strict field should be in schema');
     assert.equal(schema.properties.strict.type, 'boolean');
+    assert.deepEqual(schema.properties.routingMode.enum, ['contractual']);
+    assert.deepEqual(schema.properties.responseFormat.enum, ['json']);
 
     // prompt should no longer be strictly required when context/instruction are present
     // The schema is flexible — prompt is optional
@@ -135,6 +139,57 @@ describe('MCP llm_generate with three-part fields', () => {
     assert.ok(result.content);
     assert.equal(captured.length, 1);
     assert.equal(captured[0]?.strict, true);
+  });
+
+  it('passes contractual routing and JSON response format through llm_generate', async () => {
+    const captured: GenerateRequest[] = [];
+    const fastRouter = createFastRouter(router, (request) => {
+      captured.push(request);
+    });
+
+    const result = await handleToolCall(
+      'llm_generate',
+      { prompt: 'Return structured data', routingMode: 'contractual', responseFormat: 'json' },
+      fastRouter,
+      vault,
+    );
+
+    assert.ok(result.content);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0]?.routingMode, 'contractual');
+    assert.equal(captured[0]?.responseFormat, 'json');
+  });
+
+  it('passes contractual routing and JSON response format through the bridge', async () => {
+    const captured: GenerateRequest[] = [];
+    const bridge = {
+      generate: async (request: GenerateRequest): Promise<BridgeResponse> => {
+        captured.push(request);
+        return {
+          text: 'Mock response',
+          provider: 'mock',
+          model: 'mock-model',
+          taskType: 'default',
+          fallbackUsed: false,
+          latencyMs: 0,
+        };
+      },
+    } as unknown as BridgeOrchestrator;
+
+    const result = await handleToolCall(
+      'llm_generate',
+      { prompt: 'Return structured data', routingMode: 'contractual', responseFormat: 'json' },
+      router,
+      vault,
+      undefined,
+      undefined,
+      bridge,
+    );
+
+    assert.ok(result.content);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0]?.routingMode, 'contractual');
+    assert.equal(captured[0]?.responseFormat, 'json');
   });
 });
 

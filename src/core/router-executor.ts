@@ -8,6 +8,7 @@ import { LocalLLMError } from '../local-llm/client.js';
 import { logger } from './logger.js';
 import { isGenerationAbortError, throwIfGenerationAborted } from './generation-cancellation.js';
 import { readUsageProvenance } from './usage-provenance.js';
+import { sanitizeErrorMessage } from './error-sanitizer.js';
 
 type RecordUsageFn = (
   provider: string,
@@ -157,6 +158,65 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     typeof request.metadata?.['userId'] === 'string' ? request.metadata['userId'] : undefined;
   const tools = request.metadata?.['tools'] === 'none' ? 'none' : undefined;
 
+  // Local LLMs already expose a native transport through LocalLLMProvider.
+  // Do not register an OpenAI transformer here: that would falsely claim the
+  // provider has the same protocol semantics as remote OpenAI-compatible APIs.
+  if (provider.id === 'local-llm') {
+    const attemptStartTime = Date.now();
+    try {
+      const result = await provider.generate({
+        prompt: extractPromptFromInternal(request),
+        system: extractSystemFromInternal(request),
+        model: attemptedModel,
+        maxTokens: request.maxTokens,
+        provider: provider.id,
+        routingMode:
+          request.metadata?.['routingMode'] === 'contractual' ? 'contractual' : undefined,
+        responseFormat:
+          request.metadata?.['responseFormat'] === 'json' ? 'json' : undefined,
+        project,
+        ...(apiKeyId ? { apiKeyId } : {}),
+        ...(userId ? { userId } : {}),
+      });
+      circuitBreaker.recordSuccess(provider.id, 'default', result.model ?? attemptedModel);
+      const latencyMs = Date.now() - attemptStartTime;
+      const usage = typeof result.tokensUsed === 'number' ? { totalTokens: result.tokensUsed } : {};
+      recordUsage(provider.id, result.model, usage, latencyMs, true, attempt, project, undefined, {
+        apiKeyId,
+        userId,
+      });
+      if (classification) {
+        recordModelFeedback(feedbackEndpointId, classification, true, latencyMs, routedEndpoint?.id);
+      }
+      return {
+        content: result.text,
+        model: result.model,
+        finishReason: 'stop',
+        usage,
+        metadata: {
+          provider: result.provider,
+          fallbackUsed: false,
+          latencyMs,
+          resolvedProvider: result.provider,
+          resolvedModel: result.model,
+        },
+      };
+    } catch (error) {
+      circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
+      const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
+      const latencyMs = Date.now() - attemptStartTime;
+      recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, project, message, {
+        apiKeyId,
+        userId,
+      });
+      if (classification) {
+        recordModelFeedback(feedbackEndpointId, classification, false, latencyMs, routedEndpoint?.id);
+      }
+      logger.warn({ provider: provider.id, model: attemptedModel, error: message }, 'Local LLM failed');
+      throw error;
+    }
+  }
+
   if (!outbound) {
     const cliOutbound = registry.getOutbound('cli');
     if (provider.type === 'cli' && cliOutbound) {
@@ -204,7 +264,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
         throwIfGenerationAborted(executionOptions);
         if (isGenerationAbortError(error)) throw error;
         circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
-        const message = error instanceof Error ? error.message : String(error);
+        const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
         const latencyMs = Date.now() - attemptStartTime;
         recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, project, message, {
           apiKeyId,
@@ -282,7 +342,7 @@ export async function tryProvider(options: TryProviderOptions): Promise<Internal
     throwIfGenerationAborted(executionOptions);
     if (isGenerationAbortError(error)) throw error;
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
-    const message = error instanceof Error ? error.message : String(error);
+    const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
     const latencyMs = Date.now() - attemptStartTime;
     recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, project, message, {
       apiKeyId,
@@ -349,7 +409,7 @@ export async function executeGenerateAttempt(
     throwIfGenerationAborted(executionOptions);
     if (isGenerationAbortError(error)) throw error;
     circuitBreaker.recordFailure(provider.id, 'default', attemptedModel);
-    const message = error instanceof Error ? error.message : String(error);
+    const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
     const latencyMs = Date.now() - attemptStartTime;
     recordUsage(provider.id, attemptedModel, {}, latencyMs, false, attempt, request.project, message, {
       apiKeyId: request.apiKeyId,
