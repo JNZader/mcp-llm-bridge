@@ -4,15 +4,36 @@ import { describe, it } from "node:test";
 import { serializeLogPayload } from "../../src/logging/serialize-log-payload.js";
 
 describe("serializeLogPayload", () => {
-	it("bounds strings before returning them", () => {
-		assert.equal(serializeLogPayload("x".repeat(20), 10), "x".repeat(10));
+	it("does not persist raw prompt or response strings", () => {
+		assert.equal(serializeLogPayload("secret prompt"), undefined);
+		assert.equal(serializeLogPayload("x".repeat(20), 10), undefined);
 	});
 
-	it("bounds string values while serializing objects", () => {
-		const serialized = serializeLogPayload({ text: "x".repeat(20) }, 10);
+	it("drops text/prompt fields and keeps routing metadata", () => {
+		const serialized = serializeLogPayload({
+			text: "model output that must not land in sqlite",
+			prompt: "user secret",
+			provider: "opencode-cli",
+			model: "opencode/big-pickle",
+			tokensUsed: 12,
+			fallbackUsed: false,
+		});
 
 		assert.ok(serialized);
-		assert.ok(serialized.length <= 10);
+		assert.doesNotMatch(serialized, /model output|user secret|big-pickle secret/i);
+		assert.match(serialized, /opencode-cli/);
+		assert.match(serialized, /tokensUsed/);
+	});
+
+	it("redacts credential-like leftovers in remaining metadata", () => {
+		const serialized = serializeLogPayload({
+			provider: "openai",
+			note: "Bearer sk-live-secret",
+		});
+
+		assert.ok(serialized);
+		assert.doesNotMatch(serialized, /sk-live-secret/);
+		assert.match(serialized, /Bearer \[REDACTED\]/);
 	});
 
 	it("returns undefined when data cannot be serialized", () => {

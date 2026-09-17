@@ -8,6 +8,8 @@
  */
 
 import type Database from 'better-sqlite3';
+import { sanitizeErrorMessage } from '../core/error-sanitizer.js';
+import { serializeLogPayload } from './serialize-log-payload.js';
 import { LOG_QUERY_STATUS, type LogContext, type LogQuery, type LogsResponse, type LogEntryPublic } from './types.js';
 
 /**
@@ -96,31 +98,8 @@ export class RequestLogger {
     this.db = db;
   }
 
-  /**
-   * Truncate string to max length
-   * @param str - String to truncate
-   * @param maxLength - Maximum length (default 10000)
-   * @returns Truncated string
-   */
-  private truncate(str: string | undefined, maxLength = 10000): string | undefined {
-    if (!str) return undefined;
-    if (str.length <= maxLength) return str;
-    return str.substring(0, maxLength);
-  }
-
-  /**
-   * Serialize unknown data to JSON string with truncation
-   * @param data - Data to serialize
-   * @returns JSON string or undefined
-   */
   private serializeData(data: unknown): string | undefined {
-    if (data === undefined || data === null) return undefined;
-    if (typeof data === 'string') return this.truncate(data);
-    try {
-      return this.truncate(JSON.stringify(data));
-    } catch {
-      return undefined;
-    }
+    return serializeLogPayload(data);
   }
 
   /**
@@ -161,7 +140,7 @@ export class RequestLogger {
       output_tokens: input.outputTokens ?? null,
       cost: input.cost ?? null,
       latency_ms: latencyMs,
-      error: input.error?.message || null,
+      error: input.error?.message ? sanitizeErrorMessage(input.error.message) : null,
       attempts,
       request_data: this.serializeData(input.requestData),
       response_data: this.serializeData(input.responseData),
@@ -230,10 +209,10 @@ export class RequestLogger {
       output_tokens: input.outputTokens ?? null,
       cost: input.cost ?? null,
       latency_ms: input.latencyMs,
-      error: input.error || null,
+      error: input.error ? sanitizeErrorMessage(input.error) : null,
       attempts: input.attempts || 1,
-      request_data: this.truncate(input.requestData) ?? null,
-      response_data: this.truncate(input.responseData) ?? null,
+      request_data: this.serializeData(input.requestData) ?? null,
+      response_data: this.serializeData(input.responseData) ?? null,
     };
 
     return new Promise((resolve, reject) => {

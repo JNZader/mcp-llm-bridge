@@ -140,8 +140,8 @@ describe('RequestLogger', () => {
       assert.strictEqual(row.cost, 0.0025, 'Cost should match');
       assert.strictEqual(row.latency_ms, 1200, 'Latency should match');
       assert.strictEqual(row.attempts, 1, 'Attempts should default to 1');
-      assert.strictEqual(row.request_data, '{"prompt":"hello"}', 'Request data should match');
-      assert.strictEqual(row.response_data, '{"text":"world"}', 'Response data should match');
+      assert.equal(row.request_data, null, 'Prompt payloads must not be persisted');
+      assert.equal(row.response_data, null, 'Response text payloads must not be persisted');
     });
 
     it('should log a failed request with error', async () => {
