@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import { CompareRequestSchema } from "../../comparison/schemas.js";
 import type { ComparisonService } from "../../comparison/service.js";
 import { CostExceededError } from "../../comparison/service.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface ComparisonRouteDeps {
 	comparisonService?: ComparisonService;
@@ -50,7 +51,7 @@ export function registerComparisonRoutes(
 			if (error instanceof CostExceededError) {
 				return c.json(
 					{
-						error: error.message,
+						error: publicErrorMessage(error),
 						code: "COST_EXCEEDED",
 						estimatedCost: error.estimatedCost,
 						limit: error.limit,
@@ -59,7 +60,7 @@ export function registerComparisonRoutes(
 				);
 			}
 
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -82,7 +83,7 @@ export function registerComparisonRoutes(
 			});
 			return c.json({ results, count: results.length });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});

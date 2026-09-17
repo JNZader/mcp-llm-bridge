@@ -13,6 +13,7 @@ import {
 	prepareMessagesRequest,
 } from "../execution/messages-service.js";
 import { resolveRequestScope, type RequestScope } from "../http-helpers/request-scope.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface MessagesRouteDeps {
 	router: Router;
@@ -69,7 +70,7 @@ async function handleStreamingMessages(
 	try {
 		first = await generator.next();
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
+		const message = publicErrorMessage(error);
 		return jsonAnthropicError(c, 500, "api_error", message);
 	}
 
@@ -87,7 +88,7 @@ async function handleStreamingMessages(
 			try {
 				next = await generator.next();
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = publicErrorMessage(error);
 				try {
 					await stream.writeSSE({
 						event: "error",
@@ -145,7 +146,7 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesRouteDeps): void
 			if (error instanceof TransformError) {
 				return jsonAnthropicError(c, 400, "invalid_request_error", error.message);
 			}
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return jsonAnthropicError(c, 400, "invalid_request_error", message);
 		}
 
@@ -161,7 +162,7 @@ export function registerMessagesRoutes(app: Hono, deps: MessagesRouteDeps): void
 			});
 			return c.json(response);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return jsonAnthropicError(c, 500, "api_error", message);
 		}
 	});

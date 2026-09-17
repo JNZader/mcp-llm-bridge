@@ -4,6 +4,7 @@ import { estimateCost, getPriceTable } from "../../core/pricing.js";
 import type { Router } from "../../core/router.js";
 import { costEstimateQuerySchema } from "../../core/schemas.js";
 import type { LatencyMeasurer } from "../../latency/index.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface MetadataRouteDeps {
 	router: Router;
@@ -32,7 +33,7 @@ export function registerMetadataRoutes(
 				})),
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json(
 				{
 					error: {
@@ -52,7 +53,7 @@ export function registerMetadataRoutes(
 			const providers = await router.getProviderStatuses();
 			return c.json({ providers });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -84,7 +85,7 @@ export function registerMetadataRoutes(
 				timestamp: new Date().toISOString(),
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -123,7 +124,7 @@ export function registerMetadataRoutes(
 
 			return c.json(result);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -133,7 +134,7 @@ export function registerMetadataRoutes(
 			const table = getPriceTable();
 			return c.json(table);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});

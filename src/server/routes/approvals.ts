@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 
 import type { ApprovalStore } from "../../approval/index.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 export interface ApprovalRouteDeps {
 	approvalStore?: ApprovalStore;
@@ -18,7 +19,7 @@ export function registerApprovalRoutes(app: Hono, deps: ApprovalRouteDeps): void
 			const pending = approvalStore.getPending();
 			return c.json({ requests: pending, count: pending.length });
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -40,7 +41,7 @@ export function registerApprovalRoutes(app: Hono, deps: ApprovalRouteDeps): void
 
 			return c.json(updated);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -62,7 +63,7 @@ export function registerApprovalRoutes(app: Hono, deps: ApprovalRouteDeps): void
 
 			return c.json(updated);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
