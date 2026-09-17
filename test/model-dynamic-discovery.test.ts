@@ -15,7 +15,11 @@ import { join } from 'node:path';
 
 import { Vault } from '../src/vault/vault.js';
 import { BaseCliAdapter, type CliAdapterConfig } from '../src/adapters/base-cli-adapter.js';
-import { mergeModels, MODEL_DISCOVERY_ERROR_RETRY_MS } from '../src/adapters/model-cache.js';
+import {
+  DynamicModelCache,
+  mergeModels,
+  MODEL_DISCOVERY_ERROR_RETRY_MS,
+} from '../src/adapters/model-cache.js';
 import { OpenAIAdapter, AnthropicAdapter, GoogleAdapter } from '../src/adapters/index.js';
 import { CodexCliAdapter, parseCodexModel } from '../src/adapters/cli-codex.js';
 import type { GatewayConfig, ModelInfo } from '../src/core/types.js';
@@ -73,6 +77,24 @@ describe('mergeModels', () => {
     assert.deepEqual(result.map((x) => x.id), ['a', 'b', 'c']);
   });
 
+  it('prunes declared ids absent from a non-empty discovery when asked', () => {
+    const result = mergeModels([m('a'), m('b', 'CURATED')], [m('b', 'LIVE'), m('c')], {
+      pruneMissingDeclared: true,
+    });
+    assert.deepEqual(
+      result.map((x) => ({ id: x.id, name: x.name })),
+      [
+        { id: 'b', name: 'CURATED' },
+        { id: 'c', name: 'LIVE' },
+      ],
+    );
+  });
+
+  it('does not prune when discovery is empty even if prune is requested', () => {
+    const result = mergeModels([m('a')], [], { pruneMissingDeclared: true });
+    assert.deepEqual(result.map((x) => x.id), ['a']);
+  });
+
   it('declared (curated) metadata wins on id collision', () => {
     const result = mergeModels([m('a', 'DECLARED')], [m('a', 'DISCOVERED')]);
     assert.equal(result.length, 1);
@@ -83,6 +105,41 @@ describe('mergeModels', () => {
     assert.deepEqual(mergeModels([m('a')], []).map((x) => x.id), ['a']);
     assert.deepEqual(mergeModels([], [m('a')]).map((x) => x.id), ['a']);
     assert.deepEqual(mergeModels([], []), []);
+  });
+});
+
+describe('DynamicModelCache project-scoped discovery', () => {
+  const m = (id: string): ModelInfo => ({ id, name: id, provider: 'p', maxTokens: 1 });
+
+  it('passes the project into discover and keeps per-project caches', async () => {
+    const seen: Array<string | undefined> = [];
+    const cache = new DynamicModelCache(
+      [m('declared')],
+      async (project) => {
+        seen.push(project);
+        return [m(`live-${project ?? 'global'}`)];
+      },
+      'p',
+    );
+
+    await cache.refresh(0, 'alpha');
+    assert.deepEqual(cache.get().map((x) => x.id), ['declared', 'live-alpha']);
+    await cache.refresh(0, 'beta');
+    assert.deepEqual(cache.get('beta').map((x) => x.id), ['declared', 'live-beta']);
+    assert.deepEqual(cache.get('alpha').map((x) => x.id), ['declared', 'live-alpha']);
+    assert.deepEqual(seen, ['alpha', 'beta']);
+  });
+
+  it('prunes declared ids for API-style caches after a live catalog', async () => {
+    const cache = new DynamicModelCache(
+      [m('stale'), m('kept')],
+      async () => [m('kept'), m('new')],
+      'p',
+      undefined,
+      true,
+    );
+    await cache.refresh(0);
+    assert.deepEqual(cache.get().map((x) => x.id), ['kept', 'new']);
   });
 });
 

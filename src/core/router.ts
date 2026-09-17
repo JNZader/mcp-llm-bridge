@@ -857,8 +857,7 @@ export class Router {
     const results = await Promise.all(
       this._providers.map(async (provider) => {
         const available = await provider.isAvailable();
-        // Warm the dynamic model cache for available providers that support
-        // it (TTL-gated internally). Never throws — degrades to declared.
+        // Provider-level listing (no project): /v1/models is not a per-project catalog.
         if (available && hasRefreshableModels(provider)) {
           await provider.refreshModels().catch(() => {});
         }
