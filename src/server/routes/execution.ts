@@ -208,7 +208,9 @@ export function registerExecutionRoutes(
 			try {
 				preparedRequest = prepareChatCompletionsRequest(validated);
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = sanitizeErrorMessage(
+					error instanceof Error ? error.message : String(error),
+				);
 				return jsonChatInvalidRequestError(c, message, null);
 			}
 

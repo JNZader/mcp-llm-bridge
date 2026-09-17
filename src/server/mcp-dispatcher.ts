@@ -29,6 +29,7 @@ import {
   type McpToolResult,
 } from './mcp-tool-handlers.js';
 import { dynamicToolAdapter } from './mcp-server.js';
+import { sanitizeErrorMessage } from '../core/error-sanitizer.js';
 
 export interface McpDispatchContext {
   router: Router;
@@ -140,7 +141,7 @@ export async function dispatchToolCall(
 
     switch (toolName) {
       case 'llm_generate':
-        return handleLlmGenerateTool(args, router, bridge);
+        return await handleLlmGenerateTool(args, router, bridge);
 
       case 'vault_store':
       case 'vault_list':
@@ -183,10 +184,10 @@ export async function dispatchToolCall(
         return handleApprovalTool(toolName, args, approvalStore)!;
 
       case 'local_llm_generate':
-        return handleLocalLlmGenerateTool(args, router);
+        return await handleLocalLlmGenerateTool(args, router);
 
       case 'discover_models':
-        return handleDiscoverModelsTool(args, vault);
+        return await handleDiscoverModelsTool(args, vault);
 
       case 'conversation_paginate':
       case 'conversation_get_page':
@@ -201,7 +202,7 @@ export async function dispatchToolCall(
         return handleDynamicToolFallback(toolName, args, enforcer);
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
     return {
       content: [{ type: 'text', text: JSON.stringify({ error: message }) }],
       isError: true,
