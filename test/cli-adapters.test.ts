@@ -519,7 +519,7 @@ describe('CLI adapters keep the prompt off argv', () => {
   it('copilot argv carries @prompt-file, not the prompt body', () => {
     const path = '/tmp/mcp-copilot-prompt-test/prompt.txt';
     const args = buildCopilotGenerateArgs('gpt-4.1', path);
-    assert.deepEqual(args, ['-p', `@${path}`, '--model', 'gpt-4.1', '--allow-all-tools']);
+    assert.deepEqual(args, ['-p', `@${path}`, '--model', 'gpt-4.1', '--allow-all-tools', '--deny-tool=shell', '--deny-tool=write', '--disable-builtin-mcps']);
     assert.ok(!args.includes(ragPrompt));
     assert.ok(args.every((arg) => arg.length < 200));
   });
