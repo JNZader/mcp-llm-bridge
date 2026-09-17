@@ -9,6 +9,7 @@ import { getLocalLLMConfig, resolveHfToken } from '../core/local-llm-env.js';
 import { localLLMEnabled } from '../core/runtime-flags.js';
 import type { GenerateRequest } from '../core/types.js';
 import type { McpToolResult } from './mcp-tool-handlers.js';
+import { sanitizeErrorMessage } from '../core/error-sanitizer.js';
 
 function jsonResult(payload: unknown, isError?: boolean): McpToolResult {
   return {
@@ -175,7 +176,7 @@ export async function handleDiscoverModelsTool(
       localLLMStatus,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
     return jsonResult({ error: msg }, true);
   }
 }
