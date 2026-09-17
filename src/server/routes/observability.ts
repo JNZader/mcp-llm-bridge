@@ -9,6 +9,7 @@ import { getMetrics, getMetricsContentType, updateProviderAvailability } from ".
 import type { Router } from "../../core/router.js";
 import { LogQuerySchema } from "../../logging/schemas.js";
 import type { RequestLogger } from "../../logging/request-logger.js";
+import { publicErrorMessage } from "../../core/error-sanitizer.js";
 
 const VALID_ANALYTICS_DIMENSIONS = ["total", "hourly", "daily", "channel", "provider", "model"] as const;
 
@@ -98,7 +99,7 @@ export function registerObservabilityRoutes(
 				);
 			}
 
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -218,7 +219,7 @@ export function registerObservabilityRoutes(
 				},
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});
@@ -228,7 +229,7 @@ export function registerObservabilityRoutes(
 			const { compressionStats } = await import("../../context-compression/output-compression.js");
 			return c.json(compressionStats.getSummary());
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = publicErrorMessage(error);
 			return c.json({ error: message }, 500);
 		}
 	});

@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import { z } from 'zod';
 
 import { ToolCategorySchema, TrustLevelSchema } from '../../../security/profiles.js';
+import { publicErrorMessage } from '../../../core/error-sanitizer.js';
 
 export interface AdminSecurityProfilesRouteDeps {
   db?: Database.Database;
@@ -67,7 +68,7 @@ export function registerAdminSecurityProfileRoutes(
         sandbox,
       }, 201);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -104,7 +105,7 @@ export function registerAdminSecurityProfileRoutes(
 
       return c.json({ profiles });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -124,7 +125,7 @@ export function registerAdminSecurityProfileRoutes(
 
       return c.json({ ok: true, project, message: `Profile for "${project}" deleted` });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });

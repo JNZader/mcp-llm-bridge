@@ -15,6 +15,7 @@ import {
   resolveProviderApiKeyEnv,
   resolveProviderBaseUrl,
 } from '../../../core/provider-runtime-config.js';
+import { publicErrorMessage } from '../../../core/error-sanitizer.js';
 
 export interface AdminSyncRoutesDeps {
   db?: Database.Database;
@@ -214,7 +215,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         timestamp: result.timestamp,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return jsonError(c, 500, message, 'INTERNAL_ERROR');
     }
   });
@@ -241,7 +242,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         count: statuses.length,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return jsonError(c, 500, message, 'INTERNAL_ERROR');
     }
   });
@@ -284,7 +285,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         count: history.length,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return jsonError(c, 500, message, 'INTERNAL_ERROR');
     }
   });
@@ -344,7 +345,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
 
       return c.json({ ok: true, synced: result.added + result.updated, details: result });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return jsonError(c, 500, message, 'INTERNAL_ERROR');
     }
   });
@@ -358,7 +359,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
       const priceManager = new PriceManager(deps.db);
       return c.json(priceManager.getRunStatus());
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return jsonError(c, 500, message, 'INTERNAL_ERROR');
     }
   });
@@ -389,7 +390,7 @@ export function registerAdminSyncRoutes(app: Hono, deps: AdminSyncRoutesDeps): v
         count: history.length,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return jsonError(c, 500, message, 'INTERNAL_ERROR');
     }
   });

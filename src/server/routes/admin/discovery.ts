@@ -7,6 +7,7 @@ import type { FreeModelRouter } from '../../../free-models/router.js';
 import { loadCatalog, importCatalog } from '../../../free-models/registry.js';
 import { getSlimLocalLLMStatus } from '../../../local-llm/status.js';
 import { discoverModels } from '../../../model-discovery/discovery.js';
+import { publicErrorMessage } from '../../../core/error-sanitizer.js';
 
 export interface AdminDiscoveryRouteDeps {
   db?: Database.Database;
@@ -41,7 +42,7 @@ export function registerAdminDiscoveryRoutes(
         message: `Catalog refreshed: ${imported} models imported from ${catalog.providers.length} providers`,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
@@ -81,7 +82,7 @@ export function registerAdminDiscoveryRoutes(
         localLLMStatus,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = publicErrorMessage(error);
       return c.json({ error: message }, 500);
     }
   });
