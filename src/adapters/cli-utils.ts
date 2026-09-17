@@ -2,7 +2,7 @@
  * CLI utility helpers for subprocess execution.
  */
 
-import { execFileSync, execFile, spawn, type ChildProcess } from 'node:child_process';
+import childProcess, { execFileSync, execFile, type ChildProcess } from 'node:child_process';
 import { sanitizeErrorMessage } from '../security/sanitize.js';
 import { createGenerationAbortError } from '../core/generation-cancellation.js';
 
@@ -232,7 +232,7 @@ export async function execCliAsync(
 
     let child: ChildProcess;
     try {
-      child = spawn(command, args, {
+      child = childProcess.spawn(command, args, {
         env: env ?? process.env as Record<string, string>,
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
