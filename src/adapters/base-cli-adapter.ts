@@ -90,7 +90,7 @@ export abstract class BaseCliAdapter implements LLMProvider {
     if (!this._modelCache) {
       this._modelCache = new DynamicModelCache(
         this.config.models,
-        () => this.discoverModels(),
+        (project) => this.discoverModels(project),
         this.config.id,
       );
     }
@@ -110,13 +110,13 @@ export abstract class BaseCliAdapter implements LLMProvider {
    * guard, so concurrent callers may invoke this in parallel and last-writer
    * wins. Equal inputs must yield equal output.
    */
-  protected async discoverModels(): Promise<ModelInfo[] | null> {
+  protected async discoverModels(_project?: string): Promise<ModelInfo[] | null> {
     return null;
   }
 
   /** Refresh the dynamic model cache (TTL-gated, never throws). */
-  async refreshModels(now: number = Date.now()): Promise<void> {
-    return this.modelCache.refresh(now);
+  async refreshModels(now: number = Date.now(), project?: string): Promise<void> {
+    return this.modelCache.refresh(now, project);
   }
 
   /**

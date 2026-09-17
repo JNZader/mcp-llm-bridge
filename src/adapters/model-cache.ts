@@ -11,6 +11,7 @@
  *   the result with the declared baseline. A null result (no dynamic source /
  *   nothing found) is a stable answer and keeps the full TTL. A thrown error
  *   degrades to the declared list, is logged, and retries after a short window.
+ * - Optional `project` scopes credentials and cache entries separately.
  */
 
 import type { ModelInfo } from '../core/types.js';
@@ -22,6 +23,13 @@ export const MODEL_DISCOVERY_ERROR_RETRY_MS = 30 * 1000;
 /** Fallback token cap for models discovered via /models (which omits limits). */
 export const DEFAULT_DISCOVERED_MAX_TOKENS = 4096;
 
+export interface MergeModelsOptions {
+	/** Drop declared ids that the live catalog no longer reports. CLI config
+	 *  sources stay on the default UNION so an incomplete config.toml cannot
+	 *  wipe the curated fallback. */
+	pruneMissingDeclared?: boolean;
+}
+
 /**
  * Merge declared and discovered models, deduping by id.
  *
@@ -30,74 +38,124 @@ export const DEFAULT_DISCOVERED_MAX_TOKENS = 4096;
  * that aren't already declared. This keeps curated metadata intact when a
  * provider's /models endpoint reports bare ids without limits.
  *
- * Known limitation (pre-existing, both merge directions): this is a UNION —
- * declared ids are always advertised even if the provider stopped serving
- * them. Pruning declared ids absent from a non-null discovery is a backlog
- * item; it would change semantics for config/CLI providers with no /models
- * source, so it's intentionally not done here.
+ * API adapters pass `pruneMissingDeclared` so a successful /models catalog
+ * stops advertising deprecated declared ids. Empty discovery does not prune.
  */
-export function mergeModels(declared: ModelInfo[], discovered: ModelInfo[]): ModelInfo[] {
-  const byId = new Map<string, ModelInfo>();
-  for (const model of [...declared, ...discovered]) {
-    if (!byId.has(model.id)) {
-      byId.set(model.id, model);
-    }
-  }
-  return [...byId.values()];
+export function mergeModels(
+	declared: ModelInfo[],
+	discovered: ModelInfo[],
+	options: MergeModelsOptions = {},
+): ModelInfo[] {
+	if (options.pruneMissingDeclared && discovered.length > 0) {
+		const discoveredById = new Map(discovered.map((model) => [model.id, model]));
+		const merged: ModelInfo[] = [];
+		for (const model of declared) {
+			if (discoveredById.has(model.id)) {
+				merged.push(model);
+				discoveredById.delete(model.id);
+			}
+		}
+		for (const model of discoveredById.values()) {
+			merged.push(model);
+		}
+		return merged;
+	}
+
+	const byId = new Map<string, ModelInfo>();
+	for (const model of [...declared, ...discovered]) {
+		if (!byId.has(model.id)) {
+			byId.set(model.id, model);
+		}
+	}
+	return [...byId.values()];
 }
 
 /** A discovery function: returns models, or null when no dynamic source applies. */
-export type DiscoverFn = () => Promise<ModelInfo[] | null>;
+export type DiscoverFn = (project?: string) => Promise<ModelInfo[] | null>;
+
+interface ScopeState {
+	cache: ModelInfo[] | null;
+	fetchedAt: number;
+	inFlight: Promise<void> | null;
+}
 
 export class DynamicModelCache {
-  private cache: ModelInfo[] | null = null;
-  private fetchedAt = 0;
-  /** In-flight refresh, shared so concurrent callers don't all hit discovery. */
-  private inFlight: Promise<void> | null = null;
+	private readonly scopes = new Map<string, ScopeState>();
+	private lastScopeKey = '';
 
-  constructor(
-    private readonly declared: ModelInfo[],
-    private readonly discover: DiscoverFn,
-    private readonly providerId: string,
-    private readonly ttlMs: number = DEFAULT_TTL_MS,
-  ) {}
+	private readonly ttlMs: number;
 
-  /** Current models — cached list, or the declared fallback before any refresh. */
-  get(): ModelInfo[] {
-    return this.cache ?? this.declared;
-  }
+	constructor(
+		private readonly declared: ModelInfo[],
+		private readonly discover: DiscoverFn,
+		private readonly providerId: string,
+		ttlMs: number = DEFAULT_TTL_MS,
+		private readonly pruneMissingDeclared: boolean = false,
+	) {
+		this.ttlMs = Number.isFinite(ttlMs) ? ttlMs : DEFAULT_TTL_MS;
+	}
 
-  /**
-   * Refresh the cache if the TTL has elapsed. Never throws. Single-flighted:
-   * concurrent callers share one discovery (important now that discovery can
-   * be a network call on the routing path). `now` is injectable for testing.
-   */
-  async refresh(now: number = Date.now()): Promise<void> {
-    if (this.cache && now - this.fetchedAt < this.ttlMs) {
-      return;
-    }
-    if (this.inFlight) {
-      return this.inFlight;
-    }
-    this.inFlight = this.doRefresh(now).finally(() => {
-      this.inFlight = null;
-    });
-    return this.inFlight;
-  }
+	/** Current models — cached list, or the declared fallback before any refresh. */
+	get(project?: string): ModelInfo[] {
+		const key = project !== undefined ? scopeKey(project) : this.lastScopeKey;
+		return this.scopes.get(key)?.cache ?? this.declared;
+	}
 
-  private async doRefresh(now: number): Promise<void> {
-    try {
-      const discovered = await this.discover();
-      this.cache = discovered ? mergeModels(this.declared, discovered) : this.declared;
-      this.fetchedAt = now;
-    } catch (error) {
-      logger.warn(
-        { provider: this.providerId, err: error },
-        'model discovery threw; serving declared fallback',
-      );
-      this.cache = this.cache ?? this.declared;
-      // Back-date so the next call retries after the short error window.
-      this.fetchedAt = now - this.ttlMs + MODEL_DISCOVERY_ERROR_RETRY_MS;
-    }
-  }
+	/**
+	 * Refresh the cache if the TTL has elapsed. Never throws. Single-flighted:
+	 * concurrent callers share one discovery (important now that discovery can
+	 * be a network call on the routing path). `now` is injectable for testing.
+	 */
+	async refresh(now: number = Date.now(), project?: string): Promise<void> {
+		const key = scopeKey(project);
+		this.lastScopeKey = key;
+		const scope = this.scope(key);
+		if (scope.cache && now - scope.fetchedAt < this.ttlMs) {
+			return;
+		}
+		if (scope.inFlight) {
+			return scope.inFlight;
+		}
+		scope.inFlight = this.doRefresh(now, project, scope).finally(() => {
+			scope.inFlight = null;
+		});
+		return scope.inFlight;
+	}
+
+	private scope(key: string): ScopeState {
+		const existing = this.scopes.get(key);
+		if (existing) {
+			return existing;
+		}
+		const created: ScopeState = { cache: null, fetchedAt: 0, inFlight: null };
+		this.scopes.set(key, created);
+		return created;
+	}
+
+	private async doRefresh(
+		now: number,
+		project: string | undefined,
+		scope: ScopeState,
+	): Promise<void> {
+		try {
+			const discovered = await this.discover(project);
+			scope.cache = discovered
+				? mergeModels(this.declared, discovered, {
+						pruneMissingDeclared: this.pruneMissingDeclared,
+					})
+				: this.declared;
+			scope.fetchedAt = now;
+		} catch (error) {
+			logger.warn(
+				{ provider: this.providerId, err: error, project },
+				'model discovery threw; serving declared fallback',
+			);
+			scope.cache = scope.cache ?? this.declared;
+			scope.fetchedAt = now - this.ttlMs + MODEL_DISCOVERY_ERROR_RETRY_MS;
+		}
+	}
+}
+
+function scopeKey(project?: string): string {
+	return project ?? '';
 }

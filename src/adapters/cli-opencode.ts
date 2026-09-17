@@ -359,7 +359,7 @@ export class CliOpenCodeAdapter implements LLMProvider {
     this.vault = vault;
     this.modelCache = new DynamicModelCache(
       OPENCODE_DECLARED_MODELS,
-      () => this.discoverModels(),
+      (project) => this.discoverModels(project),
       this.id,
     );
   }
@@ -368,11 +368,11 @@ export class CliOpenCodeAdapter implements LLMProvider {
     return this.modelCache.get();
   }
 
-  async refreshModels(now: number = Date.now()): Promise<void> {
-    return this.modelCache.refresh(now);
+  async refreshModels(now: number = Date.now(), project?: string): Promise<void> {
+    return this.modelCache.refresh(now, project);
   }
 
-  private async discoverModels(): Promise<ModelInfo[] | null> {
+  private async discoverModels(_project?: string): Promise<ModelInfo[] | null> {
     const { stdout } = await execCliAsync('opencode', ['models'], {
       timeout: OPENCODE_MODELS_TIMEOUT_MS,
     });

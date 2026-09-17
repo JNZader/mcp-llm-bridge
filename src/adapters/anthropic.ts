@@ -37,8 +37,10 @@ export class AnthropicAdapter implements LLMProvider {
     if (!this._modelCache) {
       this._modelCache = new DynamicModelCache(
         this.declaredModels,
-        () => this.discoverModels(),
+        (project) => this.discoverModels(project),
         this.id,
+        undefined,
+        true,
       );
     }
     return this._modelCache;
@@ -49,18 +51,18 @@ export class AnthropicAdapter implements LLMProvider {
   }
 
   /** Refresh the dynamic model cache (TTL-gated, never throws). */
-  async refreshModels(now: number = Date.now()): Promise<void> {
-    return this.modelCache.refresh(now);
+  async refreshModels(now: number = Date.now(), project?: string): Promise<void> {
+    return this.modelCache.refresh(now, project);
   }
 
   /**
    * Discover models from Anthropic's /models endpoint. Returns null when no
    * credentials are available (keep declared). Idempotent, side-effect-free.
    */
-  private async discoverModels(): Promise<ModelInfo[] | null> {
+  private async discoverModels(project?: string): Promise<ModelInfo[] | null> {
     let auth: AuthMode;
     try {
-      auth = await this.getAuthMode();
+      auth = await this.getAuthMode(project);
     } catch {
       return null;
     }

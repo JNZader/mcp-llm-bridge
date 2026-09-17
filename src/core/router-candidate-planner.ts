@@ -19,7 +19,7 @@ export const NEVER_AUTO_FALLBACK = new Set<string>(
 
 /** Provider that can refresh its dynamic model cache (TTL-gated). */
 export interface RefreshableModelProvider {
-  refreshModels(): Promise<void>;
+  refreshModels(now?: number, project?: string): Promise<void>;
 }
 
 export function hasRefreshableModels(
@@ -95,7 +95,7 @@ export async function resolveCandidates(
     providers.map(async (provider) => {
       const available = await provider.isAvailable();
       if (needsModelDiscovery && available && hasRefreshableModels(provider)) {
-        await provider.refreshModels().catch(() => {}); // TTL-gated; never throws
+        await provider.refreshModels(Date.now(), request.project).catch(() => {});
       }
       return { provider, available };
     }),

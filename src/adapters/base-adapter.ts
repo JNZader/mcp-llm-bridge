@@ -63,8 +63,10 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
     if (!this._modelCache) {
       this._modelCache = new DynamicModelCache(
         this.declaredModels,
-        () => this.discoverModels(),
+        (project) => this.discoverModels(project),
         this.id,
+        undefined,
+        true,
       );
     }
     return this._modelCache;
@@ -75,8 +77,8 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
   }
 
   /** Refresh the dynamic model cache (TTL-gated, never throws). */
-  async refreshModels(now: number = Date.now()): Promise<void> {
-    return this.modelCache.refresh(now);
+  async refreshModels(now: number = Date.now(), project?: string): Promise<void> {
+    return this.modelCache.refresh(now, project);
   }
 
   /**
@@ -84,14 +86,13 @@ export abstract class BaseOpenAICompatibleAdapter implements LLMProvider {
    * no credentials are available (keep declared) or nothing is reported.
    * Idempotent and side-effect-free.
    *
-   * Uses global-scope credentials — the advertised model list is provider-level,
-   * not per-request. A project with narrower per-project credentials may not be
-   * able to call every advertised model (known limitation, backlog).
+   * Uses vault credentials for `project` when provided (generate path).
+   * `/v1/models` still refreshes without a project (provider-level listing).
    */
-  protected async discoverModels(): Promise<ModelInfo[] | null> {
+  protected async discoverModels(project?: string): Promise<ModelInfo[] | null> {
     let apiKey: string;
     try {
-      apiKey = this.getApiKey();
+      apiKey = this.getApiKey(project);
     } catch {
       return null; // no credentials — keep declared baseline
     }
