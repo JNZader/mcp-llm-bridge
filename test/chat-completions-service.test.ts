@@ -278,7 +278,6 @@ describe("chat-completions-service", () => {
 				outputTokens: 5,
 				attempts: 1,
 				responseData: JSON.stringify({
-					text: "Strict mode catches more bugs.",
 					provider: "mock-provider",
 					model: "gpt-4o-mini",
 					tokensUsed: 9,
