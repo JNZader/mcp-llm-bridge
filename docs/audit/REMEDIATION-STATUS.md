@@ -32,6 +32,20 @@ before any action: every `file:line` reference matched, zero false positives.
 | SEC-11 | Vault path not permission/symlink validated | Reject symlinked DB path; `chmod 0600` on the DB file at startup | `src/vault/vault.ts` | vault tests green (165) |
 | RUN-02 | Sync CLI blocks the event loop | Request-path adapters swapped `execCliSync → execCliAsync` (setup path left sync) | `src/adapters/base-cli-adapter.ts`, `cli-copilot.ts`, `cli-opencode.ts` | adapter tests green |
 
+## ✅ Applied later (PRs #21–#33, 2026-09)
+
+These were still listed as skipped below. They shipped on `main` after the original status table.
+
+| ID | Finding | Change | PR |
+| --- | --- | --- | --- |
+| RUN-01 | HTTP timeout did not cancel work | Deadline abort on generate/chat (`abortSignal` + 408) | #25 |
+| RUN-03 | Shutdown discarded HTTP/MCP handles | Retain listen handles; close HTTP then MCP; drain window then `closeAllConnections` (`SHUTDOWN_DRAIN_MS`, default 5s) | #30, #32 |
+| SEC-12 | Raw `error.message` on HTTP/MCP | `publicErrorMessage` / sink redaction on admin, observability, remaining routes, SQLite logs | #24, #26, #27, #31 |
+| — | CLI abort left children | Process-group kill via detached `spawn` | #28 |
+| — | Copilot non-interactive tools | Deny shell/write; keep `--allow-all-tools` | #29 |
+| — | Local LLM contract | Contractual local-llm routing | #21 |
+| — | Model discovery union / global creds | API prune of stale declared ids; generate-path discovery uses `request.project` | #33 (issues #2, #3) |
+
 ### Operator notes (behavior changes to be aware of)
 
 - **VPS exposure**: with SEC-03, the process now binds loopback by default. To
@@ -89,9 +103,6 @@ if this is ever exposed to untrusted third parties.
 | SEC-06 | Temp provider-home collision/race | Cross-tenant concern; borderline hygiene at real concurrency |
 | SEC-07 | Body/field limits incomplete | DoS/cost-abuse control against untrusted callers |
 | SEC-09 | Client IP from spoofable header | Only affects your own rate limiter |
-| SEC-12 | No central error sanitization boundary | The caller receiving errors is you |
-| RUN-01 | Timeout doesn't cancel work | Large abort-plumbing refactor; low-concurrency box rarely hits it |
-| RUN-03 | Shutdown doesn't drain transports | Matters for orchestrated rolling deploys, not a single VPS |
 | ARC-01/02/03 | Contract/router/DB-lifecycle consolidation | Architecture insurance; pays off with multiple maintainers |
 | DEL-04/05 | Coverage thresholds / npm contract | Value depends on public npm publish intent |
 | API-01/02 | OpenAI subset / no OpenAPI contract | Doc-first; full contract suite is a future SDD change |
@@ -103,7 +114,5 @@ if this is ever exposed to untrusted third parties.
    plus `ADMIN_TOKEN` (and `GITHUB_ALLOWED_USERS` if OAuth is used). Without these
    the container binds localhost-only and admin routes return `503`.
 2. Optionally enforce the OpenCode checksum (`--build-arg OPENCODE_SHA256=...`).
-3. Optional hardening tests (regression guards): admin no-token → 503,
-   OAuth deny-when-unset, correlation-ID sanitization, vault symlink reject.
-4. The remaining skipped findings stay documented for a future multi-tenant/
-   public-exposure scenario.
+3. The remaining skipped findings stay documented for a future multi-tenant/
+   public-exposure scenario. There is no further single-tenant hardening queue.
