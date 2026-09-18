@@ -46,6 +46,7 @@ These were still listed as skipped below. They shipped on `main` after the origi
 | — | Local LLM contract | Contractual local-llm routing | #21 |
 | — | Model discovery union / global creds | API prune of stale declared ids; generate-path discovery uses `request.project` | #33 (issues #2, #3) |
 | SEC-09 | Client IP from spoofable header | Rate-limit key is the socket peer; forwarding headers only if `TRUSTED_PROXY_IPS` contains that peer | `src/server/http-helpers/client-ip.ts` |
+| SEC-07 | Body/field limits incomplete | Count actual body bytes (not only Content-Length); cap generate/chat/credential/file fields. No tenant quotas. | `src/server/http-helpers/body-limit.ts`, `src/core/schemas.ts` |
 
 ### Operator notes (behavior changes to be aware of)
 
@@ -106,7 +107,6 @@ if this is ever exposed to untrusted third parties.
 | SEC-04 | Sandbox falls back to host | Default profile has sandbox off; no untrusted command source |
 | SEC-05 | Plugins run in-process | Plugins are operator-supplied, not attacker-controlled |
 | SEC-06 | Temp provider-home collision/race | Cross-tenant concern; borderline hygiene at real concurrency |
-| SEC-07 | Body/field limits incomplete | DoS/cost-abuse control against untrusted callers |
 | ARC-01/02/03 | Contract/router/DB-lifecycle consolidation | Architecture insurance; pays off with multiple maintainers |
 | DEL-04/05 | Coverage thresholds / npm contract | Value depends on public npm publish intent |
 | API-01/02 | OpenAI subset / no OpenAPI contract | Doc-first; full contract suite is a future SDD change |

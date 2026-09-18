@@ -87,6 +87,15 @@ export function resolveCliGenerateTimeoutMs(
  */
 export const MAX_PROMPT_LENGTH = 512_000;
 
+/** Max items in chat `messages`. */
+export const MAX_CHAT_MESSAGES = 256;
+
+/** Max length for provider/project/model/file identifiers. */
+export const MAX_IDENTIFIER_LENGTH = 512;
+
+/** Max stored credential secret length. */
+export const MAX_CREDENTIAL_SECRET_LENGTH = 16_384;
+
 /** Valid provider IDs for credential validation. */
 export const VALID_PROVIDERS = new Set([
   'anthropic',
