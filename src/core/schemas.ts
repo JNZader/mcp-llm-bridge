@@ -5,7 +5,17 @@
  */
 
 import { z } from 'zod';
-import { MAX_PROMPT_LENGTH } from './constants.js';
+import {
+  MAX_CHAT_MESSAGES,
+  MAX_CREDENTIAL_SECRET_LENGTH,
+  MAX_IDENTIFIER_LENGTH,
+  MAX_PROMPT_LENGTH,
+} from './constants.js';
+
+const boundedText = (field: string) =>
+  z.string().max(MAX_PROMPT_LENGTH, `${field} exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`);
+
+const boundedIdentifier = z.string().max(MAX_IDENTIFIER_LENGTH);
 
 export const ROUTING_MODE = {
   CONTRACTUAL: 'contractual',
@@ -19,22 +29,20 @@ export type ResponseFormat = (typeof RESPONSE_FORMAT)[keyof typeof RESPONSE_FORM
 
 /** Generate request schema. */
 export const generateRequestSchema = z.object({
-  prompt: z.string()
-    .max(MAX_PROMPT_LENGTH, `prompt exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`)
-    .optional(),
-  context: z.string().optional(),
-  instruction: z.string().optional(),
-  model: z.string().optional(),
-  provider: z.string().optional(),
+  prompt: boundedText('prompt').optional(),
+  context: boundedText('context').optional(),
+  instruction: boundedText('instruction').optional(),
+  model: boundedIdentifier.optional(),
+  provider: boundedIdentifier.optional(),
   requireProvider: z.boolean().optional(),
-  system: z.string().optional(),
+  system: boundedText('system').optional(),
   maxTokens: z.number().int().positive().optional(),
   /** Consorcio / OpenAI-style alias; mapped to maxTokens in prepareGenerateRequest. */
   max_tokens: z.number().int().positive().optional(),
   strict: z.boolean().optional(),
   routingMode: z.enum([ROUTING_MODE.CONTRACTUAL]).optional(),
   responseFormat: z.enum([RESPONSE_FORMAT.JSON]).optional(),
-  project: z.string().optional(),
+  project: boundedIdentifier.optional(),
   tools: z.literal('none').optional(),
 }).superRefine((data, ctx) => {
   if (!data.prompt && !data.context && !data.instruction && !data.system) {
@@ -52,21 +60,30 @@ export const generateRequestSchema = z.object({
 export const chatMessageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'developer', 'tool', 'function']),
   content: z.any(),
+}).superRefine((data, ctx) => {
+  if (typeof data.content === 'string' && data.content.length > MAX_PROMPT_LENGTH) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `message content exceeds maximum length of ${MAX_PROMPT_LENGTH} characters`,
+      path: ['content'],
+    });
+  }
 });
 
 /** Chat completions request schema. */
 export const chatCompletionsSchema = z.object({
-  model: z.string().optional(),
+  model: boundedIdentifier.optional(),
   messages: z.array(chatMessageSchema)
-    .min(1, 'messages is required'),
+    .min(1, 'messages is required')
+    .max(MAX_CHAT_MESSAGES, `messages exceeds maximum of ${MAX_CHAT_MESSAGES}`),
   max_tokens: z.number().int().positive().optional(),
   temperature: z.number().min(0).max(2).optional(),
   stream: z.boolean().optional(),
-  provider: z.string().optional(),
+  provider: boundedIdentifier.optional(),
   strict: z.boolean().optional(),
   routingMode: z.enum([ROUTING_MODE.CONTRACTUAL]).optional(),
-  clientId: z.string().optional(),
-  project: z.string().optional(),
+  clientId: boundedIdentifier.optional(),
+  project: boundedIdentifier.optional(),
 }).passthrough().superRefine((data, ctx) => {
   if (Object.prototype.hasOwnProperty.call(data, 'requireProvider')) {
     ctx.addIssue({ code: 'custom', message: 'requireProvider is only supported by /v1/generate' });
@@ -75,19 +92,18 @@ export const chatCompletionsSchema = z.object({
 
 /** Credential store schema. */
 export const credentialStoreSchema = z.object({
-  provider: z.string()
-    .min(1, 'provider is required'),
-  keyName: z.string().optional(),
-  apiKey: z.string().min(1, 'apiKey is required'),
-  project: z.string().optional(),
+  provider: boundedIdentifier.min(1, 'provider is required'),
+  keyName: boundedIdentifier.optional(),
+  apiKey: z.string().min(1, 'apiKey is required').max(MAX_CREDENTIAL_SECRET_LENGTH),
+  project: boundedIdentifier.optional(),
 });
 
 /** File store schema. */
 export const fileStoreSchema = z.object({
-  provider: z.string().min(1, 'provider is required'),
-  fileName: z.string().min(1, 'fileName is required'),
-  content: z.string().min(1, 'content is required'),
-  project: z.string().optional(),
+  provider: boundedIdentifier.min(1, 'provider is required'),
+  fileName: boundedIdentifier.min(1, 'fileName is required'),
+  content: boundedText('content').min(1, 'content is required'),
+  project: boundedIdentifier.optional(),
 });
 
 /** Cost estimate query schema (GET query params). */

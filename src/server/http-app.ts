@@ -28,6 +28,7 @@ import { securityProfileMiddleware } from "../security/enforcer.js";
 import type { SessionManager } from "../session/index.js";
 import type { Vault } from "../vault/vault.js";
 import { registerAdminRoutes } from "./admin.js";
+import { enforceBodySizeLimit } from "./http-helpers/body-limit.js";
 import { resolveClientIp } from "./http-helpers/client-ip.js";
 import { hasStaticBearerToken, parseBearerToken, tokenEquals } from "./auth-helpers/bearer.js";
 import { RateLimiter } from "./rate-limit.js";
@@ -128,13 +129,14 @@ export function bearerAuth(config: GatewayConfig) {
 }
 
 async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
-	const contentLength = c.req.header("content-length");
-	if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+	const limited = await enforceBodySizeLimit(c.req.raw, MAX_BODY_SIZE);
+	if (!limited.ok) {
 		return c.json(
 			{ error: "Payload too large", code: "PAYLOAD_TOO_LARGE" },
 			413,
 		);
 	}
+	c.req.raw = limited.request;
 	await next();
 }
 
