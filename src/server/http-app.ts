@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import type Database from "better-sqlite3";
 import type { Context, Next } from "hono";
 import { Hono } from "hono";
@@ -27,6 +28,7 @@ import { securityProfileMiddleware } from "../security/enforcer.js";
 import type { SessionManager } from "../session/index.js";
 import type { Vault } from "../vault/vault.js";
 import { registerAdminRoutes } from "./admin.js";
+import { resolveClientIp } from "./http-helpers/client-ip.js";
 import { hasStaticBearerToken, parseBearerToken, tokenEquals } from "./auth-helpers/bearer.js";
 import { RateLimiter } from "./rate-limit.js";
 import { registerApprovalRoutes } from "./routes/approvals.js";
@@ -136,24 +138,18 @@ async function bodySizeLimit(c: Context, next: Next): Promise<Response | void> {
 	await next();
 }
 
+function getIncomingPeerAddress(c: Context): string | undefined {
+	const incoming = (c.env as { incoming?: IncomingMessage } | undefined)?.incoming;
+	return incoming?.socket?.remoteAddress;
+}
+
 function getClientIp(c: Context): string {
-	const trustedProxies = getTrustedProxyIps();
-
-	if (!trustedProxies) {
-		return c.req.header("x-real-ip") ?? "unknown";
-	}
-
-	const directIp = c.req.header("x-real-ip") ?? "unknown";
-
-	if (trustedProxies.has(directIp)) {
-		const forwarded = c.req.header("x-forwarded-for");
-		if (forwarded) {
-			const firstIp = forwarded.split(",")[0];
-			return firstIp?.trim() ?? directIp;
-		}
-	}
-
-	return directIp;
+	return resolveClientIp({
+		peerAddress: getIncomingPeerAddress(c),
+		trustedProxyIps: getTrustedProxyIps(),
+		xForwardedFor: c.req.header("x-forwarded-for"),
+		xRealIp: c.req.header("x-real-ip"),
+	});
 }
 
 const GENERATE_DEADLINE_PATHS = new Set(["/v1/generate", "/v1/chat/completions"]);

@@ -45,6 +45,7 @@ These were still listed as skipped below. They shipped on `main` after the origi
 | — | Copilot non-interactive tools | Deny shell/write; keep `--allow-all-tools` | #29 |
 | — | Local LLM contract | Contractual local-llm routing | #21 |
 | — | Model discovery union / global creds | API prune of stale declared ids; generate-path discovery uses `request.project` | #33 (issues #2, #3) |
+| SEC-09 | Client IP from spoofable header | Rate-limit key is the socket peer; forwarding headers only if `TRUSTED_PROXY_IPS` contains that peer | `src/server/http-helpers/client-ip.ts` |
 
 ### Operator notes (behavior changes to be aware of)
 
@@ -56,6 +57,10 @@ These were still listed as skipped below. They shipped on `main` after the origi
   `LLM_GATEWAY_ADMIN_ALLOW_NOAUTH=true`; on the VPS configure a real token.
 - **OAuth**: with SEC-08, dashboard OAuth now requires `GITHUB_ALLOWED_USERS`
   (e.g. your handle). No-op if OAuth is unused.
+- **Rate-limit IP**: with SEC-09, `X-Real-IP` / `X-Forwarded-For` are ignored
+  unless the TCP peer is listed in `TRUSTED_PROXY_IPS` (the reverse-proxy
+  address, not the client). Behind nginx, set that env or every client shares
+  the proxy's IP bucket.
 
 ## ✅ Applied and verified — Docker
 
@@ -102,7 +107,6 @@ if this is ever exposed to untrusted third parties.
 | SEC-05 | Plugins run in-process | Plugins are operator-supplied, not attacker-controlled |
 | SEC-06 | Temp provider-home collision/race | Cross-tenant concern; borderline hygiene at real concurrency |
 | SEC-07 | Body/field limits incomplete | DoS/cost-abuse control against untrusted callers |
-| SEC-09 | Client IP from spoofable header | Only affects your own rate limiter |
 | ARC-01/02/03 | Contract/router/DB-lifecycle consolidation | Architecture insurance; pays off with multiple maintainers |
 | DEL-04/05 | Coverage thresholds / npm contract | Value depends on public npm publish intent |
 | API-01/02 | OpenAI subset / no OpenAPI contract | Doc-first; full contract suite is a future SDD change |
